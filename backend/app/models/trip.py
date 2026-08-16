@@ -3,9 +3,10 @@
 # ✓ FIXED: Using payment_channel_code instead of payment_method (matches database)
 # ✓ FIXED: Table name correctly set to 'trip' (matches migration)
 # ✓ FIXED: Foreign key correctly references rider table with UUID
+# ✓ FIXED: UUID default using text() function instead of string literal
 
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Date, func, Numeric
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Date, func, Numeric, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -20,7 +21,8 @@ class Trip(Base):
     """
     __tablename__ = "trip"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4, server_default="gen_random_uuid()")
+    # ✓ FIXED: Use text() to wrap the PostgreSQL function call
+    id = Column(UUID(as_uuid=True), primary_key=True, index=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
     rider_id = Column(UUID(as_uuid=True), ForeignKey("rider.id"), nullable=False, index=True)
     
     # Main trip data
