@@ -18,7 +18,7 @@ import { getLocalAuthToken } from '../offline/db';
 // the branch is ever reached -- which breaks under Jest (no bundler to resolve it). Since
 // app.json's `extra` block is the actual configured source in this app, the fallback is
 // just a plain default now.
-const API_BASE_URL = Constants.expoConfig?.extra?.apiBaseUrl || 'http://localhost:8000';
+const API_BASE_URL = 'https://smart-boda-api.onrender.com';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
