@@ -24,16 +24,11 @@ app = FastAPI(
 # The middleware will wrap the entire app stack so headers are always present
 
 def get_allowed_origins():
-    """Get allowed origins from environment or use permissive default for development."""
-    env_origins = os.getenv("CORS_ORIGINS", "")
-    
-    if env_origins:
-        # Production mode - specific origins
-        origins = [origin.strip() for origin in env_origins.split(",") if origin.strip()]
-        return origins
-    else:
-        # Development mode - allow all origins
-        return ["*"]
+    """Get allowed origins - only smart-boda admin and rider apps."""
+    return [
+        "https://smart-boda-admin.onrender.com",
+        "https://smart-boda-rider.onrender.com",
+    ]
 
 allowed_origins = get_allowed_origins()
 
@@ -68,7 +63,7 @@ async def ensure_cors_headers(request: Request, call_next):
             status_code=500,
             content={"detail": "Internal server error"},
             headers={
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": "https://smart-boda-admin.onrender.com",
                 "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type, Authorization",
             }
@@ -89,7 +84,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "errors": [{"field": str(e["loc"]), "message": e["msg"]} for e in exc.errors()]
         },
         headers={
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": "https://smart-boda-admin.onrender.com",
         }
     )
 
@@ -101,7 +96,7 @@ async def database_exception_handler(request: Request, exc: SQLAlchemyError):
         status_code=500,
         content={"detail": "Database operation failed. Please try again."},
         headers={
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": "https://smart-boda-admin.onrender.com",
         }
     )
 
@@ -113,7 +108,7 @@ async def general_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "An unexpected error occurred. Please contact support."},
         headers={
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": "https://smart-boda-admin.onrender.com",
         }
     )
 
@@ -310,7 +305,7 @@ async def options_handler(full_path: str):
     return JSONResponse(
         status_code=200,
         headers={
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": "https://smart-boda-admin.onrender.com",
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
             "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
             "Access-Control-Max-Age": "600",
