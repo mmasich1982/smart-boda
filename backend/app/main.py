@@ -144,8 +144,8 @@ async def startup_event():
             # Seed master data on startup
             logger.info("Seeding master data...")
             try:
-                from app.seed.seed_all_data import seed_all_data
-                seed_all_data()
+                from app.seed.seed_all_data import run_all_seeds
+                run_all_seeds()
                 logger.info("✓ Master data seeded successfully")
             except Exception as seed_error:
                 # If seed fails (e.g., data already exists), log but don't crash
