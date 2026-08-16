@@ -1,0 +1,1 @@
+"""Smart-Boda backend application package."""

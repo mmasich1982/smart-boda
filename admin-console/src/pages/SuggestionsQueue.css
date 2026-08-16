@@ -1,0 +1,285 @@
+/* admin-console/src/pages/SuggestionsQueue.css */
+.suggestions-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  background: #f6f4ef;
+  min-height: 100vh;
+}
+
+.suggestions-header {
+  margin-bottom: 28px;
+}
+
+.suggestions-header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1a1c20;
+  margin: 0 0 4px;
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+}
+
+.suggestions-meta {
+  font-size: 13px;
+  color: #5b606c;
+  margin: 0;
+}
+
+.suggestions-filters {
+  background: #fff;
+  border: 1px solid #e7e4db;
+  border-radius: 14px;
+  padding: 18px;
+  margin-bottom: 24px;
+}
+
+.filter-group {
+  margin-bottom: 18px;
+}
+
+.filter-group:last-child {
+  margin-bottom: 0;
+}
+
+.filter-group label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #5b606c;
+  margin-bottom: 10px;
+  letter-spacing: 0.08em;
+}
+
+.search-row {
+  display: flex;
+  gap: 10px;
+}
+
+.search-row input {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1.5px solid #e7e4db;
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: #1a1c20;
+}
+
+.search-row input::placeholder {
+  color: #5b606c;
+}
+
+.btn-search {
+  padding: 10px 16px;
+  background: #ff7a1a;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.btn-search:hover {
+  background: #e5650a;
+}
+
+.category-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  padding: 8px 12px;
+  background: #f6f4ef;
+  border: 1.5px solid #e7e4db;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  color: #1a1c20;
+}
+
+.chip:hover {
+  border-color: #ff7a1a;
+  background: #fff6ee;
+}
+
+.chip.active {
+  background: #ff7a1a;
+  color: #fff;
+  border-color: #ff7a1a;
+}
+
+.loading-state,
+.error-state,
+.empty-state {
+  background: #fff;
+  border: 1px solid #e7e4db;
+  border-radius: 14px;
+  padding: 32px;
+  text-align: center;
+  color: #5b606c;
+  font-size: 14px;
+}
+
+.error-state {
+  background: #fdecea;
+  border-color: #e0453f;
+  color: #e0453f;
+}
+
+.suggestions-list {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.suggestion-card {
+  background: #fff;
+  border: 1px solid #e7e4db;
+  border-radius: 14px;
+  overflow: hidden;
+  transition: box-shadow 0.2s;
+}
+
+.suggestion-card:hover {
+  box-shadow: 0 4px 12px rgba(26, 28, 32, 0.08);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e7e4db;
+  gap: 12px;
+}
+
+.category-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.category-badge .emoji {
+  font-size: 18px;
+}
+
+.category-badge .label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a1c20;
+}
+
+.card-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 11px;
+  color: #5b606c;
+}
+
+.card-meta .rider-id {
+  font-weight: 600;
+  color: #1a1c20;
+}
+
+.card-body {
+  padding: 14px 16px;
+}
+
+.card-body .message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: #1a1c20;
+}
+
+.card-footer {
+  padding: 8px 16px;
+  background: #f6f4ef;
+  border-top: 1px solid #e7e4db;
+  font-size: 10px;
+  color: #5b606c;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.suggestion-id {
+  word-break: break-all;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.btn-pagination {
+  padding: 10px 16px;
+  background: #fff;
+  border: 1.5px solid #e7e4db;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  color: #1a1c20;
+  transition: all 0.15s;
+}
+
+.btn-pagination:hover:not(:disabled) {
+  border-color: #ff7a1a;
+  color: #ff7a1a;
+}
+
+.btn-pagination:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.page-info {
+  font-size: 12px;
+  color: #5b606c;
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  .suggestions-container {
+    padding: 16px;
+  }
+
+  .card-header {
+    flex-direction: column;
+  }
+
+  .card-meta {
+    align-items: flex-start;
+  }
+
+  .category-chips {
+    gap: 6px;
+  }
+
+  .chip {
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+
+  .search-row {
+    flex-direction: column;
+  }
+
+  .btn-search {
+    width: 100%;
+  }
+}
