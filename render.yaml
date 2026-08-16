@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: smart-boda-admin
+    runtime: static
+    buildCommand: cd . && npm install && npm run build
+    publishDirectory: dist
+    routes:
+      - path: /
+        index: index.html
+      - path: /*
+        index: index.html
