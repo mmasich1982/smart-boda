@@ -140,6 +140,16 @@ async def startup_event():
                 logger.info(f"Database connectivity check returned: {result.scalar()}")
             
             logger.info("✓ Database initialized and verified")
+            
+            # Seed master data on startup
+            logger.info("Seeding master data...")
+            try:
+                from app.seed.seed_all_data import seed_all_data
+                seed_all_data()
+                logger.info("✓ Master data seeded successfully")
+            except Exception as seed_error:
+                # If seed fails (e.g., data already exists), log but don't crash
+                logger.warning(f"Seed operation completed with status: {str(seed_error)}")
         else:
             logger.info("✓ Skipping database initialization (test mode with SQLite in-memory)")
     except Exception as e:
