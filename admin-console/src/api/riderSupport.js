@@ -204,3 +204,183 @@ export async function exportPinRecoveryLog(format = 'csv', dateFrom = null, date
     throw error;
   }
 }
+
+/**
+ * List all pending data export requests
+ * GET /admin/data-export/queue
+ * 
+ * Returns array of:
+ * {
+ *   id: string,
+ *   rider_id: UUID,
+ *   mobile_number: string,
+ *   contact_email: string,
+ *   reason_code: string,
+ *   requested_at: timestamp,
+ *   status: 'pending' | 'fulfilled' | 'rejected'
+ * }
+ */
+export async function listDataExportRequests() {
+  try {
+    const response = await client.get('/admin/data-export/queue');
+    return response.data || [];
+  } catch (error) {
+    console.error('Error fetching data export requests:', error);
+    throw error;
+  }
+}
+
+/**
+ * Mark a data export request as fulfilled
+ * POST /admin/data-export/fulfill
+ * 
+ * Sends:
+ * {
+ *   request_id: string,
+ *   fulfilled_at: timestamp (optional, defaults to now)
+ * }
+ * 
+ * Returns:
+ * {
+ *   success: boolean,
+ *   message: string,
+ *   error?: string
+ * }
+ */
+export async function fulfilDataExportRequest(requestId) {
+  try {
+    const response = await client.post('/admin/data-export/fulfill', {
+      request_id: requestId
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fulfilling data export request:', error);
+    throw error;
+  }
+}
+
+/**
+ * List all pending mobile verification requests
+ * GET /admin/mobile-verification/queue
+ * 
+ * Returns array of:
+ * {
+ *   id: string,
+ *   rider_id: UUID,
+ *   rider_name: string,
+ *   mobile_number: string,
+ *   email: string,
+ *   bike_plate: string,
+ *   requested_at: timestamp,
+ *   status: 'pending' | 'verified' | 'rejected'
+ * }
+ */
+export async function listMobileVerificationQueue() {
+  try {
+    const response = await client.get('/admin/mobile-verification/queue');
+    return response.data || [];
+  } catch (error) {
+    console.error('Error fetching mobile verification queue:', error);
+    throw error;
+  }
+}
+
+/**
+ * Resolve a mobile verification request (approve/reject)
+ * POST /admin/mobile-verification/resolve
+ * 
+ * Sends:
+ * {
+ *   request_id: string,
+ *   status: 'verified' | 'rejected',
+ *   reason?: string (required if rejected),
+ *   verification_notes?: string
+ * }
+ * 
+ * Returns:
+ * {
+ *   success: boolean,
+ *   message: string,
+ *   error?: string
+ * }
+ */
+export async function resolveMobileVerification(requestId, status, reason, notes) {
+  try {
+    const payload = {
+      request_id: requestId,
+      status: status
+    };
+    if (reason) payload.reason = reason;
+    if (notes) payload.verification_notes = notes;
+
+    const response = await client.post('/admin/mobile-verification/resolve', payload);
+    return response.data;
+  } catch (error) {
+    console.error('Error resolving mobile verification:', error);
+    throw error;
+  }
+}
+
+/**
+ * List all duplicate plate cases
+ * GET /admin/duplicate-plate/queue
+ * 
+ * Returns array of:
+ * {
+ *   id: string,
+ *   rider_id: UUID,
+ *   rider_name: string,
+ *   mobile_number: string,
+ *   bike_plate: string,
+ *   duplicate_plate: string,
+ *   reported_at: timestamp,
+ *   status: 'pending' | 'resolved' | 'rejected'
+ * }
+ */
+export async function listDuplicatePlateCases() {
+  try {
+    const response = await client.get('/admin/duplicate-plate/queue');
+    return response.data || [];
+  } catch (error) {
+    console.error('Error fetching duplicate plate cases:', error);
+    throw error;
+  }
+}
+
+/**
+ * Resolve a duplicate plate case
+ * POST /admin/duplicate-plate/resolve
+ * 
+ * Sends:
+ * {
+ *   case_id: string,
+ *   resolution: 'corrected' | 'rejected',
+ *   reason?: string,
+ *   new_plate?: string (if corrected),
+ *   admin_notes?: string
+ * }
+ * 
+ * Returns:
+ * {
+ *   success: boolean,
+ *   message: string,
+ *   error?: string
+ * }
+ */
+export async function resolveDuplicatePlateCase(caseId, resolution, reason, newPlate, notes) {
+  try {
+    const payload = {
+      case_id: caseId,
+      resolution: resolution
+    };
+    if (reason) payload.reason = reason;
+    if (newPlate) payload.new_plate = newPlate;
+    if (notes) payload.admin_notes = notes;
+
+    const response = await client.post('/admin/duplicate-plate/resolve', payload);
+    return response.data;
+  } catch (error) {
+    console.error('Error resolving duplicate plate case:', error);
+    throw error;
+  }
+}

@@ -45,6 +45,13 @@ const SECTIONS = [
     ],
   },
   {
+    label: '📊 Subscriptions',
+    items: [
+      { to: '/subscription-management', label: '⚙️ Manage Subscriptions' },
+      { to: '/subscription-reports', label: '📈 Reports & Analytics' },
+    ],
+  },
+  {
     label: '📈 Reporting',
     items: [
       { to: '/reporting/daily-revenue', label: 'Daily Revenue Report' },

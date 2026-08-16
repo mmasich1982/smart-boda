@@ -22,6 +22,8 @@ import PaymentReconciliation from './pages/PaymentReconciliation';
 import ReLockAccounts from './pages/ReLockAccounts';
 import ActiveRidersList from './pages/ActiveRidersList';
 import SubscriptionStatus from './pages/SubscriptionStatus';
+import SubscriptionManagement from './pages/SubscriptionManagement';
+import SubscriptionReports from './pages/SubscriptionReports';
 import ChurnAnalysis from './pages/ChurnAnalysis';
 import DailyRevenueReport from './pages/DailyRevenueReport';
 import UserEngagementMetrics from './pages/UserEngagementMetrics';
@@ -94,6 +96,10 @@ export default function App() {
         <Route path="/users/active-riders" element={<RequireAuth><Shell><ActiveRidersList /></Shell></RequireAuth>} />
         <Route path="/users/subscription-status" element={<RequireAuth><Shell><SubscriptionStatus /></Shell></RequireAuth>} />
         <Route path="/users/churn-analysis" element={<RequireAuth><Shell><ChurnAnalysis /></Shell></RequireAuth>} />
+
+        <Route path="/subscription-status" element={<RequireAuth><Shell><SubscriptionStatus /></Shell></RequireAuth>} />
+        <Route path="/subscription-management" element={<RequireAuth><Shell><SubscriptionManagement /></Shell></RequireAuth>} />
+        <Route path="/subscription-reports" element={<RequireAuth><Shell><SubscriptionReports /></Shell></RequireAuth>} />
 
         <Route path="/reporting/daily-revenue" element={<RequireAuth><Shell><DailyRevenueReport /></Shell></RequireAuth>} />
         <Route path="/reporting/engagement" element={<RequireAuth><Shell><UserEngagementMetrics /></Shell></RequireAuth>} />
