@@ -5,39 +5,103 @@
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
     <title>Smart Boda</title>
-    <!-- React Native Web Reset -->
     <style id="expo-reset">
       html,
       body {
         height: 100%;
+        margin: 0;
+        padding: 0;
       }
       body {
         overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+          'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+          sans-serif;
       }
       #root {
         display: flex;
         height: 100%;
         flex: 1;
       }
+      #install-btn {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        padding: 10px 16px;
+        background: #ff7a1a;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        display: none;
+        z-index: 9999;
+        font-size: 14px;
+        font-weight: 600;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        transition: all 0.3s ease;
+      }
+      #install-btn:hover {
+        background: #e56a0a;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      }
+      #install-btn:active {
+        transform: scale(0.98);
+      }
     </style>
-    <!-- PWA Configuration -->
     <meta name="theme-color" content="#ff7a1a">
     <meta name="description" content="Track trips, fuel, maintenance, and savings — works fully offline.">
     <link rel="manifest" href="/manifest.json" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
-    <link rel="shortcut icon" href="/favicon.ico" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   </head>
   <body>
+    <button id="install-btn">📱 Install App</button>
     <div id="root"></div>
-    <!-- Service Worker Registration -->
+
     <script>
+      let deferredPrompt;
+
+      // Service Worker Registration
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').then(
-            (reg) => console.log('Service Worker registered:', reg),
-            (err) => console.log('Service Worker registration failed:', err)
-          );
+          navigator.serviceWorker
+            .register('/sw.js')
+            .then((reg) => {
+              console.log('✓ Service Worker registered:', reg);
+            })
+            .catch((err) => {
+              console.error('✗ Service Worker registration failed:', err);
+            });
         });
+      }
+
+      // Capture Install Prompt
+      window.addEventListener('beforeinstallprompt', (event) => {
+        event.preventDefault();
+        deferredPrompt = event;
+        console.log('✓ Install prompt captured');
+        document.getElementById('install-btn').style.display = 'block';
+      });
+
+      // Handle Install Button Click
+      document.getElementById('install-btn').addEventListener('click', async () => {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          console.log(`User response: ${outcome}`);
+          deferredPrompt = null;
+        }
+      });
+
+      // App Installed Event
+      window.addEventListener('appinstalled', () => {
+        console.log('✓ Smart Boda installed successfully');
+        document.getElementById('install-btn').style.display = 'none';
+      });
+
+      // Handle app running standalone
+      if (window.navigator.standalone === true) {
+        console.log('✓ App running in standalone mode (PWA)');
       }
     </script>
   </body>
