@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 import os
 import logging
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy import text
 
 # Configure logging
@@ -141,15 +141,38 @@ async def startup_event():
             
             logger.info("✓ Database initialized and verified")
             
-            # Seed master data on startup
+            # Seed master data on startup (idempotent - handles existing data)
             logger.info("Seeding master data...")
             try:
-                from app.seed.seed_all_data import run_all_seeds
-                run_all_seeds()
-                logger.info("✓ Master data seeded successfully")
+                from app.seed import (
+                    seed_languages, seed_trip_master_data, seed_fuel_master_data,
+                    seed_financial_master_data, seed_compliance_master_data,
+                    seed_value_preview_config, seed_ui_strings
+                )
+                
+                seeds = [
+                    ("languages", seed_languages),
+                    ("trip master data", seed_trip_master_data),
+                    ("fuel master data", seed_fuel_master_data),
+                    ("financial master data", seed_financial_master_data),
+                    ("compliance master data", seed_compliance_master_data),
+                    ("value preview config", seed_value_preview_config),
+                    ("UI strings", seed_ui_strings),
+                ]
+                
+                for i, (name, seed_module) in enumerate(seeds, 1):
+                    try:
+                        logger.info(f"[{i}/7] Seeding {name}...")
+                        seed_module.run()
+                    except IntegrityError as e:
+                        # Data already seeded, this is fine
+                        logger.info(f"[{i}/7] {name} already exists (skipping)")
+                    except Exception as e:
+                        logger.warning(f"[{i}/7] {name} seeding issue: {str(e)}")
+                
+                logger.info("✓ Master data seeding completed")
             except Exception as seed_error:
-                # If seed fails (e.g., data already exists), log but don't crash
-                logger.warning(f"Seed operation completed with status: {str(seed_error)}")
+                logger.warning(f"Seed operation note: {str(seed_error)}")
         else:
             logger.info("✓ Skipping database initialization (test mode with SQLite in-memory)")
     except Exception as e:
