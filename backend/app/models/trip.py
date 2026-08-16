@@ -6,7 +6,7 @@
 # ✓ FIXED: UUID default using text() function instead of string literal
 
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Date, func, Numeric, text
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Date, func, Numeric, text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
