@@ -222,7 +222,7 @@ from app.routers import (
     sb09_fuel_entry, sb10_battery_entry, sb12_maintenance,
     sb13_net_profit, sb14_financial_performance, sb15_revenue_targets, sb16_savings_tracker, sb17_goals_remittance,
     sb18_compliance, sb20_statements, sb21_data_export,
-    sb22_settings, sb23_suggestions, sb24_subscription,sb24_subscription_enhanced,
+    sb22_settings, sb23_suggestions, sb24_subscription,
     financial_expense, sync_status,
 )
 app.include_router(sb09_fuel_entry.router)
@@ -240,7 +240,6 @@ app.include_router(sb21_data_export.router)
 app.include_router(sb22_settings.router)
 app.include_router(sb23_suggestions.router)
 app.include_router(sb24_subscription.router)
-app.include_router(sb24_subscription_enhanced.router)
 app.include_router(sync_status.router)
 
 # ---- Admin master-data routers ----
