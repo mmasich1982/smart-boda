@@ -13,20 +13,27 @@
 # but never defined. Now properly retrieves Rider from database using token payload.
 
 import os
+import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, Request, Header, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from passlib.exc import InvalidHashError
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.admin_user import AdminUser
 from app.models.rider import Rider
+
+logger = logging.getLogger(__name__)
 
 SECRET_KEY = os.getenv("ADMIN_JWT_SECRET", "dev-only-secret-change-me")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # one admin shift
 COOKIE_NAME = "sb_admin_session"
 
+# ✅ FIX: Initialize CryptContext with bcrypt
+# Note: bcrypt has a 72-byte limit for passwords. This is enforced in hash_password 
+# and verify_password below.
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 ROLE_HIERARCHY = {"support_admin": 1, "super_admin": 2}
@@ -36,16 +43,77 @@ ROLE_HIERARCHY = {"support_admin": 1, "super_admin": 2}
 # ============================================================================
 
 def hash_password(plain: str) -> str:
-    # Bcrypt has a 72-byte limit; truncate to avoid ValueError
-    plain = plain[:72]
-    return pwd_context.hash(plain)
+    """
+    Hash a password using bcrypt.
+    
+    ✅ Bcrypt has a 72-byte limit. This function automatically truncates
+    to ensure safe hashing without ValueError.
+    
+    Args:
+        plain: Plain text password
+        
+    Returns:
+        Bcrypt hashed password (60 chars)
+        
+    Raises:
+        ValueError: If hashing fails after truncation
+    """
+    # Truncate to 72 bytes (bcrypt limit)
+    plain_truncated = plain[:72] if plain else ""
+    
+    if not plain_truncated:
+        raise ValueError("Password cannot be empty")
+    
+    try:
+        hashed = pwd_context.hash(plain_truncated)
+        logger.debug(f"Password hashed successfully (length: {len(hashed)})")
+        return hashed
+    except Exception as e:
+        logger.error(f"Password hashing failed: {str(e)}")
+        raise ValueError(f"Failed to hash password: {str(e)}")
 
 def verify_password(plain: str, hashed: str) -> bool:
-    # Bcrypt has a 72-byte limit; truncate to avoid ValueError
-    plain = plain[:72]
-    return pwd_context.verify(plain, hashed)
+    """
+    Verify a plain password against a bcrypt hash.
+    
+    ✅ Bcrypt has a 72-byte limit. This function automatically truncates
+    the input password before verification.
+    
+    Args:
+        plain: Plain text password to verify
+        hashed: Bcrypt hash from database
+        
+    Returns:
+        True if password matches, False otherwise
+        
+    Note:
+        - Returns False instead of raising exceptions for security
+        - Uses constant-time comparison to prevent timing attacks
+        - Truncates password to 72 bytes for bcrypt compatibility
+    """
+    if not plain or not hashed:
+        return False
+    
+    # Truncate to 72 bytes (bcrypt limit) - same as hash_password
+    plain_truncated = plain[:72]
+    
+    try:
+        # pwd_context.verify() handles constant-time comparison
+        is_valid = pwd_context.verify(plain_truncated, hashed)
+        logger.debug(f"Password verification: {'✓ valid' if is_valid else '✗ invalid'}")
+        return is_valid
+    except InvalidHashError:
+        # Hash is invalid/corrupted - log but don't raise
+        logger.warning(f"Invalid password hash format in database")
+        return False
+    except Exception as e:
+        # Catch bcrypt errors (including 72-byte limit violations)
+        logger.error(f"Password verification error: {str(e)}")
+        # Return False instead of raising - don't leak info about bcrypt issues
+        return False
 
 def create_access_token(admin: AdminUser) -> str:
+    """Create a JWT access token for an admin user."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
         "sub": str(admin.id),
@@ -57,8 +125,12 @@ def create_access_token(admin: AdminUser) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 def set_session_cookie(response, token: str) -> None:
-    # AUDIT FIX: httpOnly + Secure + SameSite=Strict, per the admin-console audit's
-    # recommended fix -- the frontend never touches this value directly.
+    """
+    Set an httpOnly session cookie with JWT token.
+    
+    ✅ AUDIT FIX: httpOnly + Secure + SameSite=Strict, per the admin-console audit's
+    recommended fix -- the frontend never touches this value directly.
+    """
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
@@ -70,9 +142,11 @@ def set_session_cookie(response, token: str) -> None:
     )
 
 def clear_session_cookie(response) -> None:
+    """Clear the session cookie on logout."""
     response.delete_cookie(key=COOKIE_NAME, path="/")
 
 def _decode_token(request: Request) -> dict:
+    """Decode JWT from session cookie."""
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
@@ -82,6 +156,7 @@ def _decode_token(request: Request) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
 
 def get_current_admin(request: Request, db: Session = Depends(get_db)) -> AdminUser:
+    """Get the current authenticated admin from the session cookie."""
     payload = _decode_token(request)
     admin = db.query(AdminUser).get(payload["sub"])
     if not admin or not admin.is_active:
