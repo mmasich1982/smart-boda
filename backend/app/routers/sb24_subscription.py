@@ -1,5 +1,7 @@
 # backend/app/routers/sb24_subscription.py
-# ✅ FIXED: Added proper UUID validation for rider_id parameter in all endpoints
+# ✅ FIXED: Auto-create subscription record for new riders instead of returning 404
+# This resolves the issue where the subscription endpoint returned 404 when accessed
+# by riders who didn't have a subscription record yet.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -49,6 +51,35 @@ def check_lock(sub: RiderSubscription):
         sub.lock_reason = "Subscription Expired" if sub.has_ever_paid else "Free Trial Expired"
         sub.locked_at = datetime.now(timezone.utc)
 
+def ensure_subscription_exists(rider_uuid: UUID, db: Session) -> RiderSubscription:
+    """
+    ✅ FIXED: Ensure a subscription record exists for the rider.
+    If not, create one with a free trial expiry.
+    This prevents 404 errors when accessing subscription endpoint.
+    """
+    sub = db.query(RiderSubscription).filter(RiderSubscription.rider_id == rider_uuid).first()
+    
+    if not sub:
+        # Create a new subscription with free trial
+        now = datetime.now(timezone.utc)
+        trial_expiry = now + timedelta(days=TRIAL_PERIOD_DAYS)
+        
+        sub = RiderSubscription(
+            rider_id=rider_uuid,
+            plan_id=1,  # Default to plan 1
+            expiry_at=trial_expiry,
+            frequency="monthly",
+            has_ever_paid=False,
+            locked=False,
+            lock_reason=None,
+            created_at=now,
+            updated_at=now
+        )
+        db.add(sub)
+        db.commit()
+    
+    return sub
+
 @router.get("")
 def get_subscription(
     rider_id: str = Query(..., description="Rider ID is required"),
@@ -57,6 +88,9 @@ def get_subscription(
     """
     Get rider's current subscription status and plan pricing.
     Returns plan configuration, current subscription status, and days remaining.
+    
+    ✅ FIXED: Now automatically creates a subscription record if one doesn't exist,
+    instead of returning 404.
     """
     if not rider_id:
         raise HTTPException(422, "rider_id is required")
@@ -67,9 +101,8 @@ def get_subscription(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid rider_id format. Must be a valid UUID.")
     
-    sub = db.query(RiderSubscription).filter(RiderSubscription.rider_id == rider_uuid).first()
-    if not sub:
-        raise HTTPException(404, "Subscription record not found for this rider")
+    # ✅ FIXED: Ensure subscription exists (creates if needed)
+    sub = ensure_subscription_exists(rider_uuid, db)
     
     plan = db.query(SubscriptionPlan).get(1)
     check_lock(sub)
@@ -120,9 +153,8 @@ def submit_payment(
     if len(code) < 8:
         raise HTTPException(422, "That code looks too short — please check the M-Pesa message and re-enter it.")
 
-    sub = db.query(RiderSubscription).filter(RiderSubscription.rider_id == rider_uuid).first()
-    if not sub:
-        raise HTTPException(404, "Subscription record not found")
+    # ✅ FIXED: Ensure subscription exists first
+    sub = ensure_subscription_exists(rider_uuid, db)
     
     plan = db.query(SubscriptionPlan).get(1)
     if not plan:
@@ -185,9 +217,8 @@ def submit_prepay(
     if not code or len(code) < 8:
         raise HTTPException(422, "Enter a valid M-Pesa confirmation code.")
     
-    sub = db.query(RiderSubscription).filter(RiderSubscription.rider_id == rider_uuid).first()
-    if not sub:
-        raise HTTPException(404, "Subscription record not found")
+    # ✅ FIXED: Ensure subscription exists first
+    sub = ensure_subscription_exists(rider_uuid, db)
     
     plan = db.query(SubscriptionPlan).get(1)
     if not plan:
