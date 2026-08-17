@@ -55,18 +55,36 @@ def ensure_subscription_exists(rider_uuid: UUID, db: Session) -> RiderSubscripti
     """
     ✅ FIXED: Ensure a subscription record exists for the rider.
     If not, create one with a free trial expiry.
+    Also ensures a default subscription plan exists.
     This prevents 404 errors when accessing subscription endpoint.
     """
     sub = db.query(RiderSubscription).filter(RiderSubscription.rider_id == rider_uuid).first()
     
     if not sub:
+        # First, ensure a subscription plan exists
+        plan = db.query(SubscriptionPlan).order_by(SubscriptionPlan.id).first()
+        
+        if not plan:
+            # Create a default plan if none exists
+            plan = SubscriptionPlan(
+                name="Smart Boda Standard",
+                daily_price=35.0,
+                trial_days=TRIAL_PERIOD_DAYS,
+                tier_name="standard",
+                tier_label="Standard Plan",
+                is_active=True
+            )
+            db.add(plan)
+            db.commit()
+            db.refresh(plan)
+        
         # Create a new subscription with free trial
         now = datetime.now(timezone.utc)
         trial_expiry = now + timedelta(days=TRIAL_PERIOD_DAYS)
         
         sub = RiderSubscription(
             rider_id=rider_uuid,
-            plan_id=1,  # Default to plan 1
+            plan_id=plan.id,  # Use existing or newly created plan
             expiry_at=trial_expiry,
             frequency="monthly",
             has_ever_paid=False,
