@@ -260,15 +260,6 @@ app.include_router(payment_admin.router)
 from app.routers import trip_support
 app.include_router(trip_support.router)
 
-# ---- Subscription Management----
-from app.routers import admin_subscription_management
-app.include_router(admin_subscription_management.router)
-
-# ---- Suggestions Management----
-from app.routers import admin_suggestions
-app.include_router(admin_suggestions.router)
-
-
 
 # ============================================================================
 # ✅ HEALTH & STATUS ENDPOINTS
