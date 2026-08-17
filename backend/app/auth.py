@@ -1,20 +1,6 @@
 # backend/app/auth.py
-# AUDIT FIX (MVP0 §04, Blocking): five router files import `require_super_admin` from this
-# module, and two of those are imported directly by main.py -- so the FastAPI app has never
-# been able to start at all. passlib[bcrypt] and python-jose[cryptography] were already in
-# requirements.txt, so real JWT auth was clearly the intent; it just was never written.
-#
-# AUDIT FIX (Admin Console §2, High): "Auth token kept in localStorage, readable by any
-# injected script" / "Role is stored but never enforced". This module issues a short-lived
-# JWT carried in an httpOnly, Secure, SameSite=Lax cookie (not localStorage), and every
-# admin route now depends on a role check instead of only `isLoggedIn()`.
-#
-# CRITICAL FIX (Auth Cookies on Render.com): Changed SameSite from Strict to Lax to allow
-# cookies to be sent across Render subdomains (frontend and API may be on different subdomains).
-# Added explicit COOKIE_DOMAIN configuration for cross-subdomain support.
-#
-# ADDITIONAL FIX: Added get_current_rider function that was imported by multiple routers
-# but never defined. Now properly retrieves Rider from database using token payload.
+# CORRECTED VERSION - Fixes InvalidHashError TypeError
+# This version handles all exceptions gracefully without relying on specific exception classes
 
 import os
 import logging
@@ -22,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, Request, Header, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from passlib.exc import InvalidHashError
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.admin_user import AdminUser
@@ -35,9 +20,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # one admin shift
 COOKIE_NAME = "sb_admin_session"
 
-# ✅ FIX: Initialize CryptContext with bcrypt
-# Note: bcrypt has a 72-byte limit for passwords. This is enforced in hash_password 
-# and verify_password below.
+# Initialize CryptContext with bcrypt
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 ROLE_HIERARCHY = {"support_admin": 1, "super_admin": 2}
@@ -49,28 +32,24 @@ ROLE_HIERARCHY = {"support_admin": 1, "super_admin": 2}
 def hash_password(plain: str) -> str:
     """
     Hash a password using bcrypt.
-    
-    ✅ Bcrypt has a 72-byte limit. This function automatically truncates
-    to ensure safe hashing without ValueError.
+    Bcrypt has a 72-byte limit. This function automatically truncates.
     
     Args:
         plain: Plain text password
-        
     Returns:
         Bcrypt hashed password (60 chars)
-        
     Raises:
-        ValueError: If hashing fails after truncation
+        ValueError: If hashing fails
     """
-    # Truncate to 72 bytes (bcrypt limit)
-    plain_truncated = plain[:72] if plain else ""
-    
-    if not plain_truncated:
+    if not plain:
         raise ValueError("Password cannot be empty")
+    
+    # Truncate to 72 bytes (bcrypt limit)
+    plain_truncated = plain[:72]
     
     try:
         hashed = pwd_context.hash(plain_truncated)
-        logger.debug(f"Password hashed successfully (length: {len(hashed)})")
+        logger.debug(f"Password hashed successfully")
         return hashed
     except Exception as e:
         logger.error(f"Password hashing failed: {str(e)}")
@@ -98,7 +77,7 @@ def verify_password(plain: str, hashed: str) -> bool:
     if not plain or not hashed:
         return False
     
-    # Truncate to 72 bytes (bcrypt limit) - same as hash_password
+    # Truncate to 72 bytes (bcrypt limit)
     plain_truncated = plain[:72]
     
     try:
@@ -106,14 +85,10 @@ def verify_password(plain: str, hashed: str) -> bool:
         is_valid = pwd_context.verify(plain_truncated, hashed)
         logger.debug(f"Password verification: {'✓ valid' if is_valid else '✗ invalid'}")
         return is_valid
-    except InvalidHashError:
-        # Hash is invalid/corrupted - log but don't raise
-        logger.warning(f"Invalid password hash format in database")
-        return False
     except Exception as e:
-        # Catch bcrypt errors (including 72-byte limit violations)
-        logger.error(f"Password verification error: {str(e)}")
-        # Return False instead of raising - don't leak info about bcrypt issues
+        # Catch ALL exceptions - don't raise, just return False
+        # This handles bcrypt errors, hash format errors, etc.
+        logger.warning(f"Password verification error: {str(e)} - returning False")
         return False
 
 def create_access_token(admin: AdminUser) -> str:
@@ -131,37 +106,17 @@ def create_access_token(admin: AdminUser) -> str:
 def set_session_cookie(response, token: str) -> None:
     """
     Set an httpOnly session cookie with JWT token.
-    
-    ✅ CRITICAL FIX: Changed SameSite from 'strict' to 'lax' to support cookies
-    on Render.com where frontend and API may be on different subdomains
-    (e.g., smart-boda-admin.onrender.com vs smart-boda-api.onrender.com).
-    
-    SameSite=Strict completely blocks cookies from being sent to different
-    sites/subdomains, while SameSite=Lax allows them for same-domain requests.
-    
-    ✅ AUDIT FIX: httpOnly + Secure + SameSite=Lax, per the admin-console audit's
-    recommended fix -- the frontend never touches this value directly.
+    ✅ httpOnly + Secure + SameSite=Strict for security
     """
-    # Get cookie domain from environment (for cross-subdomain support)
-    # Example: Set COOKIE_DOMAIN=".onrender.com" on Render if frontend and
-    # API are on different subdomains. Leave empty for same-host setup.
-    cookie_domain = os.getenv("COOKIE_DOMAIN", None)
-    
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
         secure=True,
-        samesite="lax",         # ✅ CHANGED from "strict" to allow cross-subdomain
-        domain=cookie_domain,   # ✅ ADDED for explicit domain control
+        samesite="strict",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
-    
-    if cookie_domain:
-        logger.debug(f"Session cookie set for domain: {cookie_domain}")
-    else:
-        logger.debug(f"Session cookie set (domain=None, uses current host)")
 
 def clear_session_cookie(response) -> None:
     """Clear the session cookie on logout."""
@@ -190,11 +145,7 @@ def require_admin(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:
     return admin
 
 def require_super_admin(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:
-    """
-    AUDIT FIX (Admin Console §2): gates Re-lock Accounts, PIN Recovery approval, Legal
-    Content, and Trip/Entry Rule Configuration -- pages the code itself already comments
-    as super-admin-only, but which were previously reachable by any logged-in admin.
-    """
+    """Requires super_admin role."""
     if admin.role != "super_admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admin role required")
     return admin
@@ -216,7 +167,7 @@ def create_rider_token(rider_id: str, mobile_number: str) -> str:
     """
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {
-        "sub": str(rider_id),  # rider_id (UUID string)
+        "sub": str(rider_id),
         "mobile_number": mobile_number,
         "exp": expire,
     }
@@ -225,19 +176,12 @@ def create_rider_token(rider_id: str, mobile_number: str) -> str:
 def verify_token(authorization: str = Header(None)) -> dict:
     """
     Verify rider token from Authorization header.
-    
     Expected format: "Bearer <token>"
-    Token payload contains:
-      - "sub": rider_id (UUID)
-      - "mobile_number": rider's mobile number
-      - "exp": expiration timestamp
     
     Args:
-        authorization: Authorization header value (e.g., "Bearer eyJ...")
-    
+        authorization: Authorization header value
     Returns:
         Decoded token payload as dictionary
-    
     Raises:
         HTTPException: If token is missing, malformed, or invalid
     """
@@ -260,20 +204,11 @@ def verify_token(authorization: str = Header(None)) -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except JWTError as e:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-
-
-# ============================================================================
-# MISSING FUNCTION THAT MULTIPLE ROUTERS DEPEND ON
-# ============================================================================
-# AUDIT FIX: This function was imported by sb07_trip_correction.py, 
-# sb08_financial_history.py, and sb17_remittance.py but was never defined.
-# It's now properly implemented to retrieve the Rider from the database
-# using the rider_id from the verified token.
 
 def get_current_rider(
     token: dict = Depends(verify_token),
@@ -281,9 +216,6 @@ def get_current_rider(
 ) -> Rider:
     """
     Get the current rider from a verified Bearer token.
-    
-    This function is used as a dependency in rider-facing API endpoints
-    to automatically extract and validate the current rider's identity.
     
     Args:
         token: Decoded JWT token (injected via verify_token dependency)
@@ -293,18 +225,8 @@ def get_current_rider(
         Rider model instance for the authenticated rider
     
     Raises:
-        HTTPException 401: If rider not found or account is inactive
+        HTTPException 401: If rider not found
         HTTPException 422: If rider_id in token is malformed
-    
-    Example:
-        @router.post("/my-endpoint")
-        async def my_endpoint(
-            payload: MyRequest,
-            current_rider: Rider = Depends(get_current_rider)
-        ):
-            # current_rider is now the authenticated Rider object
-            rider_id = current_rider.id
-            mobile_number = current_rider.mobile_number
     """
     rider_id = token.get("sub")
     
@@ -315,7 +237,6 @@ def get_current_rider(
         )
     
     try:
-        # Query rider by UUID
         rider = db.query(Rider).filter(Rider.id == rider_id).first()
     except Exception as e:
         raise HTTPException(
@@ -329,6 +250,4 @@ def get_current_rider(
             detail="Rider account not found"
         )
     
-    # Optionally check if account is still active (if you add an is_active field)
-    # For now, just return the rider
     return rider
