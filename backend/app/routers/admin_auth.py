@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 from app.database import get_db
 from app.models.admin_user import AdminUser
 from app.auth import (
@@ -12,11 +13,16 @@ from app.auth import (
 
 router = APIRouter()
 
+# Define a Pydantic model for login requests
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
 @router.post("/login")
-def admin_login(email: str, password: str, response: Response, db: Session = Depends(get_db)):
+def admin_login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
     """Admin login endpoint: validates credentials and sets JWT cookie."""
-    admin = db.query(AdminUser).filter(AdminUser.email == email).first()
-    if not admin or not verify_password(password, admin.password_hash):
+    admin = db.query(AdminUser).filter(AdminUser.email == payload.email).first()
+    if not admin or not verify_password(payload.password, admin.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not admin.is_active:
         raise HTTPException(status_code=403, detail="Account disabled")
