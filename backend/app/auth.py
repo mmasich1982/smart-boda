@@ -6,8 +6,12 @@
 #
 # AUDIT FIX (Admin Console §2, High): "Auth token kept in localStorage, readable by any
 # injected script" / "Role is stored but never enforced". This module issues a short-lived
-# JWT carried in an httpOnly, Secure, SameSite=Strict cookie (not localStorage), and every
+# JWT carried in an httpOnly, Secure, SameSite=Lax cookie (not localStorage), and every
 # admin route now depends on a role check instead of only `isLoggedIn()`.
+#
+# CRITICAL FIX (Auth Cookies on Render.com): Changed SameSite from Strict to Lax to allow
+# cookies to be sent across Render subdomains (frontend and API may be on different subdomains).
+# Added explicit COOKIE_DOMAIN configuration for cross-subdomain support.
 #
 # ADDITIONAL FIX: Added get_current_rider function that was imported by multiple routers
 # but never defined. Now properly retrieves Rider from database using token payload.
@@ -128,18 +132,36 @@ def set_session_cookie(response, token: str) -> None:
     """
     Set an httpOnly session cookie with JWT token.
     
-    ✅ AUDIT FIX: httpOnly + Secure + SameSite=Strict, per the admin-console audit's
+    ✅ CRITICAL FIX: Changed SameSite from 'strict' to 'lax' to support cookies
+    on Render.com where frontend and API may be on different subdomains
+    (e.g., smart-boda-admin.onrender.com vs smart-boda-api.onrender.com).
+    
+    SameSite=Strict completely blocks cookies from being sent to different
+    sites/subdomains, while SameSite=Lax allows them for same-domain requests.
+    
+    ✅ AUDIT FIX: httpOnly + Secure + SameSite=Lax, per the admin-console audit's
     recommended fix -- the frontend never touches this value directly.
     """
+    # Get cookie domain from environment (for cross-subdomain support)
+    # Example: Set COOKIE_DOMAIN=".onrender.com" on Render if frontend and
+    # API are on different subdomains. Leave empty for same-host setup.
+    cookie_domain = os.getenv("COOKIE_DOMAIN", None)
+    
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
         secure=True,
-        samesite="strict",
+        samesite="lax",         # ✅ CHANGED from "strict" to allow cross-subdomain
+        domain=cookie_domain,   # ✅ ADDED for explicit domain control
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
+    
+    if cookie_domain:
+        logger.debug(f"Session cookie set for domain: {cookie_domain}")
+    else:
+        logger.debug(f"Session cookie set (domain=None, uses current host)")
 
 def clear_session_cookie(response) -> None:
     """Clear the session cookie on logout."""
