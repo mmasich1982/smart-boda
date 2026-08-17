@@ -18,7 +18,7 @@ app = FastAPI(
 )
 
 # ============================================================================
-# ✅ CORS CONFIGURATION - ROBUST ERROR HANDLING
+# ✅ CORS CONFIGURATION - ROBUST ERROR HANDLING AND MIDDLEWARE WRAPPER
 # ============================================================================
 # FIX: Ensure CORS headers are sent on ALL responses, including errors
 # The middleware will wrap the entire app stack so headers are always present
@@ -75,7 +75,7 @@ async def ensure_cors_headers(request: Request, call_next):
         )
 
 # ============================================================================
-# ✅ GLOBAL EXCEPTION HANDLERS
+# ✅ GLOBAL EXCEPTION HANDLERS 
 # ============================================================================
 
 @app.exception_handler(RequestValidationError)
@@ -192,7 +192,7 @@ async def shutdown_event():
         logger.error(f"Error during shutdown: {str(e)}")
 
 # ============================================================================
-# ✅ ROUTE REGISTRATION
+# ✅ ROUTE REGISTRATIONS
 # ============================================================================
 
 # ---- Admin auth (backs the Admin Console's LoginPage.jsx)----
@@ -208,18 +208,19 @@ app.include_router(mobile_number.router)
 app.include_router(pin.router)
 
 # ---- Module B routers ----
-from app.routers import trip_master_data_admin, sb05_trip_entry, sb05_lipa_later, sb07_trip_correction
+from app.routers import trip_master_data_admin, sb05_trip_entry, sb05_lipa_later, sb07_trip_correction, sb08_financial_history
 app.include_router(trip_master_data_admin.router)
 app.include_router(sb05_trip_entry.router)
 app.include_router(sb05_lipa_later.router)
 app.include_router(sb07_trip_correction.router)
+app.include_router(sb08_financial_history.router)
 
 # ---- Module C/D/E routers ----
 from app.routers import (
     sb09_fuel_entry, sb10_battery_entry, sb12_maintenance,
     sb13_net_profit, sb14_financial_performance, sb15_revenue_targets, sb16_savings_tracker, sb17_goals_remittance,
     sb18_compliance, sb20_statements, sb21_data_export,
-    sb22_settings, sb23_suggestions, sb24_subscription,
+    sb22_settings, sb23_suggestions, sb24_subscription,sb24_subscription_enhanced,
     financial_expense, sync_status,
 )
 app.include_router(sb09_fuel_entry.router)
@@ -237,13 +238,15 @@ app.include_router(sb21_data_export.router)
 app.include_router(sb22_settings.router)
 app.include_router(sb23_suggestions.router)
 app.include_router(sb24_subscription.router)
+app.include_router(sb24_subscription_enhanced.router)
 app.include_router(sync_status.router)
 
 # ---- Admin master-data routers ----
-from app.routers import compliance_master_data_admin, financial_master_data_admin, fuel_master_data_admin
+from app.routers import compliance_master_data_admin, financial_master_data_admin, fuel_master_data_admin, legal_content
 app.include_router(compliance_master_data_admin.router)
 app.include_router(financial_master_data_admin.router)
 app.include_router(fuel_master_data_admin.router)
+app.include_router(legal_content.router)
 
 # ---- Admin Dashboard / Payments / Users / Reporting ----
 from app.routers import admin_dashboard
@@ -256,6 +259,16 @@ app.include_router(payment_admin.router)
 # ---- Correction window related ----
 from app.routers import trip_support
 app.include_router(trip_support.router)
+
+# ---- Subscription Management----
+from app.routers import admin_subscription_management
+app.include_router(admin_subscription_management.router)
+
+# ---- Suggestions Management----
+from app.routers import admin_suggestions
+app.include_router(admin_suggestions.router)
+
+
 
 # ============================================================================
 # ✅ HEALTH & STATUS ENDPOINTS
