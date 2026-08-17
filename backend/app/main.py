@@ -198,7 +198,7 @@ async def shutdown_event():
 
 # ---- Admin auth (backs the Admin Console's LoginPage.jsx)----
 from app.routers import admin_auth
-app.include_router(admin_auth.router)
+app.include_router(admin_auth.router, prefix="/admin/auth", tags=["admin-auth"])
 
 # ---- Module A routers ----
 from app.routers import master_data_admin, language, bike_profile, mobile_number, pin
