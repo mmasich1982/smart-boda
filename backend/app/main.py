@@ -6,6 +6,7 @@ import os
 import logging
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy import text
+from app.routers import sb08_financial_history
 
 # Configure logging
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -208,12 +209,13 @@ app.include_router(mobile_number.router)
 app.include_router(pin.router)
 
 # ---- Module B routers ----
-from app.routers import trip_master_data_admin, sb05_trip_entry, sb05_lipa_later, sb07_trip_correction, sb08_financial_history
+from app.routers import trip_master_data_admin, sb05_trip_entry, sb05_lipa_later, sb07_trip_correction
 app.include_router(trip_master_data_admin.router)
 app.include_router(sb05_trip_entry.router)
 app.include_router(sb05_lipa_later.router)
 app.include_router(sb07_trip_correction.router)
-app.include_router(sb08_financial_history.router)
+app.include_router(sb08_financial_history.router_api)
+app.include_router(sb08_financial_history.router_compliance)
 
 # ---- Module C/D/E routers ----
 from app.routers import (
@@ -242,11 +244,10 @@ app.include_router(sb24_subscription_enhanced.router)
 app.include_router(sync_status.router)
 
 # ---- Admin master-data routers ----
-from app.routers import compliance_master_data_admin, financial_master_data_admin, fuel_master_data_admin, legal_content
+from app.routers import compliance_master_data_admin, financial_master_data_admin, fuel_master_data_admin
 app.include_router(compliance_master_data_admin.router)
 app.include_router(financial_master_data_admin.router)
 app.include_router(fuel_master_data_admin.router)
-app.include_router(legal_content.router)
 
 # ---- Admin Dashboard / Payments / Users / Reporting ----
 from app.routers import admin_dashboard
