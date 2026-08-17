@@ -49,10 +49,10 @@ export function SubscriptionScreen({ navigation }) {
 
   useFocusEffect(
     useCallback(() => {
-      if (effectiveRiderId && !loading) {
+      if (effectiveRiderId) {
         loadSubscription();
       }
-    }, [effectiveRiderId, loading])
+    }, [effectiveRiderId])  // ✅ FIXED: Removed 'loading' from dependency array to prevent infinite loop
   );
 
   const loadSubscription = async () => {
