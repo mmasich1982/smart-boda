@@ -157,9 +157,9 @@ export function SubscriptionScreen({ navigation }) {
         style={[styles.button, styles.buttonPrimary]}
         onPress={() => {
           if (subscription.has_ever_paid) {
-            navigation.navigate('ConfirmSubscription', { frequency: subscription.frequency });
+            navigation.navigate('ConfirmSubscriptionScreen', { frequency: subscription.frequency });
           } else {
-            navigation.navigate('ChooseFrequency');
+            navigation.navigate('ChooseFrequencyScreen');
           }
         }}
       >
@@ -171,7 +171,7 @@ export function SubscriptionScreen({ navigation }) {
       {subscription.has_ever_paid && (
         <TouchableOpacity
           style={styles.buttonLink}
-          onPress={() => navigation.navigate('ChooseFrequency')}
+          onPress={() => navigation.navigate('ChooseFrequencyScreen')}
         >
           <Text style={styles.buttonLinkText}>Change how often I pay</Text>
         </TouchableOpacity>
@@ -179,14 +179,14 @@ export function SubscriptionScreen({ navigation }) {
 
       <TouchableOpacity
         style={[styles.button, styles.buttonGhost]}
-        onPress={() => navigation.navigate('Prepay')}
+        onPress={() => navigation.navigate('PrepayScreen')}
       >
         <Text style={styles.buttonText}>📅 Pay Ahead & Skip the Hassle →</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
         style={styles.buttonLink}
-        onPress={() => navigation.navigate('PaymentHistory')}
+        onPress={() => navigation.navigate('PaymentHistoryScreen')}
       >
         <Text style={styles.buttonLinkText}>View Payment History →</Text>
       </TouchableOpacity>
@@ -277,7 +277,7 @@ export function ChooseFrequencyScreen({ navigation }) {
 
       <TouchableOpacity
         style={[styles.button, styles.buttonPrimary, !chosenFrequency && styles.buttonDisabled]}
-        onPress={() => navigation.navigate('ConfirmSubscription', { frequency: chosenFrequency })}
+        onPress={() => navigation.navigate('ConfirmSubscriptionScreen', { frequency: chosenFrequency })}
         disabled={!chosenFrequency}
       >
         <Text style={styles.buttonText}>Continue →</Text>
