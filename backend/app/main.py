@@ -220,7 +220,6 @@ app.include_router(sb07_trip_correction.router)
 # sb08: API and Compliance endpoints with period-based summaries
 # sb19: FIXED - Compliance endpoints with corrected OtherExpense field names and rider onboarding validation
 app.include_router(sb08_financial_history.router_api)
-app.include_router(sb08_financial_history.router_compliance)
 app.include_router(sb19_financial_history.router)  # ✅ NEW: Fixed financial history router
 
 # ---- Module C/D/E routers ----
