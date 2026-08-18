@@ -444,7 +444,7 @@ export default function HomeScreen() {
           {subscription?.days_left <= 1 && !subscription?.locked && (
             <View style={styles.subscriptionBanner}>
               <View style={styles.bannerContent}>
-                <Text style={styles.bannerTitle}>⚠️ Last Day Warning</Text>
+                <Text style={styles.bannerTitle}>⚠️ Last Day Polite Reminder</Text>
                 <Text style={styles.bannerText}>
                   Today is your last day! Keep your bike's tools running — subscribe now.
                 </Text>
