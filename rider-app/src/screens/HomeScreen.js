@@ -25,6 +25,7 @@ import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
 import { getActiveBikeProfile, getRiderAccountSummary, clearSession } from '../offline/db';
 import HeroFareCard from '../components/HeroFareCard';
 import { getLocalRiderId } from '../offline/db';
+import LocalStore from '../offline/LocalStore';
 import api from '../api/client';
 
 const ENERGY_TILE_BY_FUEL = {
@@ -157,29 +158,41 @@ export default function HomeScreen() {
       setSubscription(response.data.subscription);
       setIsOffline(false);
       
-      // ✅ OFFLINE: Cache subscription data
-      await AsyncStorage.setItem(
-        `subscription_cache_${riderId}`,
-        JSON.stringify({
-          data: response.data.subscription,
-          cached_at: new Date().toISOString()
-        })
-      );
+      // ✅ OFFLINE: Cache subscription data using LocalStore
+      try {
+        LocalStore.set(
+          `subscription_cache_${riderId}`,
+          JSON.stringify({
+            data: response.data.subscription,
+            cached_at: new Date().toISOString()
+          })
+        );
+      } catch (cacheErr) {
+        console.warn('Warning: Unable to cache subscription data:', cacheErr);
+        // Continue even if caching fails
+      }
     } catch (err) {
       console.error('Error loading subscription:', err);
       
-      // ✅ OFFLINE: Load from cache
+      // ✅ OFFLINE: Load from cache using LocalStore
       if (err.response?.status === 0 || err.message.includes('Network')) {
-        const cached = await AsyncStorage.getItem(`subscription_cache_${riderId}`);
-        if (cached) {
-          try {
-            const { data } = JSON.parse(cached);
-            setSubscription(data);
-            setIsOffline(true);
-          } catch (e) {
-            console.error('Error parsing cached subscription:', e);
+        try {
+          const cached = LocalStore.get(`subscription_cache_${riderId}`);
+          if (cached) {
+            try {
+              const { data } = JSON.parse(cached);
+              setSubscription(data);
+              setIsOffline(true);
+            } catch (e) {
+              console.error('Error parsing cached subscription:', e);
+            }
           }
+        } catch (cacheErr) {
+          console.error('Error loading subscription from cache:', cacheErr);
+          setIsOffline(true);
         }
+      } else {
+        setIsOffline(true);
       }
     } finally {
       setSubscriptionLoading(false);
