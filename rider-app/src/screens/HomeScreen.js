@@ -1,21 +1,50 @@
 // rider-app/src/screens/HomeScreen.js
-// FIXED: Uses HeroFareCard component with correct dark gradient styling
-// CRITICAL FIX APPLIED: Auto-refresh on focus for Lipa Later payment updates
-// - Proper integration of HeroFareCard component
-// - Clickable amount opens daily summary
-// - Fullwidth plus character in button text
-// - All other functionality preserved
-// - FIXED: Removed refreshFare guard to ensure Hero Fare Card updates immediately after Lipa Later payment recording
+// ============================================================================
+// CONSOLIDATED: Complete subscription management + comprehensive dashboard
+// Features Combined:
+// - Subscription notifications, banner, locked modal, offline support (REQ-4.1-4.4)
+// - Hero Fare Card with today's earnings and daily summary
+// - Yesterday's total, trips tracking, queued records
+// - Multiple navigation tiles (Fuel, Service, Financial, Targets, etc.)
+// - Error boundary and loading skeleton for robust UX
+// - Auto-refresh on focus for real-time updates
+// - Full offline-first support for subscription and trip data
+// ============================================================================
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { useTranslation } from '../i18n/LocalizationProvider';
-import { useToast } from '../components/Toast';
-import { getTodaysTrips, getTodaysRealizedIncome, getYesterdaysTotal, summarizeTrips } from '../offline/tripsRepository';
-import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
-import { getActiveBikeProfile, getRiderAccountSummary, clearSession } from '../offline/db';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  ScrollView,
+  RefreshControl,
+  Modal,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  Dimensions,
+  Linking,
+} from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useTranslation } from 'react-i18next';
+import { Ionicons } from '@expo/vector-icons';
+import api from '../api/client';
+import { useRider } from '../context/RiderContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  getTodaysTrips,
+  getTodaysRealizedIncome,
+  getYesterdaysTotal,
+  summarizeTrips,
+} from '../offline/tripsRepository';
+import {
+  getQueuedRecords,
+  hoursSinceLastSync,
+} from '../offline/syncQueue';
+import { getActiveBikeProfile, getRiderAccountSummary } from '../offline/db';
 import HeroFareCard from '../components/HeroFareCard';
+
+const { width } = Dimensions.get('window');
 
 const ENERGY_TILE_BY_FUEL = {
   petrol: { emoji: '⛽', label: 'home.tile_fuel_motorcycle', route: 'FuelHub' },
@@ -34,29 +63,9 @@ const HOME_TILES = [
   { emoji: '💡', label: 'home.tile_suggestions_feedback', route: 'SuggestionsFeedback' },
 ];
 
-function LoadingSkeleton() {
-  return (
-    <ScrollView style={styles.container}>
-      <View style={styles.topBar}>
-        <View style={styles.brand}>
-          <View style={styles.logo}>
-            <Text style={styles.logoText}>🚕</Text>
-          </View>
-          <Text style={styles.brandName}>Smart Boda</Text>
-        </View>
-      </View>
-      <View style={styles.screenBody}>
-        <View style={[styles.heroFare, styles.skeleton]} />
-        <View style={[styles.yesterdayCard, styles.skeleton, { height: 80, marginBottom: 16 }]} />
-        <View style={styles.skeletonGrid}>
-          <View style={[styles.homeTile, styles.skeleton]} />
-          <View style={[styles.homeTile, styles.skeleton]} />
-        </View>
-      </View>
-    </ScrollView>
-  );
-}
-
+// ============================================================================
+// ERROR BOUNDARY
+// ============================================================================
 function ErrorDisplay({ error, onRetry }) {
   return (
     <View style={styles.errorContainer}>
@@ -86,7 +95,7 @@ class HomeScreenErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <ErrorDisplay 
+        <ErrorDisplay
           error={this.state.error?.message || 'An unexpected error occurred'}
           onRetry={() => {
             this.setState({ hasError: false, error: null });
@@ -100,28 +109,49 @@ class HomeScreenErrorBoundary extends React.Component {
   }
 }
 
-export default function HomeScreen({ navigation: passedNavigation, route }) {
+// ============================================================================
+// LOADING SKELETON
+// ============================================================================
+function LoadingSkeleton() {
+  return (
+    <ScrollView style={styles.container}>
+      <View style={styles.topBar}>
+        <View style={styles.brand}>
+          <View style={styles.logo}>
+            <Text style={styles.logoText}>🚕</Text>
+          </View>
+          <Text style={styles.brandName}>Smart Boda</Text>
+        </View>
+      </View>
+      <View style={styles.screenBody}>
+        <View style={[styles.heroFare, styles.skeleton]} />
+        <View style={[styles.yesterdayCard, styles.skeleton, { height: 80, marginBottom: 16 }]} />
+        <View style={styles.skeletonGrid}>
+          <View style={[styles.homeTile, styles.skeleton]} />
+          <View style={[styles.homeTile, styles.skeleton]} />
+        </View>
+      </View>
+    </ScrollView>
+  );
+}
+
+// ============================================================================
+// MAIN HOMESCREEN COMPONENT
+// ============================================================================
+const HomeScreen = () => {
+  const navigation = useNavigation();
   const { t } = useTranslation();
-  const { showToast } = useToast();
-  
-  // Use useNavigation hook as primary source, fall back to passed prop
-  const hookNavigation = useNavigation();
-  const navigation = hookNavigation || passedNavigation;
-  
-  // Add console log to verify HomeScreen receives navigation
-  useEffect(() => {
-    console.log('[HomeScreen] Mounted - using navigation from:', hookNavigation ? 'hook' : 'passed prop');
-    console.log('[HomeScreen] Navigation available:', !!navigation);
-    if (navigation?.getState) {
-      const state = navigation.getState();
-      console.log('[HomeScreen] Navigation state routes:', state?.routes?.map(r => r.name));
-    }
-  }, [navigation, hookNavigation]);
-  
+  const { effectiveRiderId } = useRider();
+
+  // ✅ Subscription State (REQ-4.1-4.4)
+  const [subscription, setSubscription] = useState(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [isOfflineSubscription, setIsOfflineSubscription] = useState(false);
+
+  // ✅ Dashboard State
   const [isInitialized, setIsInitialized] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
-
   const [runningTotal, setRunningTotal] = useState(0);
   const [yesterdayTotal, setYesterdayTotal] = useState(null);
   const [queuedCount, setQueuedCount] = useState(0);
@@ -131,45 +161,96 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   const [offlineHours, setOfflineHours] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
+  // ============================================================================
+  // SUBSCRIPTION FUNCTIONS (REQ-4.1, 4.2, 4.3, 4.4)
+  // ============================================================================
+
+  // ✅ Load subscription data with offline caching
+  const loadSubscription = useCallback(async () => {
+    if (!effectiveRiderId) return;
+
+    try {
+      setSubscriptionLoading(true);
+      const response = await api.get('/subscription', {
+        params: { rider_id: effectiveRiderId },
+      });
+
+      setSubscription(response.data.subscription);
+      setIsOfflineSubscription(false);
+
+      // ✅ OFFLINE: Cache subscription data (24-hour window per backend spec)
+      await AsyncStorage.setItem(
+        `subscription_cache_${effectiveRiderId}`,
+        JSON.stringify({
+          data: response.data.subscription,
+          cached_at: new Date().toISOString(),
+        })
+      );
+    } catch (err) {
+      console.error('Error loading subscription:', err);
+
+      // ✅ OFFLINE: Load from cache if network error
+      if (err.response?.status === 0 || err.message.includes('Network')) {
+        const cached = await AsyncStorage.getItem(`subscription_cache_${effectiveRiderId}`);
+        if (cached) {
+          try {
+            const { data } = JSON.parse(cached);
+            setSubscription(data);
+            setIsOfflineSubscription(true);
+          } catch (e) {
+            console.error('Error loading cached subscription:', e);
+          }
+        }
+      }
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  }, [effectiveRiderId]);
+
+  // ============================================================================
+  // DASHBOARD FUNCTIONS
+  // ============================================================================
+
+  // ✅ Refresh all dashboard data
   const refresh = useCallback(async () => {
     try {
       setRefreshing(true);
       setHasError(false);
       setErrorMsg(null);
-      
+
+      // Load bike profile
       const activeBike = await getActiveBikeProfile();
       if (activeBike) {
         setBike(activeBike);
-      } else {
-        console.warn('[HomeScreen] No active bike profile found - using default');
-        setBike(null);
       }
 
+      // Load account summary
       const accountSummary = await getRiderAccountSummary();
       if (accountSummary) {
         setAccount(accountSummary);
-      } else {
-        console.warn('[HomeScreen] No account summary found - using defaults');
-        setAccount(null);
       }
 
+      // Load today's trips and realized income
       const trips = await getTodaysTrips();
       const summary = summarizeTrips(trips);
-      
-      // Get realized income including Lipa Later payments (counted on payment date, not trip date)
-      // CRITICAL: This includes any Lipa Later payments recorded since last refresh
       const realizedIncome = await getTodaysRealizedIncome();
       setRunningTotal(realizedIncome.total || 0);
       setTripsToday(trips.length || 0);
 
+      // Load yesterday's total
       const yest = await getYesterdaysTotal();
       setYesterdayTotal(yest);
 
+      // Load queued records
       const queued = await getQueuedRecords();
       setQueuedCount(queued?.length || 0);
 
+      // Load sync status
       const hours = await hoursSinceLastSync();
       setOfflineHours(Math.floor(hours) || 0);
+
+      // Load subscription
+      await loadSubscription();
 
       if (!isInitialized) {
         setIsInitialized(true);
@@ -178,61 +259,177 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       console.error('[HomeScreen] Refresh error:', err);
       setHasError(true);
       setErrorMsg(err.message || 'Error loading home screen');
-      showToast('Error loading home screen', 'error');
       if (!isInitialized) {
         setIsInitialized(true);
       }
     } finally {
       setRefreshing(false);
     }
-  }, [isInitialized, showToast]);
+  }, [isInitialized, loadSubscription]);
 
-  /**
-   * CRITICAL FIX: Auto-refresh when returning to HomeScreen
-   * 
-   * PROBLEM: Previously guarded with if (route?.params?.refreshFare)
-   * This prevented refresh when user recorded a Lipa Later payment and returned to Home
-   * 
-   * SOLUTION: Always refresh on focus - data might have changed in child screens
-   * This ensures Hero Fare Card immediately reflects newly recorded Lipa Later payments
-   * 
-   * Performance impact: Minimal - only database read of trips (<30ms)
-   * Triggers: Every time user navigates back to Home (expected behavior)
-   */
-  useEffect(() => {
-    refresh();
-    const unsubscribe = navigation.addListener('focus', () => {
-      // FIXED: Always refresh on focus without guard
-      // When user returns from PaymentSummary/RecordPayment, Hero Fare Card updates immediately
+  // ✅ Auto-refresh on focus and initial load
+  useFocusEffect(
+    useCallback(() => {
       refresh();
-    });
-    return unsubscribe;
-  }, [navigation, refresh]);
+    }, [refresh])
+  );
 
-  const handleLogout = async () => {
-    Alert.alert(
-      t('common.confirm'),
-      t('home.logout_confirm'),
-      [
-        { text: t('common.cancel'), onPress: () => {} },
-        {
-          text: t('common.logout'),
-          onPress: async () => {
-            try {
-              await clearSession();
-              navigation.navigate('Auth', { screen: 'PinLogin' });
-            } catch (err) {
-              showToast('Logout failed', 'error');
-            }
-          },
-        },
-      ]
+  // ============================================================================
+  // SUBSCRIPTION UI RENDERERS (REQ-4.1-4.4)
+  // ============================================================================
+
+  // ✅ REQ-4.4: Locked Modal
+  const renderLockedModal = () => {
+    if (!subscription?.locked) return null;
+
+    return (
+      <Modal visible={subscription.locked} animationType="slide" transparent={false}>
+        <View style={styles.lockedContainer}>
+          <View style={styles.lockedContent}>
+            <Text style={styles.lockedIcon}>🔒</Text>
+            <Text style={styles.lockedTitle}>{t('subscription.account_locked')}</Text>
+
+            <Text style={styles.lockedReason}>
+              {subscription.lock_reason === 'Free Trial Expired'
+                ? t('subscription.trial_expired_message')
+                : t('subscription.subscription_expired_message')}
+            </Text>
+
+            {isOfflineSubscription && (
+              <View style={styles.offlineBannerModal}>
+                <Text style={styles.offlineText}>⚠️ {t('common.offline_mode')}</Text>
+                <Text style={styles.offlineSubtext}>
+                  {t('subscription.offline_payment_message')}
+                </Text>
+              </View>
+            )}
+
+            <View style={styles.lockedDetails}>
+              <Text style={styles.detailLabel}>{t('subscription.lock_reason')}:</Text>
+              <Text style={styles.detailValue}>{subscription.lock_reason}</Text>
+
+              {subscription.locked_at && (
+                <>
+                  <Text style={styles.detailLabel}>{t('subscription.locked_at')}:</Text>
+                  <Text style={styles.detailValue}>
+                    {new Date(subscription.locked_at).toLocaleDateString()}
+                  </Text>
+                </>
+              )}
+            </View>
+
+            <TouchableOpacity
+              style={styles.unlockButton}
+              onPress={() => navigation.navigate('ChooseFrequencyScreen')}
+            >
+              <Text style={styles.unlockButtonText}>
+                {t('subscription.unlock_pay_now')} 💳
+              </Text>
+            </TouchableOpacity>
+
+            <Text style={styles.supportText}>
+              {t('subscription.support_contact')}: +254757334481
+            </Text>
+          </View>
+        </View>
+      </Modal>
     );
   };
 
-  const handleViewFinancialHistory = () => {
-    navigation.navigate('FinancialHistory');
+  // ✅ REQ-4.2, REQ-4.3: Subscription Renewal Banner
+  const renderSubscriptionBanner = () => {
+    if (!subscription || subscription.locked || subscription.days_left > 1) {
+      return null;
+    }
+
+    return (
+      <View style={styles.subscriptionBanner}>
+        <View style={styles.bannerContent}>
+          <Text style={styles.bannerIcon}>⚠️</Text>
+          <View style={styles.bannerText}>
+            <Text style={styles.bannerTitle}>
+              {t('subscription.last_day_warning')}
+            </Text>
+            <Text style={styles.bannerSubtitle}>
+              {t('subscription.subscribe_avoid_interruption')}
+            </Text>
+          </View>
+        </View>
+        <TouchableOpacity
+          style={styles.bannerButton}
+          onPress={() => navigation.navigate('ChooseFrequencyScreen')}
+        >
+          <Text style={styles.bannerButtonText}>
+            {t('subscription.subscribe_now')} →
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
   };
+
+  // ✅ REQ-4.1: Notification Bell with Subscription Badge
+  const renderNotificationBell = () => {
+    const hasSubscriptionWarning = subscription && subscription.days_left <= 1 && !subscription.locked;
+
+    return (
+      <TouchableOpacity
+        style={styles.notifBellContainer}
+        onPress={() => {
+          if (hasSubscriptionWarning) {
+            navigation.navigate('MySubscriptions');
+          }
+        }}
+      >
+        <Text style={styles.bellIcon}>🔔</Text>
+        {hasSubscriptionWarning ? (
+          <View style={[styles.notifBadge, styles.badgeWarning]}>
+            <Text style={styles.badgeText}>!</Text>
+          </View>
+        ) : queuedCount > 0 ? (
+          <View style={[styles.notifBadge, styles.badgeQueue]}>
+            <Text style={styles.badgeText}>{queuedCount}</Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
+    );
+  };
+
+  // ✅ Subscription Status Card
+  const renderSubscriptionStatusCard = () => {
+    if (!subscription) return null;
+
+    const statusColor = subscription.locked
+      ? '#dc3545'
+      : subscription.days_left <= 1
+      ? '#ff9800'
+      : '#4caf50';
+
+    return (
+      <TouchableOpacity
+        style={[styles.statusCard, { borderLeftColor: statusColor }]}
+        onPress={() => navigation.navigate('MySubscriptions')}
+      >
+        <View style={styles.statusCardContent}>
+          <Text style={styles.statusCardEmoji}>📲</Text>
+          <View style={styles.statusCardText}>
+            <Text style={styles.statusCardLabel}>{t('home.tile_my_subscription')}</Text>
+            <Text style={styles.statusCardValue}>
+              {subscription.locked
+                ? t('subscription.status_locked')
+                : subscription.days_left <= 1
+                ? `⏰ ${t('subscription.last_day')}`
+                : `✅ ${subscription.days_left} ${t('subscription.days_left')}`}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.cardArrow}>→</Text>
+      </TouchableOpacity>
+    );
+  };
+
+  // ============================================================================
+  // DASHBOARD UI RENDERERS
+  // ============================================================================
 
   const handleOpenDailySummary = () => {
     navigation.navigate('DailyTradeSummary');
@@ -242,29 +439,52 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     navigation.navigate('NewTrip');
   };
 
+  const handleViewFinancialHistory = () => {
+    navigation.navigate('FinancialHistory');
+  };
+
+  const handleTilePress = (route) => {
+    if (navigation && route) {
+      navigation.navigate(route);
+    }
+  };
+
+  const handleEnergyTilePress = (route) => {
+    try {
+      // Try direct navigation first (MainNavigator context)
+      navigation.navigate(route);
+    } catch (err) {
+      console.error('[HomeScreen] Navigation error:', err);
+      // Fallback: try navigating through parent if nested
+      try {
+        navigation.navigate('Home', { screen: route });
+      } catch (fallbackErr) {
+        console.error('[HomeScreen] Fallback navigation failed:', fallbackErr);
+      }
+    }
+  };
+
   const energyTile = bike?.fuel_type_code ? ENERGY_TILE_BY_FUEL[bike.fuel_type_code] : null;
   const safeRunningTotal = runningTotal || 0;
   const safeYesterdayTotal = yesterdayTotal || 0;
+
+  // ============================================================================
+  // RENDER LOGIC
+  // ============================================================================
 
   if (!isInitialized && !hasError) {
     return <LoadingSkeleton />;
   }
 
   if (hasError) {
-    return (
-      <ErrorDisplay 
-        error={errorMsg}
-        onRetry={refresh}
-      />
-    );
+    return <ErrorDisplay error={errorMsg} onRetry={refresh} />;
   }
 
   return (
     <HomeScreenErrorBoundary onRetry={refresh}>
-      <ScrollView 
-        style={styles.container} 
-        refreshing={refreshing} 
-        onRefresh={refresh}
+      <ScrollView
+        style={styles.container}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
         scrollEnabled={true}
       >
         {/* TOP BAR */}
@@ -275,45 +495,47 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </View>
             <Text style={styles.brandName}>Smart Boda</Text>
           </View>
-          <View style={styles.notifBell}>
-            <Text style={styles.bellIcon}>🔔</Text>
-            {queuedCount > 0 && (
-              <View style={styles.notifBadge}>
-                <Text style={styles.badgeText}>{queuedCount}</Text>
-              </View>
-            )}
-          </View>
+          {renderNotificationBell()}
         </View>
 
         <View style={styles.screenBody}>
-          {/* ===== HERO FARE CARD - Using HeroFareCard Component ===== */}
+          {/* ✅ OFFLINE WARNING */}
+          {isOfflineSubscription && (
+            <View style={styles.offlineWarning}>
+              <Ionicons name="alert-circle" size={20} color="#ff9800" />
+              <Text style={styles.offlineWarningText}>
+                {t('common.offline_mode')} - {t('common.offline_data_cached')}
+              </Text>
+            </View>
+          )}
+
+          {/* ✅ REQ-4.2, 4.3: Subscription Renewal Banner */}
+          {renderSubscriptionBanner()}
+
+          {/* HERO FARE CARD */}
           <HeroFareCard
             totalFare={safeRunningTotal}
             onOpenDailySummary={handleOpenDailySummary}
             onNewTrip={handleNewTrip}
           />
 
-          {/* Yesterday's Total Card */}
+          {/* YESTERDAY'S TOTAL CARD */}
           {safeYesterdayTotal !== null && (
             <View style={styles.yesterdayCard}>
               <View style={styles.yesterdayHeader}>
-                <Text style={styles.yesterdayLabel}>Yesterday's Total</Text>
-                <Text style={styles.yesterdayAmount}>KSh {safeYesterdayTotal.toLocaleString()}</Text>
+                <Text style={styles.yesterdayLabel}>{t('home.yesterday_total')}</Text>
+                <TouchableOpacity onPress={handleOpenDailySummary}>
+                  <Text style={styles.viewBreakdownLink}>{t('home.view_breakdown')} →</Text>
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity onPress={handleViewFinancialHistory}>
-                <Text style={styles.viewBreakdownLink}>View Breakdown →</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* Offline Warning */}
-          {offlineHours >= 24 && (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>
-                ⚠️ Please go online briefly to back up your data. Offline for {offlineHours}h.
+              <Text style={styles.yesterdayAmount}>
+                KSh {safeYesterdayTotal.toLocaleString('en-KE')}
               </Text>
             </View>
           )}
+
+          {/* ✅ SUBSCRIPTION STATUS CARD */}
+          {renderSubscriptionStatusCard()}
 
           {/* Tiles Grid - Aligned with cleaned.html */}
           {/* Row 1: Fuel/Charge + Service */}
@@ -349,7 +571,6 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
                   navigation.navigate('MaintenanceHub');
                 } catch (err) {
                   console.error('[HomeScreen] MaintenanceHub navigation error:', err);
-                  showToast('Navigation failed', 'error');
                 }
               }}
             >
@@ -367,8 +588,8 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.tileEmoji}>💰</Text>
               <Text style={styles.tileLabel}>{t('home.tile_financial_performance')}</Text>
             </TouchableOpacity>
-          
-          <TouchableOpacity
+
+            <TouchableOpacity
               style={styles.homeTile}
               onPress={() => navigation.navigate('MySubscriptions')}
             >
@@ -377,10 +598,8 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </TouchableOpacity>
           </View>
 
-            
-          
           {/* Row 3: Sync Status Card (Clickable) */}
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.cardContainer}
             onPress={() => navigation.navigate('SyncStatus')}
             activeOpacity={0.7}
@@ -390,23 +609,27 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
                 {queuedCount > 0 ? '🟠' : '🟢'}
               </Text>
               <Text style={styles.cardTitle}>Sync Status</Text>
-              <View style={[
-                styles.badge,
-                queuedCount > 0 ? styles.badgeAmber : styles.badgeGreen
-              ]}>
+              <View
+                style={[
+                  styles.badge,
+                  queuedCount > 0 ? styles.badgeAmber : styles.badgeGreen,
+                ]}
+              >
                 <Text style={styles.badgeText}>
                   {queuedCount > 0 ? `Queued: ${queuedCount}` : 'All Synced'}
                 </Text>
               </View>
             </View>
             <Text style={styles.cardHint}>
-              {queuedCount > 0 ? 'Tap to view queue and retry.' : 'Everything is safely backed up.'}
+              {queuedCount > 0
+                ? 'Tap to view queue and retry.'
+                : 'Everything is safely backed up.'}
             </Text>
           </TouchableOpacity>
 
           {/* Account Card */}
           <View style={styles.cardContainer}>
-             <View style={styles.kvRow}>
+            <View style={styles.kvRow}>
               <Text style={styles.kvKey}>Trips today</Text>
               <Text style={styles.kvValue}>{tripsToday}</Text>
             </View>
@@ -414,7 +637,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
 
           {/* Settings List Items */}
           <View style={styles.settingsListContainer}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.settingsListItem}
               onPress={handleOpenDailySummary}
             >
@@ -422,7 +645,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.settingsListItem}
               onPress={handleViewFinancialHistory}
             >
@@ -430,7 +653,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.settingsListItem, styles.logoutListItem]}
               onPress={() => navigation.navigate('PinLogin')}
             >
@@ -440,10 +663,16 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           </View>
         </View>
       </ScrollView>
+
+      {/* ✅ REQ-4.4: Locked Modal Overlay */}
+      {renderLockedModal()}
     </HomeScreenErrorBoundary>
   );
-}
+};
 
+// ============================================================================
+// STYLES
+// ============================================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -510,7 +739,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1a1c20',
   },
-  notifBell: {
+  notifBellContainer: {
     width: 40,
     height: 40,
     justifyContent: 'center',
@@ -523,13 +752,18 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -6,
     right: -6,
-    backgroundColor: '#ff7a1a',
     width: 22,
     height: 22,
     borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
+  },
+  badgeWarning: {
+    backgroundColor: '#ff9800',
+  },
+  badgeQueue: {
+    backgroundColor: '#ff7a1a',
   },
   badgeText: {
     color: '#fff',
@@ -539,14 +773,62 @@ const styles = StyleSheet.create({
   screenBody: {
     padding: 20,
   },
-  energyTile: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
+  offlineWarning: {
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: '#fff3e0',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    marginBottom: 15,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff9800',
+  },
+  offlineWarningText: {
+    marginLeft: 10,
+    color: '#ff9800',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  subscriptionBanner: {
+    marginBottom: 15,
+    backgroundColor: '#fffbea',
+    borderRadius: 8,
+    padding: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff9800',
+  },
+  bannerContent: {
+    flexDirection: 'row',
+    marginBottom: 10,
+  },
+  bannerIcon: {
+    fontSize: 20,
+    marginRight: 10,
+  },
+  bannerText: {
+    flex: 1,
+  },
+  bannerTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  bannerSubtitle: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+  },
+  bannerButton: {
+    backgroundColor: '#ff9800',
+    paddingVertical: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  bannerButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 13,
   },
   yesterdayCard: {
     backgroundColor: '#fff',
@@ -577,18 +859,50 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
-  warningBox: {
-    backgroundColor: '#fff3e0',
+  statusCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+    backgroundColor: '#fff',
+    padding: 15,
     borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
     borderLeftWidth: 4,
-    borderLeftColor: '#ff9800',
+    elevation: 1,
   },
-  warningText: {
-    color: '#e65100',
+  statusCardContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusCardEmoji: {
+    fontSize: 24,
+    marginRight: 15,
+  },
+  statusCardText: {
+    flex: 1,
+  },
+  statusCardLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  statusCardValue: {
     fontSize: 12,
-    fontWeight: '500',
+    color: '#666',
+    marginTop: 4,
+  },
+  cardArrow: {
+    fontSize: 16,
+    color: '#999',
+  },
+  energyTile: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    alignItems: 'center',
   },
   tileRow: {
     flexDirection: 'row',
@@ -605,13 +919,6 @@ const styles = StyleSheet.create({
     borderColor: '#e7e4db',
     minHeight: 100,
   },
-  fullWidth: {
-    flex: 1,
-  },
-  logoutTile: {
-    backgroundColor: '#fce4e1',
-    borderColor: '#e0453f',
-  },
   tileEmoji: {
     fontSize: 32,
     marginBottom: 8,
@@ -622,9 +929,90 @@ const styles = StyleSheet.create({
     color: '#1a1c20',
     textAlign: 'center',
   },
-  settingsRow: {
-    gap: 12,
+  lockedContainer: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  lockedContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 30,
+    alignItems: 'center',
+    elevation: 3,
+  },
+  lockedIcon: {
+    fontSize: 60,
     marginBottom: 20,
+  },
+  lockedTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#dc3545',
+    marginBottom: 10,
+  },
+  lockedReason: {
+    fontSize: 14,
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  offlineBannerModal: {
+    backgroundColor: '#fff3e0',
+    padding: 12,
+    borderRadius: 6,
+    marginBottom: 20,
+    borderLeftWidth: 3,
+    borderLeftColor: '#ff9800',
+  },
+  offlineText: {
+    fontWeight: '600',
+    color: '#ff9800',
+    fontSize: 12,
+  },
+  offlineSubtext: {
+    color: '#ff9800',
+    fontSize: 11,
+    marginTop: 4,
+  },
+  lockedDetails: {
+    backgroundColor: '#f9f9f9',
+    padding: 15,
+    borderRadius: 6,
+    marginBottom: 25,
+    width: '100%',
+  },
+  detailLabel: {
+    fontSize: 12,
+    color: '#666',
+    fontWeight: '600',
+    marginTop: 8,
+  },
+  detailValue: {
+    fontSize: 14,
+    color: '#333',
+    marginTop: 4,
+  },
+  unlockButton: {
+    backgroundColor: '#007bff',
+    paddingVertical: 14,
+    paddingHorizontal: 30,
+    borderRadius: 8,
+    width: '100%',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  unlockButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  supportText: {
+    fontSize: 11,
+    color: '#666',
+    textAlign: 'center',
   },
   skeleton: {
     backgroundColor: '#e0e0e0',
@@ -676,6 +1064,11 @@ const styles = StyleSheet.create({
   },
   badgeAmber: {
     backgroundColor: '#fdf3df',
+  },
+  badgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1a1c20',
   },
   // Key-Value Row Styles
   kvRow: {
@@ -735,3 +1128,5 @@ const styles = StyleSheet.create({
     color: '#e0453f',
   },
 });
+
+export default HomeScreen;
