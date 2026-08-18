@@ -6,7 +6,7 @@ import os
 import logging
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy import text
-from app.routers import sb08_financial_history
+from app.routers import sb08_financial_history, sb19_financial_history
 
 # Configure logging
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -209,13 +209,19 @@ app.include_router(mobile_number.router)
 app.include_router(pin.router)
 
 # ---- Module B routers ----
-from app.routers import trip_master_data_admin, sb05_trip_entry, sb05_lipa_later, sb07_trip_correction
+from app.routers import sb05_trip_entry, sb05_lipa_later, sb07_trip_correction, trip_master_data_admin
 app.include_router(trip_master_data_admin.router)
 app.include_router(sb05_trip_entry.router)
 app.include_router(sb05_lipa_later.router)
 app.include_router(sb07_trip_correction.router)
+
+# ---- Financial History & Statements (Module B/C integration) ----
+# ✅ UPDATED: Both sb08 and sb19 financial history routers registered
+# sb08: API and Compliance endpoints with period-based summaries
+# sb19: FIXED - Compliance endpoints with corrected OtherExpense field names and rider onboarding validation
 app.include_router(sb08_financial_history.router_api)
 app.include_router(sb08_financial_history.router_compliance)
+app.include_router(sb19_financial_history.router)  # ✅ NEW: Fixed financial history router
 
 # ---- Module C/D/E routers ----
 from app.routers import (
@@ -296,6 +302,7 @@ def status_endpoint():
             "fuel": "✓",
             "maintenance": "✓",
             "financial": "✓",
+            "financial_history": "✓ (sb08 + sb19)",  # ✅ UPDATED: Shows both modules
             "compliance": "✓",
             "admin_dashboard": "✓",
             "payment_admin": "✓",
