@@ -24,7 +24,7 @@ import { getTodaysTrips, getTodaysRealizedIncome, getYesterdaysTotal, summarizeT
 import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
 import { getActiveBikeProfile, getRiderAccountSummary, clearSession } from '../offline/db';
 import HeroFareCard from '../components/HeroFareCard';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getLocalRiderId } from '../../offline/db';
 import api from '../api/client';
 
 const ENERGY_TILE_BY_FUEL = {
