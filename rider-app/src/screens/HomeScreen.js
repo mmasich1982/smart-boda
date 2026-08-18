@@ -23,13 +23,9 @@ import {
   Alert,
   ActivityIndicator,
   Dimensions,
-  Linking,
 } from 'react-native';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useTranslation } from 'react-i18next';
-import { Ionicons } from '@expo/vector-icons';
-import api from '../api/client';
-import { useRider } from '../context/RiderContext';
+import { useNavigation } from '@react-navigation/native';
+import { useTranslation } from '../i18n/LocalizationProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   getTodaysTrips,
@@ -41,8 +37,7 @@ import {
   getQueuedRecords,
   hoursSinceLastSync,
 } from '../offline/syncQueue';
-import { getActiveBikeProfile, getRiderAccountSummary } from '../offline/db';
-import HeroFareCard from '../components/HeroFareCard';
+import { getActiveBikeProfile, getRiderAccountSummary, clearSession } from '../offline/db';
 
 const { width } = Dimensions.get('window');
 
@@ -143,10 +138,8 @@ const HomeScreen = () => {
   const { t } = useTranslation();
   const { effectiveRiderId } = useRider();
 
-  // ✅ Subscription State (REQ-4.1-4.4)
+  // ✅ Subscription State (REQ-4.1-4.4) - Offline only
   const [subscription, setSubscription] = useState(null);
-  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
-  const [isOfflineSubscription, setIsOfflineSubscription] = useState(false);
 
   // ✅ Dashboard State
   const [isInitialized, setIsInitialized] = useState(false);
@@ -162,50 +155,25 @@ const HomeScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
 
   // ============================================================================
-  // SUBSCRIPTION FUNCTIONS (REQ-4.1, 4.2, 4.3, 4.4)
+  // SUBSCRIPTION FUNCTIONS (REQ-4.1, 4.2, 4.3, 4.4) - OFFLINE ONLY
   // ============================================================================
 
-  // ✅ Load subscription data with offline caching
+  // ✅ Load subscription data from offline cache only
   const loadSubscription = useCallback(async () => {
-    if (!effectiveRiderId) return;
-
     try {
-      setSubscriptionLoading(true);
-      const response = await api.get('/subscription', {
-        params: { rider_id: effectiveRiderId },
-      });
-
-      setSubscription(response.data.subscription);
-      setIsOfflineSubscription(false);
-
-      // ✅ OFFLINE: Cache subscription data (24-hour window per backend spec)
-      await AsyncStorage.setItem(
-        `subscription_cache_${effectiveRiderId}`,
-        JSON.stringify({
-          data: response.data.subscription,
-          cached_at: new Date().toISOString(),
-        })
-      );
-    } catch (err) {
-      console.error('Error loading subscription:', err);
-
-      // ✅ OFFLINE: Load from cache if network error
-      if (err.response?.status === 0 || err.message.includes('Network')) {
-        const cached = await AsyncStorage.getItem(`subscription_cache_${effectiveRiderId}`);
-        if (cached) {
-          try {
-            const { data } = JSON.parse(cached);
-            setSubscription(data);
-            setIsOfflineSubscription(true);
-          } catch (e) {
-            console.error('Error loading cached subscription:', e);
-          }
+      const cached = await AsyncStorage.getItem('subscription_cache');
+      if (cached) {
+        try {
+          const { data } = JSON.parse(cached);
+          setSubscription(data);
+        } catch (e) {
+          console.error('Error loading cached subscription:', e);
         }
       }
-    } finally {
-      setSubscriptionLoading(false);
+    } catch (err) {
+      console.error('Error loading subscription from cache:', err);
     }
-  }, [effectiveRiderId]);
+  }, []);
 
   // ============================================================================
   // DASHBOARD FUNCTIONS
@@ -267,12 +235,14 @@ const HomeScreen = () => {
     }
   }, [isInitialized, loadSubscription]);
 
-  // ✅ Auto-refresh on focus and initial load
-  useFocusEffect(
-    useCallback(() => {
+  // ✅ Auto-refresh on component focus and initial load
+  useEffect(() => {
+    refresh();
+    const unsubscribe = navigation.addListener('focus', () => {
       refresh();
-    }, [refresh])
-  );
+    });
+    return unsubscribe;
+  }, [navigation, refresh]);
 
   // ============================================================================
   // SUBSCRIPTION UI RENDERERS (REQ-4.1-4.4)
@@ -295,14 +265,12 @@ const HomeScreen = () => {
                 : t('subscription.subscription_expired_message')}
             </Text>
 
-            {isOfflineSubscription && (
-              <View style={styles.offlineBannerModal}>
-                <Text style={styles.offlineText}>⚠️ {t('common.offline_mode')}</Text>
-                <Text style={styles.offlineSubtext}>
-                  {t('subscription.offline_payment_message')}
-                </Text>
-              </View>
-            )}
+            <View style={styles.offlineBannerModal}>
+              <Text style={styles.offlineText}>⚠️ {t('common.offline_mode')}</Text>
+              <Text style={styles.offlineSubtext}>
+                {t('subscription.offline_payment_message')}
+              </Text>
+            </View>
 
             <View style={styles.lockedDetails}>
               <Text style={styles.detailLabel}>{t('subscription.lock_reason')}:</Text>
@@ -328,7 +296,7 @@ const HomeScreen = () => {
             </TouchableOpacity>
 
             <Text style={styles.supportText}>
-              {t('subscription.support_contact')}: +254757334481
+              {t('subscription.support_contact')}: +254 700 000 000
             </Text>
           </View>
         </View>
@@ -500,9 +468,9 @@ const HomeScreen = () => {
 
         <View style={styles.screenBody}>
           {/* ✅ OFFLINE WARNING */}
-          {isOfflineSubscription && (
+          {offlineHours > 0 && (
             <View style={styles.offlineWarning}>
-              <Ionicons name="alert-circle" size={20} color="#ff9800" />
+              <Text style={styles.offlineWarningEmoji}>⚠️</Text>
               <Text style={styles.offlineWarningText}>
                 {t('common.offline_mode')} - {t('common.offline_data_cached')}
               </Text>
@@ -784,8 +752,11 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#ff9800',
   },
+  offlineWarningEmoji: {
+    fontSize: 18,
+    marginRight: 10,
+  },
   offlineWarningText: {
-    marginLeft: 10,
     color: '#ff9800',
     fontSize: 13,
     fontWeight: '600',
