@@ -1,8 +1,8 @@
 # backend/app/routers/sb24_subscription.py
 # ============================================================================
-# UPDATED: Bi-Weekly and Monthly plans ONLY, with offline sync support
-# Requirements Coverage: REQ-1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 2.5, 3.3, 8.1
-# OFFLINE SUPPORT: All subscription operations sync-safe for offline first
+# CORRECT IMPLEMENTATION: Bi-Weekly and Monthly plans ONLY - NO WEEKLY
+# Requirements Coverage: REQ-1.1 (1-day trial), REQ-1.2 (2 plans), REQ-2.1-2.5
+# Trial: 1 DAY | Plans: Biweekly (500 KES/14 days) + Monthly (1000 KES/30 days)
 # ============================================================================
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -17,32 +17,39 @@ import math
 router = APIRouter(prefix="/subscription", tags=["sb-24"])
 
 # ✅ ONLY BIWEEKLY AND MONTHLY - NO WEEKLY OR DAILY
-TRIAL_PERIOD_DAYS = 1
+TRIAL_PERIOD_DAYS = 1  # REQ-1.1: 1-day free trial
+
 FREQUENCIES = {
-    "biweekly": {"label": "Bi-Weekly", "days": 14, "emoji": "📆", "price_kes": 500},
-    "monthly": {"label": "Monthly", "days": 30, "emoji": "📆", "price_kes": 1000},
+    "biweekly": {
+        "label": "Bi-Weekly",
+        "days": 14,
+        "emoji": "📆",
+        "price_kes": 500,
+        "daily_price": 35.71  # 500 / 14
+    },
+    "monthly": {
+        "label": "Monthly",
+        "days": 30,
+        "emoji": "📆",
+        "price_kes": 1000,
+        "daily_price": 33.33  # 1000 / 30
+    }
 }
 
-# ✅ PAYMENT CONFIGURATION (OFFLINE SAFE - cached on device)
 PAYMENT_CONFIG = {
     "safaricom_number": "0757 334 481",
     "payment_method": "Send Money",
     "bank_name": "Safaricom",
     "instructions": "Use 'Send Money' to pay subscription",
     "support_number": "+254 700 000 000",
-    "last_updated": datetime.now(timezone.utc).isoformat(),
-    "cache_minutes": 1440  # Cache for 24 hours offline
 }
 
 # ============================================================================
-# HELPER FUNCTIONS (OFFLINE-SAFE)
+# HELPER FUNCTIONS
 # ============================================================================
 
 def amount_for(freq_key: str, daily_price: float) -> dict:
-    """
-    ✅ OFFLINE: Calculate subscription amount for the given frequency.
-    No network dependency - pure calculation.
-    """
+    """Calculate subscription amount for the given frequency"""
     if freq_key not in FREQUENCIES:
         raise ValueError(f"Invalid frequency: {freq_key}. Only 'biweekly' and 'monthly' supported.")
     
@@ -59,13 +66,13 @@ def amount_for(freq_key: str, daily_price: float) -> dict:
     }
 
 def days_until_expiry(sub: RiderSubscription) -> int:
-    """✅ OFFLINE: Calculate days remaining - pure calculation"""
+    """Calculate days remaining until subscription expiry"""
     if not sub:
         return 0
     return math.ceil((sub.expiry_at - datetime.now(timezone.utc)).total_seconds() / 86400)
 
 def check_lock(sub: RiderSubscription):
-    """✅ OFFLINE: Check if subscription should be locked - pure logic"""
+    """Check if subscription should be locked based on expiry"""
     if not sub:
         return
     if not sub.locked and datetime.now(timezone.utc) > sub.expiry_at:
@@ -75,14 +82,14 @@ def check_lock(sub: RiderSubscription):
 
 def ensure_subscription_plans_exist(db: Session):
     """
-    ✅ ONLY BIWEEKLY & MONTHLY: Create 2 default plans if none exist.
-    Plan 1: Smart Boda Bi-Weekly (500 KES for 14 days)
-    Plan 2: Smart Boda Monthly (1000 KES for 30 days)
+    ✅ REQ-1.2: Create 2 default subscription plans if none exist.
+    Plan 1: Smart Boda Bi-Weekly (500 KES for 14 days = 35.71 KES/day)
+    Plan 2: Smart Boda Monthly (1000 KES for 30 days = 33.33 KES/day)
     """
     plan_count = db.query(SubscriptionPlan).count()
     
     if plan_count == 0:
-        # Create Bi-Weekly Plan: 500 KES / 14 days = 35.71 KES/day
+        # Bi-Weekly Plan: 500 KES / 14 days = 35.71 KES/day
         biweekly_plan = SubscriptionPlan(
             name="Smart Boda Bi-Weekly",
             daily_price=35.71,
@@ -94,7 +101,7 @@ def ensure_subscription_plans_exist(db: Session):
         )
         db.add(biweekly_plan)
         
-        # Create Monthly Plan: 1000 KES / 30 days = 33.33 KES/day
+        # Monthly Plan: 1000 KES / 30 days = 33.33 KES/day
         monthly_plan = SubscriptionPlan(
             name="Smart Boda Monthly",
             daily_price=33.33,
@@ -109,8 +116,8 @@ def ensure_subscription_plans_exist(db: Session):
 
 def ensure_subscription_exists(rider_uuid: UUID, db: Session) -> RiderSubscription:
     """
-    ✅ OFFLINE SAFE: Ensure subscription record exists for rider.
-    Safe for offline - only creates minimal record with trial expiry.
+    ✅ REQ-1.1: Ensure subscription record exists for rider.
+    If not, create one with 1-day free trial (no plan assigned yet).
     """
     ensure_subscription_plans_exist(db)
     
@@ -133,11 +140,11 @@ def ensure_subscription_exists(rider_uuid: UUID, db: Session) -> RiderSubscripti
             db.refresh(plan)
         
         now = datetime.now(timezone.utc)
-        trial_expiry = now + timedelta(days=TRIAL_PERIOD_DAYS)
+        trial_expiry = now + timedelta(days=TRIAL_PERIOD_DAYS)  # 1-day trial
         
         sub = RiderSubscription(
             rider_id=rider_uuid,
-            plan_id=None,  # No plan assigned during trial
+            plan_id=None,  # ✅ REQ-1.3: No plan assigned during trial
             expiry_at=trial_expiry,
             frequency="monthly",  # Default for display
             has_ever_paid=False,
@@ -161,10 +168,7 @@ def get_subscription(
     db: Session = Depends(get_db)
 ):
     """
-    ✅ OFFLINE-SAFE: Get subscription status and available plans.
-    
-    Response cached on device for offline access.
-    All calculations done client-side from cached data if offline.
+    ✅ REQ-1.1: Get subscription status and available plans (Biweekly & Monthly ONLY).
     """
     if not rider_id:
         raise HTTPException(422, "rider_id is required")
@@ -181,7 +185,6 @@ def get_subscription(
     # Get active plans (BIWEEKLY & MONTHLY ONLY)
     plans = db.query(SubscriptionPlan).filter(SubscriptionPlan.is_active).all()
     
-    # ✅ OFFLINE: Response includes cache metadata for offline sync
     return {
         "rider_id": str(rider_uuid),
         "subscription": {
@@ -206,26 +209,25 @@ def get_subscription(
                 "tier_description": p.tier_description
             } for p in plans
         ],
-        "frequencies": FREQUENCIES,  # BIWEEKLY & MONTHLY ONLY
+        "frequencies": FREQUENCIES,  # ✅ BIWEEKLY & MONTHLY ONLY
         "metadata": {
             "cached_at": datetime.now(timezone.utc).isoformat(),
-            "cache_ttl_seconds": 3600,  # Cache for 1 hour offline
-            "requires_sync": False
+            "cache_ttl_seconds": 3600,
         }
     }
 
 @router.get("/payment-details")
 def get_payment_details():
     """
-    ✅ OFFLINE: Payment configuration (caches on device for offline).
-    Never changes, safe to cache indefinitely.
+    ✅ REQ-2.4: Payment configuration endpoint.
+    Returns Safaricom number, payment method, etc.
     """
     return {
         **PAYMENT_CONFIG,
         "supported_frequencies": list(FREQUENCIES.keys()),  # ["biweekly", "monthly"]
         "metadata": {
             "cached_at": datetime.now(timezone.utc).isoformat(),
-            "cache_ttl_seconds": 86400  # Cache for 24 hours
+            "cache_ttl_seconds": 86400
         }
     }
 
@@ -237,11 +239,10 @@ def submit_payment(
     db: Session = Depends(get_db)
 ):
     """
-    ✅ OFFLINE-SAFE PAYMENT:
-    - Validates locally (offline possible)
-    - Creates offline queue entry on device
-    - Syncs to backend when online
-    - INSTANT unlock happens on device, syncs to backend
+    ✅ REQ-2.1: Immediate unlock upon payment submission.
+    ✅ REQ-2.2: Payment recorded as "Pending Super Admin Review".
+    ✅ REQ-2.3: M-Pesa code validation (min 8 chars).
+    ✅ REQ-2.5: Payment stacking.
     """
     if not rider_id:
         raise HTTPException(422, "rider_id is required")
@@ -258,7 +259,7 @@ def submit_payment(
             f"Invalid frequency. Only 'biweekly' and 'monthly' are supported."
         )
     
-    # Validate M-Pesa code
+    # ✅ REQ-2.3: Validate M-Pesa code
     code = (mpesa_code or "").strip().upper()
     if not code:
         raise HTTPException(422, "M-Pesa confirmation code is required.")
@@ -274,20 +275,20 @@ def submit_payment(
     calc = amount_for(frequency_key, float(plan.daily_price))
     now = datetime.now(timezone.utc)
     
-    # Subscription stacking
+    # ✅ REQ-2.5: Payment stacking - extend from max(current_expiry, now)
     base = max(sub.expiry_at, now)
     sub.expiry_at = base + timedelta(days=calc["days"])
     sub.plan_id = plan.id
     sub.frequency = frequency_key
     sub.has_ever_paid = True
     was_locked = sub.locked
-    sub.locked = False
+    sub.locked = False  # ✅ REQ-2.1: IMMEDIATE unlock
     sub.lock_reason = None
     sub.last_payment_at = now
     sub.last_payment_amount = calc["amount"]
     sub.total_paid_lifetime = (sub.total_paid_lifetime or 0) + calc["amount"]
 
-    # Record payment
+    # ✅ REQ-2.2: Record payment as "Pending Super Admin Review"
     payment = Payment(
         rider_id=rider_uuid,
         amount=calc["amount"],
@@ -298,7 +299,6 @@ def submit_payment(
     db.add(payment)
     db.commit()
     
-    # ✅ OFFLINE: Response includes data for local offline cache
     return {
         "success": True,
         "rider_id": str(rider_uuid),
@@ -318,12 +318,7 @@ def submit_payment(
             "frequency": frequency_key,
             "new_expiry_date": (base + timedelta(days=calc["days"])).date().isoformat()
         },
-        "message": "Payment recorded! Your subscription is active. Super Admin will verify shortly.",
-        "metadata": {
-            "synced_at": now.isoformat(),
-            "requires_sync": False,
-            "offline_safe": True
-        }
+        "message": "Payment recorded! Your subscription is active. Super Admin will verify shortly."
     }
 
 @router.post("/prepay")
@@ -334,7 +329,7 @@ def submit_prepay(
     db: Session = Depends(get_db)
 ):
     """
-    ✅ OFFLINE-SAFE: Prepayment with offline sync support.
+    REQ-9.1: Prepayment with offline sync support.
     """
     if not rider_id:
         raise HTTPException(422, "rider_id is required")
@@ -386,9 +381,6 @@ def submit_prepay(
             "now_unlocked": True
         },
         "message": f"Prepaid {days} days successfully!",
-        "metadata": {
-            "offline_safe": True
-        }
     }
 
 @router.get("/payments")
@@ -399,7 +391,7 @@ def payment_history(
     db: Session = Depends(get_db)
 ):
     """
-    ✅ OFFLINE: Payment history (cached for offline access).
+    ✅ REQ-6.4: Payment history (read-only, never editable).
     """
     if not rider_id:
         raise HTTPException(422, "rider_id is required")
@@ -433,6 +425,5 @@ def payment_history(
         },
         "metadata": {
             "cache_ttl_seconds": 3600,
-            "offline_safe": True
         }
     }
