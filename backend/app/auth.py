@@ -15,7 +15,7 @@ from app.models.rider import Rider
 
 logger = logging.getLogger(__name__)
 
-SECRET_KEY = os.getenv("ADMIN_JWT_SECRET", "dev-only-secret-change-me")
+SECRET_KEY = os.getenv("ADMIN_JWT_SECRET", "81ad8555b0e2463a99e1d14defa52a77")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # one admin shift
 COOKIE_NAME = "sb_admin_session"
