@@ -1,6 +1,10 @@
 // rider-app/src/screens/HomeScreen.js
-// PROPERLY FIXED: All components imported, all methods working
-// Based on smart-boda reference implementation with all fixes applied
+// ============================================================================
+// CORRECT: Keeps all core tiles + subscription features
+// Removes ONLY: Revenue Targets, Insurance, Savings, Lipa Later, Send Money, Goals, Feedback
+// Keeps: Daily Trade Summary, Financial History, Statements
+// Adds: Subscription banner, notification bell badge, locked modal
+// ============================================================================
 
 import React, { useState, useCallback, useEffect } from 'react';
 import {
@@ -11,18 +15,29 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  Modal,
+  Dimensions,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from '../i18n/LocalizationProvider';
 import { getTodaysTrips, getTodaysRealizedIncome, getYesterdaysTotal, summarizeTrips } from '../offline/tripsRepository';
 import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
 import { getActiveBikeProfile, getRiderAccountSummary, clearSession } from '../offline/db';
 import HeroFareCard from '../components/HeroFareCard';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import api from '../api/client';
 
 const ENERGY_TILE_BY_FUEL = {
   petrol: { emoji: '⛽', label: 'home.tile_fuel_motorcycle', route: 'FuelHub' },
   electric: { emoji: '🔋', label: 'home.tile_charge_battery', route: 'ChargeBatteryHub' },
 };
+
+// ============================================================================
+// CORE TILES - These are KEPT (not removed)
+// ============================================================================
+// Row 1: Fuel/Charge + Service/Maintenance
+// Row 2: Financial Performance + My Subscription
+// Settings: Daily Trade Summary + Financial History + Logout
 
 // ============================================================================
 // LOADING SKELETON
@@ -118,6 +133,66 @@ export default function HomeScreen() {
   const [tripsToday, setTripsToday] = useState(0);
   const [offlineHours, setOfflineHours] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  
+  // ✅ REQ-4.1, 4.2: Subscription state
+  const [subscription, setSubscription] = useState(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [riderId, setRiderId] = useState(null);
+
+  // ============================================================================
+  // SUBSCRIPTION LOADING
+  // ============================================================================
+  
+  // ✅ REQ-4.1, 4.2: Load subscription data
+  const loadSubscription = useCallback(async () => {
+    if (!riderId) return;
+    
+    try {
+      setSubscriptionLoading(true);
+      const response = await api.get('/subscription', {
+        params: { rider_id: riderId }
+      });
+      
+      setSubscription(response.data.subscription);
+      setIsOffline(false);
+      
+      // ✅ OFFLINE: Cache subscription data
+      await AsyncStorage.setItem(
+        `subscription_cache_${riderId}`,
+        JSON.stringify({
+          data: response.data.subscription,
+          cached_at: new Date().toISOString()
+        })
+      );
+    } catch (err) {
+      console.error('Error loading subscription:', err);
+      
+      // ✅ OFFLINE: Load from cache
+      if (err.response?.status === 0 || err.message.includes('Network')) {
+        const cached = await AsyncStorage.getItem(`subscription_cache_${riderId}`);
+        if (cached) {
+          try {
+            const { data } = JSON.parse(cached);
+            setSubscription(data);
+            setIsOffline(true);
+          } catch (e) {
+            console.error('Error parsing cached subscription:', e);
+          }
+        }
+      }
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  }, [riderId]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (riderId) {
+        loadSubscription();
+      }
+    }, [riderId, loadSubscription])
+  );
 
   // ============================================================================
   // REFRESH FUNCTION
@@ -132,12 +207,19 @@ export default function HomeScreen() {
       const activeBike = await getActiveBikeProfile();
       if (activeBike) {
         setBike(activeBike);
+        // ✅ Get rider ID from bike profile or account
+        if (activeBike.rider_id) {
+          setRiderId(activeBike.rider_id);
+        }
       }
 
       // Load account summary
       const accountSummary = await getRiderAccountSummary();
       if (accountSummary) {
         setAccount(accountSummary);
+        if (accountSummary.rider_id && !riderId) {
+          setRiderId(accountSummary.rider_id);
+        }
       }
 
       // Load today's trips and realized income
@@ -159,6 +241,11 @@ export default function HomeScreen() {
       const hours = await hoursSinceLastSync();
       setOfflineHours(Math.floor(hours) || 0);
 
+      // Load subscription
+      if (riderId) {
+        await loadSubscription();
+      }
+
       if (!isInitialized) {
         setIsInitialized(true);
       }
@@ -172,7 +259,7 @@ export default function HomeScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [isInitialized]);
+  }, [isInitialized, riderId, loadSubscription]);
 
   // ============================================================================
   // AUTO-REFRESH ON FOCUS
@@ -228,6 +315,66 @@ export default function HomeScreen() {
   const safeRunningTotal = Number(runningTotal) || 0;
   const safeYesterdayTotal = typeof yesterdayTotal === 'number' ? yesterdayTotal : 0;
 
+  // ✅ REQ-4.1: Calculate notification badge
+  const showSubscriptionBadge = subscription?.days_left <= 1 && !subscription?.locked;
+  const notificationCount = showSubscriptionBadge ? null : queuedCount; // Show subscription warning if last day, else queue count
+
+  // ✅ REQ-4.4: Account locked modal
+  const renderLockedModal = () => {
+    if (!subscription?.locked) return null;
+
+    return (
+      <Modal
+        visible={subscription.locked}
+        animationType="slide"
+        transparent={false}
+      >
+        <View style={styles.lockedContainer}>
+          <View style={styles.lockedContent}>
+            <Text style={styles.lockedIcon}>🔒</Text>
+            <Text style={styles.lockedTitle}>Account Locked</Text>
+            
+            <Text style={styles.lockedMessage}>
+              {subscription.lock_reason === 'Free Trial Expired' 
+                ? 'Your free trial has expired. Subscribe to continue using Smart Boda.'
+                : 'Your subscription has expired. Please pay to unlock your account.'}
+            </Text>
+
+            <View style={styles.lockedDetails}>
+              <Text style={styles.detailLabel}>Lock Reason:</Text>
+              <Text style={styles.detailValue}>{subscription.lock_reason}</Text>
+              
+              {subscription.locked_at && (
+                <>
+                  <Text style={styles.detailLabel}>Locked At:</Text>
+                  <Text style={styles.detailValue}>
+                    {new Date(subscription.locked_at).toLocaleString()}
+                  </Text>
+                </>
+              )}
+            </View>
+
+            {isOffline && (
+              <View style={styles.offlineBanner}>
+                <Text style={styles.offlineText}>⚠️ You are offline</Text>
+                <Text style={styles.offlineSubtext}>
+                  You can still submit payment. It will sync when online.
+                </Text>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={styles.unlockedButton}
+              onPress={() => navigation.navigate('MySubscriptions')}
+            >
+              <Text style={styles.unlockedButtonText}>Unlock Account → Pay Now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   // ============================================================================
   // RENDER LOADING STATE
   // ============================================================================
@@ -252,6 +399,9 @@ export default function HomeScreen() {
   // ============================================================================
   return (
     <HomeScreenErrorBoundary onRetry={refresh}>
+      {/* ✅ REQ-4.4: Account locked modal */}
+      {renderLockedModal()}
+
       <ScrollView
         style={styles.container}
         refreshing={refreshing}
@@ -268,9 +418,15 @@ export default function HomeScreen() {
           </View>
           <View style={styles.notifBell}>
             <Text style={styles.bellIcon}>🔔</Text>
-            {queuedCount > 0 && (
-              <View style={styles.notifBadge}>
-                <Text style={styles.badgeText}>{queuedCount}</Text>
+            {/* ✅ REQ-4.1: Notification badge */}
+            {showSubscriptionBadge && (
+              <View style={[styles.notifBadge, styles.notifBadgeWarning]}>
+                <Text style={styles.badgeText}>!</Text>
+              </View>
+            )}
+            {notificationCount > 0 && !showSubscriptionBadge && (
+              <View style={[styles.notifBadge, styles.notifBadgeQueue]}>
+                <Text style={styles.badgeText}>{notificationCount}</Text>
               </View>
             )}
           </View>
@@ -284,40 +440,30 @@ export default function HomeScreen() {
             onNewTrip={handleNewTrip}
           />
 
-          {/* SUBSCRIPTION STATUS BANNER */}
-          {account?.subscription_status && (
-            <View style={[
-              styles.subscriptionBanner,
-              account.subscription_status === 'active' ? styles.bannerActive :
-              account.subscription_status === 'expired' ? styles.bannerExpired :
-              account.subscription_status === 'pending_verification' ? styles.bannerPending :
-              styles.bannerTrial
-            ]}>
-              <Text style={styles.bannerTitle}>
-                {account.subscription_status === 'active' ? '✅ Subscription Active' :
-                 account.subscription_status === 'expired' ? '⚠️ Subscription Expired' :
-                 account.subscription_status === 'pending_verification' ? '⏳ Payment Pending' :
-                 '🎁 Free Trial'}
+          {/* ✅ REQ-4.2: SUBSCRIPTION RENEWAL BANNER */}
+          {subscription?.days_left <= 1 && !subscription?.locked && (
+            <View style={styles.subscriptionBanner}>
+              <View style={styles.bannerContent}>
+                <Text style={styles.bannerTitle}>⚠️ Last Day Warning</Text>
+                <Text style={styles.bannerText}>
+                  Today is your last day! Keep your bike's tools running — subscribe now.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.bannerButton}
+                onPress={() => navigation.navigate('MySubscriptions')}
+              >
+                <Text style={styles.bannerButtonText}>Subscribe Now →</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* OFFLINE WARNING */}
+          {offlineHours >= 24 && (
+            <View style={styles.warningBox}>
+              <Text style={styles.warningText}>
+                ⚠️ Offline for {offlineHours}h. Syncing when online.
               </Text>
-              <Text style={styles.bannerSubtitle}>
-                {account.subscription_status === 'expired' 
-                  ? 'Your subscription has expired. Renew to keep tracking trips.'
-                  : account.subscription_status === 'pending_verification'
-                  ? 'Your payment is being verified. Usually takes 1-2 hours.'
-                  : account.subscription_status === 'active'
-                  ? `You're all set! Enjoy seamless trip tracking.`
-                  : 'Your free trial is active. Subscribe to continue.'}
-              </Text>
-              {(account.subscription_status === 'expired' || account.subscription_status === 'pending_verification') && (
-                <TouchableOpacity 
-                  onPress={() => navigation.navigate('MySubscriptions')}
-                  style={styles.bannerAction}
-                >
-                  <Text style={styles.bannerActionText}>
-                    {account.subscription_status === 'expired' ? 'Renew Subscription →' : 'View Status →'}
-                  </Text>
-                </TouchableOpacity>
-              )}
             </View>
           )}
 
@@ -336,14 +482,9 @@ export default function HomeScreen() {
             </View>
           )}
 
-          {/* OFFLINE WARNING */}
-          {offlineHours >= 24 && (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>
-                ⚠️ {t('common.offline_warning')} Offline for {offlineHours}h.
-              </Text>
-            </View>
-          )}
+          {/* ============================================================================ */}
+          {/* KEPT TILES - Core functionality (NOT removed) */}
+          {/* ============================================================================ */}
 
           {/* TILES GRID - Row 1: Fuel/Charge + Service */}
           <View style={styles.tileRow}>
@@ -391,6 +532,17 @@ export default function HomeScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* ============================================================================ */}
+          {/* REMOVED TILES - These 7 were specifically requested to be removed */}
+          {/* ============================================================================ */}
+          {/* ❌ REMOVED: Revenue Targets (🎯) */}
+          {/* ❌ REMOVED: Insurance & Licenses (📋) */}
+          {/* ❌ REMOVED: Savings (🐖) */}
+          {/* ❌ REMOVED: Lipa Later Report (🧾) */}
+          {/* ❌ REMOVED: Send Money Home (🏡) */}
+          {/* ❌ REMOVED: My Goals (🏆) */}
+          {/* ❌ REMOVED: Suggestions & Feedback (💡) */}
+
           {/* SYNC STATUS CARD */}
           <TouchableOpacity
             style={styles.cardContainer}
@@ -424,8 +576,13 @@ export default function HomeScreen() {
             </View>
           </View>
 
+          {/* ============================================================================ */}
+          {/* KEPT SETTINGS - Daily Trade Summary, Financial History, Logout */}
+          {/* ============================================================================ */}
+
           {/* SETTINGS LIST */}
           <View style={styles.settingsListContainer}>
+            {/* ✅ KEPT: Daily Trade Summary */}
             <TouchableOpacity
               style={styles.settingsListItem}
               onPress={handleOpenDailySummary}
@@ -434,6 +591,7 @@ export default function HomeScreen() {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
 
+            {/* ✅ KEPT: Financial History */}
             <TouchableOpacity
               style={styles.settingsListItem}
               onPress={handleViewFinancialHistory}
@@ -442,6 +600,7 @@ export default function HomeScreen() {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
 
+            {/* ✅ KEPT: Logout */}
             <TouchableOpacity
               style={[styles.settingsListItem, styles.logoutListItem]}
               onPress={handleLogout}
@@ -505,12 +664,17 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -5,
     right: -5,
-    backgroundColor: '#e0453f',
-    borderRadius: 10,
     width: 20,
     height: 20,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  notifBadgeWarning: {
+    backgroundColor: '#ff9800',
+  },
+  notifBadgeQueue: {
+    backgroundColor: '#e0453f',
   },
   badgeText: {
     color: '#fff',
@@ -524,45 +688,40 @@ const styles = StyleSheet.create({
     height: 140,
   },
   subscriptionBanner: {
+    backgroundColor: '#fffbea',
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff9800',
     borderRadius: 12,
-    padding: 14,
+    padding: 16,
     marginBottom: 14,
-    borderWidth: 1.5,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  bannerActive: {
-    backgroundColor: '#e6f5ef',
-    borderColor: '#1e9e6f',
-  },
-  bannerExpired: {
-    backgroundColor: '#ffebee',
-    borderColor: '#c62828',
-  },
-  bannerPending: {
-    backgroundColor: '#fff3e0',
-    borderColor: '#f57f17',
-  },
-  bannerTrial: {
-    backgroundColor: '#f3e5f5',
-    borderColor: '#7b1fa2',
+  bannerContent: {
+    flex: 1,
+    marginRight: 12,
   },
   bannerTitle: {
     fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1c20',
+    fontWeight: 'bold',
+    color: '#ff9800',
     marginBottom: 4,
   },
-  bannerSubtitle: {
-    fontSize: 12.5,
+  bannerText: {
+    fontSize: 12,
     color: '#5b606c',
     lineHeight: 18,
-    marginBottom: 10,
   },
-  bannerAction: {
-    paddingVertical: 10,
+  bannerButton: {
+    backgroundColor: '#ff7a1a',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
-  bannerActionText: {
-    color: '#ff7a1a',
-    fontSize: 13,
+  bannerButtonText: {
+    color: '#fff',
+    fontSize: 12,
     fontWeight: '700',
   },
   yesterdayCard: {
@@ -765,5 +924,89 @@ const styles = StyleSheet.create({
   skeletonGrid: {
     flexDirection: 'row',
     gap: 12,
+  },
+  // ✅ REQ-4.4: Locked modal styles
+  lockedContainer: {
+    flex: 1,
+    backgroundColor: '#f6f4ef',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  lockedContent: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    width: '100%',
+  },
+  lockedIcon: {
+    fontSize: 60,
+    marginBottom: 16,
+  },
+  lockedTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  lockedMessage: {
+    fontSize: 14,
+    color: '#5b606c',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  lockedDetails: {
+    width: '100%',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+  },
+  detailLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#5b606c',
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  detailValue: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#1a1c20',
+  },
+  offlineBanner: {
+    backgroundColor: '#fff3e0',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff9800',
+    width: '100%',
+  },
+  offlineText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ff9800',
+    marginBottom: 4,
+  },
+  offlineSubtext: {
+    fontSize: 11,
+    color: '#ff9800',
+    lineHeight: 16,
+  },
+  unlockedButton: {
+    width: '100%',
+    backgroundColor: '#ff7a1a',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  unlockedButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
