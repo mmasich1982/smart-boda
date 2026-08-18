@@ -768,5 +768,3 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 });
-
-export default HomeScreen;
