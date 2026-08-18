@@ -23,8 +23,9 @@ import {
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
+import LocalStore from '../../offline/LocalStore';
 import api from '../../api/client';
-import { useRider } from '../../context/RiderContext';
+import { useRider } from '../../rider/RiderContext';
 
 // ============================================================================
 // MAIN SUBSCRIPTION SCREEN
@@ -33,7 +34,8 @@ import { useRider } from '../../context/RiderContext';
 export const SubscriptionScreen = () => {
   const navigation = useNavigation();
   const { t } = useTranslation();
-  const { effectiveRiderId } = useRider();
+  const { state } = useRider();
+  const riderId = state?.riderId;
   
   const [subscription, setSubscription] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -41,46 +43,46 @@ export const SubscriptionScreen = () => {
   const [isOffline, setIsOffline] = useState(false);
 
   const loadSubscription = useCallback(async () => {
-    if (!effectiveRiderId) return;
+    if (!riderId) return;
     
     try {
       setLoading(true);
       const response = await api.get('/subscription', {
-        params: { rider_id: effectiveRiderId }
+        params: { rider_id: riderId }
       });
       
       setSubscription(response.data.subscription);
       setIsOffline(false);
       
-      // ✅ OFFLINE: Cache subscription data
-      await AsyncStorage.setItem(
-        `subscription_${effectiveRiderId}`,
-        JSON.stringify({
+      // ✅ OFFLINE: Cache subscription data using LocalStore
+      await LocalStore.kvSet(
+        `subscription_${riderId}`,
+        {
           data: response.data.subscription,
           cached_at: new Date().toISOString()
-        })
+        }
       );
     } catch (err) {
       console.error('Error loading subscription:', err);
       
       // ✅ OFFLINE: Load from cache
-      const cached = await AsyncStorage.getItem(`subscription_${effectiveRiderId}`);
+      const cached = await LocalStore.kvGet(`subscription_${riderId}`);
       if (cached) {
-        const { data } = JSON.parse(cached);
+        const { data } = cached;
         setSubscription(data);
         setIsOffline(true);
       }
     } finally {
       setLoading(false);
     }
-  }, [effectiveRiderId]);
+  }, [riderId]);
 
   useFocusEffect(
     useCallback(() => {
-      if (effectiveRiderId) {
+      if (riderId) {
         loadSubscription();
       }
-    }, [effectiveRiderId, loadSubscription])
+    }, [riderId, loadSubscription])
   );
 
   const onRefresh = useCallback(async () => {
@@ -226,7 +228,8 @@ export const SubscriptionScreen = () => {
 export const ChooseFrequencyScreen = () => {
   const navigation = useNavigation();
   const { t } = useTranslation();
-  const { effectiveRiderId } = useRider();
+  const { state } = useRider();
+  const riderId = state?.riderId;
   const route = useRoute();
   
   const [chosenFrequency, setChosenFrequency] = useState(null);
@@ -240,9 +243,13 @@ export const ChooseFrequencyScreen = () => {
 
   const loadCurrentFrequency = async () => {
     try {
-      const cached = await AsyncStorage.getItem(`subscription_${effectiveRiderId}`);
+      if (!riderId) {
+        setLoading(false);
+        return;
+      }
+      const cached = await LocalStore.kvGet(`subscription_${riderId}`);
       if (cached) {
-        const { data } = JSON.parse(cached);
+        const { data } = cached;
         setCurrentFrequency(data.frequency);
         // ✅ REQ-10.2: Pre-select current frequency
         setChosenFrequency(data.frequency);
@@ -359,7 +366,8 @@ export const ConfirmSubscriptionScreen = () => {
   const navigation = useNavigation();
   const route = useRoute();
   const { t } = useTranslation();
-  const { effectiveRiderId } = useRider();
+  const { state } = useRider();
+  const riderId = state?.riderId;
   
   const [mpesaCode, setMpesaCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -386,14 +394,14 @@ export const ConfirmSubscriptionScreen = () => {
       setPaymentConfig(response.data);
       setIsOffline(false);
       
-      // ✅ OFFLINE: Cache payment config
-      await AsyncStorage.setItem('payment_config', JSON.stringify(response.data));
+      // ✅ OFFLINE: Cache payment config using LocalStore
+      await LocalStore.kvSet('payment_config', response.data);
     } catch (err) {
       console.error('Error loading payment config:', err);
       // ✅ OFFLINE: Load cached config
-      const cached = await AsyncStorage.getItem('payment_config');
+      const cached = await LocalStore.kvGet('payment_config');
       if (cached) {
-        setPaymentConfig(JSON.parse(cached));
+        setPaymentConfig(cached);
         setIsOffline(true);
       }
     }
@@ -427,7 +435,7 @@ export const ConfirmSubscriptionScreen = () => {
       // Online payment submission
       const response = await api.post('/subscription/pay', null, {
         params: {
-          rider_id: effectiveRiderId,
+          rider_id: riderId,
           frequency_key: frequency,
           mpesa_code: mpesaCode.trim().toUpperCase()
         }
@@ -453,19 +461,19 @@ export const ConfirmSubscriptionScreen = () => {
 
   const queuePaymentOffline = async () => {
     try {
-      const queued = await AsyncStorage.getItem('queued_payments');
-      const payments = queued ? JSON.parse(queued) : [];
+      const queued = await LocalStore.kvGet('queued_payments');
+      const payments = queued ? queued : [];
       
       payments.push({
         id: `payment_${Date.now()}`,
-        rider_id: effectiveRiderId,
+        rider_id: riderId,
         frequency: frequency,
         mpesa_code: mpesaCode.trim().toUpperCase(),
         amount: plan.amount,
         queued_at: new Date().toISOString()
       });
 
-      await AsyncStorage.setItem('queued_payments', JSON.stringify(payments));
+      await LocalStore.kvSet('queued_payments', payments);
     } catch (err) {
       console.error('Error queuing payment:', err);
       throw err;
