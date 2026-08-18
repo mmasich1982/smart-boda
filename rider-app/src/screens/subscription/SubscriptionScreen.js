@@ -22,7 +22,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
 import { useRider } from '../../context/RiderContext';
 
