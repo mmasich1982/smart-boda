@@ -98,9 +98,14 @@ import LogContributionScreen from '../screens/goals/LogContributionScreen';
 // ============================================================================
 // TILE 10: MY SUBSCRIPTION
 // ============================================================================
-import { SubscriptionScreen } from '../screens/subscription/SubscriptionScreen';
+import { 
+  SubscriptionScreen, 
+  ChooseFrequencyScreen, 
+  ConfirmSubscriptionScreen 
+} from '../screens/subscription/SubscriptionScreen';
 import PrepayScreen from '../screens/subscription/PrepayScreen';
 import PaymentHistoryScreen from '../screens/subscription/PaymentHistoryScreen';
+
 
 // ============================================================================
 // TILE 11: SUGGESTIONS AND FEEDBACK
