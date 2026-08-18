@@ -3,8 +3,22 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, FlatList } from '
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import BackLink from '../../components/BackLink';
-import { getFinancialSummary, getEarliestTransactionDate } from '../../offline/financialHistoryRepository';
+import { getFinancialSummary, getEarliestTransactionDate, syncFinancialDataFromAPI } from '../../offline/financialHistoryRepository';
+import { useRider } from '../../rider/RiderContext'; // ✅ Primary source
+import { getLocalRiderId } from '../../offline/db'; // ✅ Fallback/persistent source
 
+/**
+ * FinancialHistoryScreen.js - ENHANCED v2.0
+ * ✅ FIXED: Robust rider_id management using local storage fallback
+ * ✅ FIXED: Implements dual-source pattern (context + local storage)
+ * ✅ FIXED: Syncs expense data from API before displaying
+ * ✅ FIXED: Proper error handling and logging
+ * 
+ * Rider ID Resolution:
+ * 1. Try to get from local storage (persistent, survives app restart)
+ * 2. Fall back to useRider hook (real-time, from context)
+ * 3. Use effective rider ID for all API calls
+ */
 
 const QUICK_SELECT_PERIODS = [
   { key: 'thisMonth', label: 'This Month' },
@@ -17,13 +31,39 @@ const QUICK_SELECT_PERIODS = [
 export default function FinancialHistoryScreen({ navigation, route }) {
   const { t } = useTranslation();
   const { showToast } = useToast();
+  const { state } = useRider(); // ✅ Get context (may be null/undefined)
 
+  // ✅ FIXED: Dual-source rider ID management
+  const [localRiderId, setLocalRiderId] = useState(null); // Local storage
   const [selectedPeriod, setSelectedPeriod] = useState('thisMonth');
   const [rangeStart, setRangeStart] = useState(Date.now());
   const [rangeEnd, setRangeEnd] = useState(Date.now());
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [earliestDate, setEarliestDate] = useState(null);
+  const [syncingData, setSyncingData] = useState(false);
+
+  // ✅ FIXED: Load rider ID from local storage on component mount
+  useEffect(() => {
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          console.log('[FinancialHistoryScreen] Loaded rider_id from local storage:', id);
+          setLocalRiderId(id);
+        } else {
+          console.warn('[FinancialHistoryScreen] No rider_id found in local storage');
+        }
+      } catch (err) {
+        console.error('[FinancialHistoryScreen] Error loading rider ID from local storage:', err);
+      }
+    };
+
+    loadRiderId();
+  }, []);
+
+  // ✅ FIXED: Determine effective rider ID (prefer local storage, fall back to context)
+  const effectiveRiderId = localRiderId || state?.riderId;
 
   const calculateDateRange = useCallback((period, earliest) => {
     const now = new Date();
@@ -66,8 +106,34 @@ export default function FinancialHistoryScreen({ navigation, route }) {
     try {
       setLoading(true);
 
+      // ✅ FIXED: Validate rider ID before proceeding
+      if (!effectiveRiderId) {
+        console.error('[FinancialHistoryScreen] No rider ID available (context or local storage)');
+        showToast('Unable to load financial history - rider ID missing', 'error');
+        setLoading(false);
+        return;
+      }
+
+      console.log(`[FinancialHistoryScreen] Loading data for rider: ${effectiveRiderId}, period: ${selectedPeriod}`);
+
+      // ✅ FIXED: Sync financial data from API BEFORE displaying
+      // This fetches all expense data (fuel, service, other) from backend
+      setSyncingData(true);
+      try {
+        console.log('[FinancialHistoryScreen] Starting financial data sync...');
+        await syncFinancialDataFromAPI(effectiveRiderId, 'all_time');
+        console.log('[FinancialHistoryScreen] Financial data sync completed successfully');
+      } catch (syncErr) {
+        console.warn('[FinancialHistoryScreen] Financial data sync failed (will fall back to local storage):', syncErr.message);
+        // Continue anyway - will use locally cached data
+        // This allows the screen to work offline
+      } finally {
+        setSyncingData(false);
+      }
+
       // Get earliest transaction date
       const earliest = await getEarliestTransactionDate();
+      console.log('[FinancialHistoryScreen] Earliest transaction date:', earliest ? new Date(earliest).toISOString() : 'none');
       setEarliestDate(earliest);
 
       // Calculate range for selected period
@@ -78,48 +144,67 @@ export default function FinancialHistoryScreen({ navigation, route }) {
       // Get financial summary for range
       const financialSummary = await getFinancialSummary(start, end);
       setSummary(financialSummary);
+
+      console.log('[FinancialHistoryScreen] Summary loaded successfully:', {
+        period: selectedPeriod,
+        income: financialSummary.income,
+        expenses: financialSummary.totalExpense,
+        profit: financialSummary.netProfit,
+      });
     } catch (err) {
-      console.error('FinancialHistoryScreen load error:', err);
+      console.error('[FinancialHistoryScreen] Error loading data:', err);
       showToast('Error loading financial history', 'error');
     } finally {
       setLoading(false);
     }
-  }, [selectedPeriod, calculateDateRange, showToast]);
+  }, [selectedPeriod, calculateDateRange, showToast, effectiveRiderId]);
 
   useEffect(() => {
     loadData();
   }, [selectedPeriod, loadData]);
 
   const handleQuickSelect = (period) => {
+    console.log('[FinancialHistoryScreen] Selected period:', period);
     setSelectedPeriod(period);
   };
 
   const handleViewTransactions = () => {
+    if (!effectiveRiderId) {
+      showToast('Rider ID not available', 'error');
+      return;
+    }
     navigation.navigate('TransactionList', {
       rangeStart,
       rangeEnd,
       selectedPeriod,
+      riderId: effectiveRiderId,
     });
   };
 
   const handleGenerateStatement = () => {
+    if (!effectiveRiderId) {
+      showToast('Rider ID not available', 'error');
+      return;
+    }
     navigation.navigate('GenerateStatement', {
       rangeStart,
       rangeEnd,
       selectedPeriod,
+      riderId: effectiveRiderId,
     });
   };
 
   if (loading || !summary) {
     return (
       <View style={styles.container}>
-        <Text style={styles.loadingText}>Loading financial history...</Text>
+        <Text style={styles.loadingText}>
+          {syncingData ? 'Syncing your financial data...' : 'Loading financial history...'}
+        </Text>
       </View>
     );
   }
 
   // Build category breakdown from summary (category breakdown sorted by amount, descending)
-  // FIX: Use object destructuring for objects, not array destructuring
   const allCategories = [
     { key: 'Fuel/Energy', amount: summary.fuel || 0 },
     { key: 'Service', amount: summary.service || 0 },
