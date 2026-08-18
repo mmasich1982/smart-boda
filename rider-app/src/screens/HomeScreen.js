@@ -24,18 +24,6 @@ const ENERGY_TILE_BY_FUEL = {
   electric: { emoji: '🔋', label: 'home.tile_charge_battery', route: 'ChargeBatteryHub' },
 };
 
-const HOME_TILES = [
-  { emoji: '🔧', label: 'home.tile_service_motorcycle', route: 'MaintenanceHub' },
-  { emoji: '💰', label: 'home.tile_financial_performance', route: 'MoneyMastery' },
-  { emoji: '🎯', label: 'home.tile_revenue_targets', route: 'RevenueTargets' },
-  { emoji: '📋', label: 'home.tile_license_insurance', route: 'ComplianceDashboard' },
-  { emoji: '🐖', label: 'home.tile_savings', route: 'SavingsHub' },
-  { emoji: '🧾', label: 'home.tile_lipa_later_report', route: 'PaymentSummary' },
-  { emoji: '🏡', label: 'home.tile_send_money_home', route: 'SendMoneyHome' },
-  { emoji: '🏆', label: 'home.tile_my_goals', route: 'Goals' },
-  { emoji: '💡', label: 'home.tile_suggestions_feedback', route: 'SuggestionsFeedback' },
-];
-
 // ============================================================================
 // LOADING SKELETON
 // ============================================================================
@@ -296,6 +284,43 @@ export default function HomeScreen() {
             onNewTrip={handleNewTrip}
           />
 
+          {/* SUBSCRIPTION STATUS BANNER */}
+          {account?.subscription_status && (
+            <View style={[
+              styles.subscriptionBanner,
+              account.subscription_status === 'active' ? styles.bannerActive :
+              account.subscription_status === 'expired' ? styles.bannerExpired :
+              account.subscription_status === 'pending_verification' ? styles.bannerPending :
+              styles.bannerTrial
+            ]}>
+              <Text style={styles.bannerTitle}>
+                {account.subscription_status === 'active' ? '✅ Subscription Active' :
+                 account.subscription_status === 'expired' ? '⚠️ Subscription Expired' :
+                 account.subscription_status === 'pending_verification' ? '⏳ Payment Pending' :
+                 '🎁 Free Trial'}
+              </Text>
+              <Text style={styles.bannerSubtitle}>
+                {account.subscription_status === 'expired' 
+                  ? 'Your subscription has expired. Renew to keep tracking trips.'
+                  : account.subscription_status === 'pending_verification'
+                  ? 'Your payment is being verified. Usually takes 1-2 hours.'
+                  : account.subscription_status === 'active'
+                  ? `You're all set! Enjoy seamless trip tracking.`
+                  : 'Your free trial is active. Subscribe to continue.'}
+              </Text>
+              {(account.subscription_status === 'expired' || account.subscription_status === 'pending_verification') && (
+                <TouchableOpacity 
+                  onPress={() => navigation.navigate('MySubscriptions')}
+                  style={styles.bannerAction}
+                >
+                  <Text style={styles.bannerActionText}>
+                    {account.subscription_status === 'expired' ? 'Renew Subscription →' : 'View Status →'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
           {/* YESTERDAY'S TOTAL CARD */}
           {yesterdayTotal !== null && typeof safeYesterdayTotal === 'number' && (
             <View style={styles.yesterdayCard}>
@@ -363,74 +388,6 @@ export default function HomeScreen() {
             >
               <Text style={styles.tileEmoji}>📲</Text>
               <Text style={styles.tileLabel}>My Subscription</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* TILES GRID - Row 3: Revenue Targets + Compliance */}
-          <View style={styles.tileRow}>
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('RevenueTargets')}
-            >
-              <Text style={styles.tileEmoji}>🎯</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_revenue_targets')}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('ComplianceDashboard')}
-            >
-              <Text style={styles.tileEmoji}>📋</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_license_insurance')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* TILES GRID - Row 4: Savings + Lipa Later */}
-          <View style={styles.tileRow}>
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('SavingsHub')}
-            >
-              <Text style={styles.tileEmoji}>🐖</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_savings')}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('PaymentSummary')}
-            >
-              <Text style={styles.tileEmoji}>🧾</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_lipa_later_report')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* TILES GRID - Row 5: Send Money + Goals */}
-          <View style={styles.tileRow}>
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('SendMoneyHome')}
-            >
-              <Text style={styles.tileEmoji}>🏡</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_send_money_home')}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('Goals')}
-            >
-              <Text style={styles.tileEmoji}>🏆</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_my_goals')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* TILES GRID - Row 6: Suggestions */}
-          <View style={styles.tileRow}>
-            <TouchableOpacity
-              style={[styles.homeTile, { flex: 1 }]}
-              onPress={() => navigation.navigate('SuggestionsFeedback')}
-            >
-              <Text style={styles.tileEmoji}>💡</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_suggestions_feedback')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -565,6 +522,48 @@ const styles = StyleSheet.create({
   },
   heroFare: {
     height: 140,
+  },
+  subscriptionBanner: {
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1.5,
+  },
+  bannerActive: {
+    backgroundColor: '#e6f5ef',
+    borderColor: '#1e9e6f',
+  },
+  bannerExpired: {
+    backgroundColor: '#ffebee',
+    borderColor: '#c62828',
+  },
+  bannerPending: {
+    backgroundColor: '#fff3e0',
+    borderColor: '#f57f17',
+  },
+  bannerTrial: {
+    backgroundColor: '#f3e5f5',
+    borderColor: '#7b1fa2',
+  },
+  bannerTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 4,
+  },
+  bannerSubtitle: {
+    fontSize: 12.5,
+    color: '#5b606c',
+    lineHeight: 18,
+    marginBottom: 10,
+  },
+  bannerAction: {
+    paddingVertical: 10,
+  },
+  bannerActionText: {
+    color: '#ff7a1a',
+    fontSize: 13,
+    fontWeight: '700',
   },
   yesterdayCard: {
     backgroundColor: '#fff',

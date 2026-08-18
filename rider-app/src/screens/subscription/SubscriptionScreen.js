@@ -82,6 +82,8 @@ export function SubscriptionScreen({ navigation }) {
   const isUrgent = daysLeft <= 2;
   const isLocked = subscription.locked;
   const statusWord = subscription.has_ever_paid ? 'Active' : 'Free Trial';
+  const dailyPrice = subscription.daily_price || 0;
+  const planName = subscription.plan_name || 'Smart Boda';
 
   return (
     <ScrollView style={styles.container}>
@@ -121,11 +123,11 @@ export function SubscriptionScreen({ navigation }) {
       <View style={styles.card}>
         <View style={styles.kvRow}>
           <Text style={styles.kvKey}>Plan</Text>
-          <Text style={styles.kvValue}>{subscription.plan_name}</Text>
+          <Text style={styles.kvValue}>{planName}</Text>
         </View>
         <View style={styles.kvRow}>
           <Text style={styles.kvKey}>Daily Rate</Text>
-          <Text style={styles.kvValue}>💵 KSh {subscription.daily_price.toLocaleString()}/day</Text>
+          <Text style={styles.kvValue}>💵 KSh {(dailyPrice || 0).toLocaleString()}/day</Text>
         </View>
         {subscription.has_ever_paid && (
           <View style={styles.kvRow}>
@@ -137,7 +139,7 @@ export function SubscriptionScreen({ navigation }) {
         )}
         <View style={styles.kvRow}>
           <Text style={styles.kvKey}>{subscription.has_ever_paid ? 'Next Payment Due' : 'Trial Ends'}</Text>
-          <Text style={styles.kvValue}>{new Date(subscription.expiry_at).toLocaleDateString()}</Text>
+          <Text style={styles.kvValue}>{subscription.expiry_at ? new Date(subscription.expiry_at).toLocaleDateString() : 'N/A'}</Text>
         </View>
       </View>
 
@@ -147,7 +149,7 @@ export function SubscriptionScreen({ navigation }) {
           <Text style={styles.benefitText}>
             ✅ Keep tracking every trip, fuel cost, and service reminder{'\n'}
             ✅ Stay connected to your SACCO{'\n'}
-            ✅ From as little as KSh {subscription.daily_price}/day — less than a cup of tea
+            ✅ From as little as KSh {dailyPrice.toLocaleString()}/day — less than a cup of tea
           </Text>
         </View>
       )}
@@ -250,8 +252,9 @@ export function ChooseFrequencyScreen({ navigation }) {
       {/* Frequency Tiles */}
       <View style={styles.tileGrid}>
         {Object.values(FREQUENCIES).map((freq) => {
-          const dailyPrice = subscription.daily_price;
-          const amount = dailyPrice * freq.key === 'weekly' ? 7 : freq.key === 'biweekly' ? 14 : 30;
+          const dailyPriceVal = subscription.daily_price || 0;
+          const daysCount = freq.key === 'weekly' ? 7 : freq.key === 'biweekly' ? 14 : 30;
+          const amount = dailyPriceVal * daysCount;
           
           return (
             <TouchableOpacity
@@ -264,15 +267,15 @@ export function ChooseFrequencyScreen({ navigation }) {
             >
               <Text style={styles.tileEmoji}>{freq.emoji}</Text>
               <Text style={styles.tileLabel}>{freq.label}</Text>
-              <Text style={styles.tileAmount}>KSh {amount.toLocaleString()}</Text>
-              <Text style={styles.tileDays}>every {freq.key === 'weekly' ? '7' : freq.key === 'biweekly' ? '14' : '30'} days</Text>
+              <Text style={styles.tileAmount}>KSh {Math.round(amount).toLocaleString()}</Text>
+              <Text style={styles.tileDays}>every {daysCount} days</Text>
             </TouchableOpacity>
           );
         })}
       </View>
 
       <Text style={styles.hint}>
-        Daily rate: KSh {subscription.daily_price}. Weekly, biweekly, and monthly plans work out cheaper per day.
+        Daily rate: KSh {(subscription.daily_price || 0).toLocaleString()}. Weekly, biweekly, and monthly plans work out cheaper per day.
       </Text>
 
       <TouchableOpacity
@@ -369,10 +372,10 @@ export function ConfirmSubscriptionScreen({ route, navigation }) {
   if (!subscription || loading) return <Text style={styles.loading}>Loading...</Text>;
 
   const freqInfo = FREQUENCIES[frequency];
-  const dailyPrice = subscription.daily_price;
+  const dailyPrice = subscription.daily_price || 0;
   const daysMap = { weekly: 7, biweekly: 14, monthly: 30 };
-  const days = daysMap[frequency];
-  const amount = dailyPrice * days;
+  const days = daysMap[frequency] || 7;
+  const amount = Math.max(0, dailyPrice * days);
   const newExpiry = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
   return (
