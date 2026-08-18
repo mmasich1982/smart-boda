@@ -434,8 +434,8 @@ const HomeScreen = () => {
   };
 
   const energyTile = bike?.fuel_type_code ? ENERGY_TILE_BY_FUEL[bike.fuel_type_code] : null;
-  const safeRunningTotal = runningTotal || 0;
-  const safeYesterdayTotal = yesterdayTotal || 0;
+  const safeRunningTotal = Number(runningTotal) || 0;
+  const safeYesterdayTotal = typeof yesterdayTotal === 'number' ? yesterdayTotal : 0;
 
   // ============================================================================
   // RENDER LOGIC
@@ -489,7 +489,7 @@ const HomeScreen = () => {
           />
 
           {/* YESTERDAY'S TOTAL CARD */}
-          {safeYesterdayTotal !== null && (
+          {yesterdayTotal !== null && typeof safeYesterdayTotal === 'number' && (
             <View style={styles.yesterdayCard}>
               <View style={styles.yesterdayHeader}>
                 <Text style={styles.yesterdayLabel}>{t('home.yesterday_total')}</Text>
