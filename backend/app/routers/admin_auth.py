@@ -39,7 +39,7 @@ def read_admin_me(current_admin: AdminUser = Depends(get_current_admin)):
         "name": current_admin.name,
         "email": current_admin.email,
         "role": current_admin.role,
-        "is_active": current_admin.is_active,
+        "is_active": current_admin.is_activ,
     }
 
 @router.post("/logout")
