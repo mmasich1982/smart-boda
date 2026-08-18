@@ -21,7 +21,7 @@ import {
   RefreshControl
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
-import { useTranslation } from '../i18n/LocalizationProvider';
+import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
 import { useRider } from '../../context/RiderContext';
