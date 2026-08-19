@@ -1,7 +1,6 @@
 // rider-app/src/screens/energyHub/FuelEntryScreen.js
 // ✅ COMPLETE REWRITE: Proper UI/UX alignment + Robust offline functionality
 // Features:
-// - Matches backup/cleaned.html design system (colors, fonts, spacing)
 // - Records save to offline storage regardless of network
 // - Guaranteed navigation to history after offline save
 // - SyncQueue integration for pending records
