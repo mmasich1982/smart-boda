@@ -1,3 +1,12 @@
+// rider-app/src/screens/energyHub/BatteryEntryScreen.js
+// ✅ COMPLETE REWRITE: Proper UI/UX alignment + Robust offline functionality
+// Features:
+// - Matches backup/cleaned.html design system (colors, fonts, spacing)
+// - Records save to offline storage regardless of network
+// - Guaranteed navigation to history after offline save
+// - SyncQueue integration for pending records
+// - Proper error handling throughout
+
 import React, { useState, useCallback } from 'react';
 import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
@@ -5,12 +14,14 @@ import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
 import LocalStore from '../../offline/LocalStore';
+import SyncQueue from '../../offline/SyncQueue';
 import { useTranslation } from '../../i18n/LocalizationProvider';
-import { addToSyncQueue } from '../../offline/syncQueue';
 
 const BatteryEntryScreen = ({ route, navigation }) => {
   const { t } = useTranslation();
   const { state: riderState } = useRider();
+  
+  // State management
   const [duration, setDuration] = useState('');
   const [cost, setCost] = useState('');
   const [batteryPercent, setBatteryPercent] = useState('');
@@ -18,7 +29,7 @@ const BatteryEntryScreen = ({ route, navigation }) => {
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
 
-  // Get rider ID
+  // Get rider ID with fallback
   const getRiderId = useCallback(() => {
     try {
       return getLocalRiderId();
@@ -30,29 +41,39 @@ const BatteryEntryScreen = ({ route, navigation }) => {
   // Validate inputs
   const validateInputs = useCallback(() => {
     if (!duration || isNaN(parseFloat(duration)) || parseFloat(duration) <= 0) {
-      Alert.alert(t('error'), t('please_enter_valid_duration'));
+      Alert.alert(
+        t('error') || 'Error',
+        t('please_enter_valid_duration') || 'Please enter a valid charging duration'
+      );
       return false;
     }
     if (!cost || isNaN(parseFloat(cost)) || parseFloat(cost) <= 0) {
-      Alert.alert(t('error'), t('please_enter_valid_cost'));
+      Alert.alert(
+        t('error') || 'Error',
+        t('please_enter_valid_cost') || 'Please enter a valid cost'
+      );
       return false;
     }
     return true;
   }, [duration, cost, t]);
 
-  // Save battery entry
+  // ✅ CRITICAL: Save with guaranteed offline support + guaranteed history navigation
   const handleSaveCharge = useCallback(async () => {
     if (!validateInputs()) return;
 
     const riderId = getRiderId();
     if (!riderId) {
-      Alert.alert(t('error'), t('unable_to_identify_rider'));
+      Alert.alert(
+        t('error') || 'Error',
+        t('unable_to_identify_rider') || 'Unable to identify rider'
+      );
       return;
     }
 
     try {
       setLoading(true);
       
+      // Create battery entry with unique ID
       const batteryEntry = {
         id: `battery_${Date.now()}`,
         rider_id: riderId,
@@ -62,76 +83,109 @@ const BatteryEntryScreen = ({ route, navigation }) => {
         notes: notes,
         date: new Date().toISOString(),
         synced: false,
+        serverId: null,
       };
 
-      // ✅ OFFLINE: Save to offline database first
+      // ✅ STEP 1: ALWAYS save to offline storage first
+      let offlineSaveSuccess = false;
       try {
-        const existingEntries = LocalStore.get(`battery_entries_${riderId}`);
-        const entries = existingEntries ? JSON.parse(existingEntries) : [];
-        entries.push(batteryEntry);
-        LocalStore.set(`battery_entries_${riderId}`, JSON.stringify(entries));
-        console.log('✅ Battery entry saved to offline database');
+        const existingEntriesJson = LocalStore.get(`battery_entries_${riderId}`);
+        const entries = existingEntriesJson ? JSON.parse(existingEntriesJson) : [];
+        
+        // Add new entry to the front (newest first)
+        entries.unshift(batteryEntry);
+        
+        offlineSaveSuccess = LocalStore.set(
+          `battery_entries_${riderId}`,
+          JSON.stringify(entries)
+        );
+        
+        if (offlineSaveSuccess) {
+          console.log('✅ Battery entry saved to offline storage');
+        } else {
+          console.error('Failed to save to offline storage');
+          Alert.alert(
+            t('error') || 'Error',
+            t('failed_to_save_offline') || 'Failed to save offline'
+          );
+          setLoading(false);
+          return;
+        }
       } catch (offlineErr) {
-        console.error('Error saving to offline database:', offlineErr);
+        console.error('Offline save error:', offlineErr);
+        Alert.alert(
+          t('error') || 'Error',
+          t('failed_to_save_offline') || 'Failed to save offline'
+        );
+        setLoading(false);
+        return;
       }
 
-      // Try to sync immediately
+      // ✅ STEP 2: Try to sync immediately (doesn't block offline success)
+      let syncedOnline = false;
       try {
         const response = await api.post('/battery/entry', batteryEntry);
         
-        if (response.data) {
-          // Success - update local record as synced
-          try {
-            const entries = JSON.parse(LocalStore.get(`battery_entries_${riderId}`) || '[]');
-            const updated = entries.map(e => 
-              e.id === batteryEntry.id ? { ...e, synced: true, server_id: response.data.id } : e
-            );
-            LocalStore.set(`battery_entries_${riderId}`, JSON.stringify(updated));
-          } catch (e) {
-            console.warn('Failed to update sync status:', e);
-          }
-
-          // Clear form and navigate back
-          setDuration('');
-          setCost('');
-          setBatteryPercent('');
-          setNotes('');
-          Alert.alert(t('success'), t('battery_charge_saved'));
-          navigation.goBack();
+        if (response.data?.id) {
+          // Update local record to mark as synced
+          const entriesJson = LocalStore.get(`battery_entries_${riderId}`);
+          const entries = entriesJson ? JSON.parse(entriesJson) : [];
+          const updated = entries.map(e => 
+            e.id === batteryEntry.id 
+              ? { ...e, synced: true, serverId: response.data.id } 
+              : e
+          );
+          LocalStore.set(`battery_entries_${riderId}`, JSON.stringify(updated));
+          syncedOnline = true;
+          console.log('✅ Battery entry synced to server');
         }
       } catch (syncErr) {
         // Network error - will sync later
         if (isNetworkError(syncErr)) {
+          console.warn('Offline: Queuing battery entry for sync');
           setIsOffline(true);
           
-          // ✅ Queue for later sync
+          // Queue for later sync
           try {
-            addToSyncQueue({
-              type: 'battery_entry',
-              data: batteryEntry,
-              endpoint: '/battery/entry',
-              timestamp: new Date(),
-            });
+            SyncQueue.addEntry('battery', batteryEntry, '/battery/entry');
+            console.log('✅ Entry queued for later sync');
           } catch (queueErr) {
             console.error('Error adding to sync queue:', queueErr);
           }
-
-          Alert.alert(
-            t('success'),
-            t('battery_entry_saved_offline') + '\n' + t('will_sync_when_online')
-          );
-          setDuration('');
-          setCost('');
-          setBatteryPercent('');
-          setNotes('');
-          navigation.goBack();
         } else {
-          throw syncErr;
+          // Other error (not network) - still don't fail since offline save succeeded
+          console.warn('Sync error (will retry later):', syncErr.message);
         }
       }
+
+      // ✅ STEP 3: Clear form
+      setDuration('');
+      setCost('');
+      setBatteryPercent('');
+      setNotes('');
+
+      // ✅ STEP 4: GUARANTEED navigation to history
+      // This ALWAYS happens, regardless of sync status
+      Alert.alert(
+        t('success') || 'Success',
+        syncedOnline 
+          ? (t('battery_entry_saved') || 'Battery charging entry saved')
+          : (t('battery_entry_saved_offline') || 'Battery entry saved (will sync when online)'),
+        [{
+          text: t('ok') || 'OK',
+          onPress: () => {
+            // Navigate to battery history - GUARANTEED
+            navigation.navigate('BatteryHistory');
+          }
+        }]
+      );
+
     } catch (err) {
-      console.error('Error saving battery entry:', err);
-      Alert.alert(t('error'), t('failed_to_save_battery_entry') + '\n' + err.message);
+      console.error('Unexpected error:', err);
+      Alert.alert(
+        t('error') || 'Error',
+        t('failed_to_save_battery_entry') || 'Failed to save battery entry'
+      );
     } finally {
       setLoading(false);
     }
@@ -139,89 +193,104 @@ const BatteryEntryScreen = ({ route, navigation }) => {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink title={t('record_battery_cost')} />
+      {/* Header */}
+      <View style={styles.headerContainer}>
+        <BackLink title={t('record_battery_cost') || 'Record Battery Cost'} />
+      </View>
 
+      {/* Offline Indicator */}
       {isOffline && (
         <View style={styles.offlineBanner}>
           <Text style={styles.offlineText}>
-            📶 {t('working_offline')} - {t('entry_will_sync')}
+            📶 {t('working_offline') || 'Working offline'} - {t('will_sync') || 'will sync'}
           </Text>
         </View>
       )}
 
+      {/* Main Card */}
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>🔋 {t('battery_charge_details')}</Text>
+        <Text style={styles.cardTitle}>🔋 {t('battery_charge_details') || 'Battery Charge Details'}</Text>
 
-        {/* Duration */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>{t('charging_duration_minutes')}</Text>
+        {/* Duration Field */}
+        <View style={styles.field}>
+          <Text style={styles.label}>
+            {t('charging_duration_minutes') || 'Charging Duration (minutes)'} <Text style={styles.required}>*</Text>
+          </Text>
           <TextInput
             style={styles.input}
-            placeholder="e.g., 45"
+            placeholder="e.g. 45"
             keyboardType="decimal-pad"
             value={duration}
             onChangeText={setDuration}
             editable={!loading}
-            placeholderTextColor="#999"
+            placeholderTextColor="#b0a89d"
           />
         </View>
 
-        {/* Cost */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>{t('cost_kes')}</Text>
+        {/* Cost Field */}
+        <View style={styles.field}>
+          <Text style={styles.label}>
+            {t('cost_kes') || 'Cost (KES)'} <Text style={styles.required}>*</Text>
+          </Text>
           <TextInput
             style={styles.input}
-            placeholder="e.g., 100"
+            placeholder="e.g. 100"
             keyboardType="decimal-pad"
             value={cost}
             onChangeText={setCost}
             editable={!loading}
-            placeholderTextColor="#999"
+            placeholderTextColor="#b0a89d"
           />
         </View>
 
-        {/* Battery Percent (Optional) */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>{t('battery_charged_percent')} ({t('optional')})</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g., 80"
-            keyboardType="decimal-pad"
-            value={batteryPercent}
-            onChangeText={setBatteryPercent}
-            editable={!loading}
-            placeholderTextColor="#999"
-            maxLength={3}
-          />
-          {batteryPercent && (
-            <Text style={styles.helpText}>
-              Battery: {batteryPercent}%
-            </Text>
-          )}
-        </View>
-
-        {/* Cost per minute */}
+        {/* Cost per minute hint */}
         {duration && cost && (
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>{t('cost_per_minute')}</Text>
-            <Text style={styles.infoValue}>
+          <View style={styles.hintRow}>
+            <Text style={styles.hintLabel}>{t('cost_per_minute') || 'Cost per minute'}</Text>
+            <Text style={styles.hintValue}>
               KES {(parseFloat(cost) / parseFloat(duration)).toFixed(2)}
             </Text>
           </View>
         )}
 
-        {/* Notes */}
-        <View style={styles.inputGroup}>
-          <Text style={styles.label}>{t('notes')} ({t('optional')})</Text>
+        {/* Battery Percent Field (Optional) */}
+        <View style={styles.field}>
+          <Text style={styles.label}>
+            {t('battery_charged_percent') || 'Battery %'} 
+            <Text style={styles.optional}> ({t('optional') || 'optional'})</Text>
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. 80"
+            keyboardType="decimal-pad"
+            value={batteryPercent}
+            onChangeText={setBatteryPercent}
+            editable={!loading}
+            placeholderTextColor="#b0a89d"
+            maxLength={3}
+          />
+          {batteryPercent && (
+            <Text style={styles.hint}>
+              🔋 Battery charged to {batteryPercent}%
+            </Text>
+          )}
+        </View>
+
+        {/* Notes Field (Optional) */}
+        <View style={styles.field}>
+          <Text style={styles.label}>
+            {t('notes') || 'Notes'} 
+            <Text style={styles.optional}> ({t('optional') || 'optional'})</Text>
+          </Text>
           <TextInput
             style={[styles.input, styles.textArea]}
-            placeholder={t('add_notes_about_battery')}
+            placeholder={t('add_notes_about_battery') || 'Add notes about this charging session...'}
             value={notes}
             onChangeText={setNotes}
             multiline
             numberOfLines={3}
             editable={!loading}
-            placeholderTextColor="#999"
+            placeholderTextColor="#b0a89d"
           />
         </View>
 
@@ -234,7 +303,9 @@ const BatteryEntryScreen = ({ route, navigation }) => {
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>💾 {t('save_battery_entry')}</Text>
+            <Text style={styles.buttonText}>
+              💾 {t('save_battery_entry') || 'Record Battery Cost'}
+            </Text>
           )}
         </TouchableOpacity>
 
@@ -244,37 +315,46 @@ const BatteryEntryScreen = ({ route, navigation }) => {
           onPress={() => navigation.goBack()}
           disabled={loading}
         >
-          <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
+          <Text style={styles.cancelButtonText}>{t('cancel') || 'Cancel'}</Text>
         </TouchableOpacity>
       </View>
 
       {/* Info Box */}
       <View style={styles.infoBox}>
-        <Text style={styles.infoTitle}>💡 {t('tip')}</Text>
+        <Text style={styles.infoTitle}>💡 {t('tip') || 'Tip'}</Text>
         <Text style={styles.infoMessage}>
           {isOffline
-            ? t('battery_saved_offline_syncs_automatically')
-            : t('battery_entry_saved_immediately')}
+            ? (t('battery_offline_sync') || 'Your entry is saved offline and will sync automatically when you\'re back online.')
+            : (t('battery_saves_immediately') || 'Your battery entry will be saved immediately and appear in your history.')}
         </Text>
       </View>
     </ScrollView>
   );
 };
 
+// ✅ Helper: Detect network errors
 const isNetworkError = (err) => {
   return !err.response || err.code === 'ERR_NETWORK' || err.message.includes('Network');
 };
 
+// ✅ Styles: Aligned with cleaned.html design system
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f6f4ef', // cream background
+    paddingHorizontal: 20,
+    paddingBottom: 60,
+  },
+  headerContainer: {
+    marginTop: 16,
+    marginBottom: 12,
   },
   offlineBanner: {
-    backgroundColor: '#FFA500',
-    padding: 12,
-    margin: 10,
+    backgroundColor: '#FFA500', // orange for offline
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     borderRadius: 8,
+    marginBottom: 16,
   },
   offlineText: {
     color: '#fff',
@@ -284,107 +364,125 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#fff',
-    margin: 10,
-    padding: 15,
-    borderRadius: 10,
-    elevation: 2,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db', // design system border color
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
   },
   cardTitle: {
+    fontFamily: 'SpaceGrotesk-Bold', // design system font
     fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 20,
-    color: '#333',
+    fontWeight: '700',
+    marginBottom: 16,
+    color: '#1a1c20', // ink color
   },
-  inputGroup: {
-    marginBottom: 20,
+  field: {
+    marginBottom: 16,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#333',
+    fontSize: 11.5,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.04,
+    color: '#5b606c', // ink-soft
     marginBottom: 8,
   },
+  required: {
+    color: '#e5650a', // boda-orange-dark
+    fontWeight: '700',
+  },
+  optional: {
+    color: '#5b606c',
+    fontWeight: '500',
+    textTransform: 'none',
+  },
   input: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#333',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: '#1a1c20',
+    backgroundColor: '#fff',
   },
   textArea: {
-    paddingVertical: 12,
     minHeight: 80,
     textAlignVertical: 'top',
   },
-  helpText: {
-    fontSize: 12,
-    color: '#007AFF',
-    marginTop: 5,
-    fontWeight: '500',
-  },
-  infoRow: {
+  hintRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingVertical: 10,
     paddingHorizontal: 12,
-    backgroundColor: '#F0F8FF',
-    borderRadius: 6,
-    marginBottom: 20,
+    backgroundColor: '#f0f8ff',
+    borderRadius: 8,
+    marginBottom: 16,
   },
-  infoLabel: {
+  hintLabel: {
     fontSize: 13,
-    color: '#666',
+    color: '#5b606c',
   },
-  infoValue: {
+  hintValue: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#007AFF',
+    color: '#ff7a1a', // boda-orange
+  },
+  hint: {
+    fontSize: 12,
+    color: '#5b606c',
+    marginTop: 6,
+    fontWeight: '500',
   },
   saveButton: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 12,
-    borderRadius: 8,
+    backgroundColor: '#ff7a1a', // boda-orange primary button
+    borderRadius: 12,
+    paddingVertical: 14,
     alignItems: 'center',
     marginBottom: 10,
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.55,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 5,
   },
   buttonText: {
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
   },
   cancelButton: {
     backgroundColor: '#f0f0f0',
-    paddingVertical: 12,
-    borderRadius: 8,
+    borderRadius: 12,
+    paddingVertical: 14,
     alignItems: 'center',
   },
   cancelButtonText: {
-    color: '#333',
-    fontSize: 14,
-    fontWeight: '600',
+    color: '#1a1c20',
+    fontSize: 15,
+    fontWeight: '700',
   },
   buttonDisabled: {
     opacity: 0.6,
   },
   infoBox: {
-    backgroundColor: '#E8F4F8',
-    margin: 10,
+    backgroundColor: '#e6f5ef', // signal-green-bg
     padding: 15,
-    borderRadius: 8,
+    borderRadius: 10,
     borderLeftWidth: 4,
-    borderLeftColor: '#00BCD4',
+    borderLeftColor: '#1e9e6f', // signal-green
+    marginBottom: 20,
   },
   infoTitle: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#00695C',
+    color: '#1e9e6f',
     marginBottom: 5,
   },
   infoMessage: {
     fontSize: 13,
-    color: '#00695C',
+    color: '#1e9e6f',
     lineHeight: 20,
   },
 });
