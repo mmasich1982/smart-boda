@@ -1,25 +1,29 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, FlatList, Alert } from 'react-native';
+// rider-app/src/screens/energyHub/BatteryHistoryScreen.js
+// ✅ COMPLETE REWRITE: Period tabs + Offline data loading + UI alignment
+// Features:
+// - Period tabs: This Month, Last Month, Last 6 Months, Since Joining
+// - Filter entries by selected period
+// - Load from offline storage
+// - Proper UI/UX alignment with cleaned.html design system
+// - Offline indicator and empty states
+
+import React, { useState, useFocusEffect, useCallback, useMemo } from 'react';
+import { ScrollView, View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
-import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
 import LocalStore from '../../offline/LocalStore';
 import { useTranslation } from '../../i18n/LocalizationProvider';
-import { useFocusEffect } from '@react-navigation/native';
 
-const BatteryHistoryScreen = () => {
+const BatteryHistoryScreen = ({ navigation }) => {
   const { t } = useTranslation();
   const { state: riderState } = useRider();
   
-  const [batteryHistory, setBatteryHistory] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [allEntries, setAllEntries] = useState([]);
+  const [selectedPeriod, setSelectedPeriod] = useState('thisMonth');
   const [isOffline, setIsOffline] = useState(false);
-  const [totalCost, setTotalCost] = useState(0);
-  const [totalCharges, setTotalCharges] = useState(0);
-  const [totalDuration, setTotalDuration] = useState(0);
 
-  // Get rider ID
   const getRiderId = useCallback(() => {
     try {
       return getLocalRiderId();
@@ -28,315 +32,254 @@ const BatteryHistoryScreen = () => {
     }
   }, [riderState]);
 
-  // Load battery history
-  const loadBatteryHistory = useCallback(async () => {
-    const riderId = getRiderId();
-    
-    if (!riderId) {
-      console.error('Rider ID missing');
-      setLoading(false);
-      return;
-    }
-
+  // Load all battery entries from offline storage
+  const loadEntries = useCallback(async () => {
     try {
       setLoading(true);
+      const riderId = getRiderId();
       
-      // Try to fetch from API
-      const response = await api.get(`/battery/history?rider_id=${riderId}`);
-      
-      if (response.data) {
-        const entries = response.data.entries || response.data || [];
-        setBatteryHistory(entries);
-        
-        // Calculate totals
-        const totals = entries.reduce((acc, entry) => {
-          return {
-            cost: acc.cost + (parseFloat(entry.cost) || 0),
-            duration: acc.duration + (parseFloat(entry.duration) || 0),
-            charges: acc.charges + 1,
-          };
-        }, { cost: 0, duration: 0, charges: 0 });
-        
-        setTotalCost(totals.cost);
-        setTotalDuration(totals.duration);
-        setTotalCharges(totals.charges);
-        
-        // ✅ OFFLINE: Cache the history
-        try {
-          LocalStore.set(`battery_history_${riderId}`, JSON.stringify({
-            entries: entries,
-            totals: totals,
-            cached_at: new Date().toISOString()
-          }));
-        } catch (cacheErr) {
-          console.warn('Failed to cache battery history:', cacheErr);
-        }
-        
-        setIsOffline(false);
+      if (!riderId) {
+        setLoading(false);
+        return;
       }
+
+      // Load from offline storage
+      const storedJson = LocalStore.get(`battery_entries_${riderId}`);
+      const entries = storedJson ? JSON.parse(storedJson) : [];
+      
+      setAllEntries(entries);
+      setIsOffline(true);
+
     } catch (err) {
-      console.error('Error loading battery history:', err);
-      
-      // ✅ OFFLINE: Load from cache on network error
-      if (isNetworkError(err)) {
-        try {
-          const cached = LocalStore.get(`battery_history_${riderId}`);
-          
-          if (cached) {
-            const { entries, totals } = JSON.parse(cached);
-            setBatteryHistory(entries);
-            setTotalCost(totals.cost);
-            setTotalDuration(totals.duration);
-            setTotalCharges(totals.charges);
-            setIsOffline(true);
-            console.log('✅ Loaded battery history from offline cache');
-          } else {
-            // Also try to load from local entries
-            const localEntries = LocalStore.get(`battery_entries_${riderId}`);
-            if (localEntries) {
-              const entries = JSON.parse(localEntries);
-              setBatteryHistory(entries);
-              
-              const totals = entries.reduce((acc, entry) => {
-                return {
-                  cost: acc.cost + (parseFloat(entry.cost) || 0),
-                  duration: acc.duration + (parseFloat(entry.duration) || 0),
-                  charges: acc.charges + 1,
-                };
-              }, { cost: 0, duration: 0, charges: 0 });
-              
-              setTotalCost(totals.cost);
-              setTotalDuration(totals.duration);
-              setTotalCharges(totals.charges);
-              setIsOffline(true);
-              console.log('✅ Loaded battery history from local entries');
-            } else {
-              setBatteryHistory([]);
-              setTotalCost(0);
-              setTotalDuration(0);
-              setTotalCharges(0);
-              setIsOffline(true);
-            }
-          }
-        } catch (cacheErr) {
-          console.error('Error loading from cache:', cacheErr);
-          setIsOffline(true);
-        }
-      }
+      console.error('Error loading entries:', err);
+      setIsOffline(false);
     } finally {
       setLoading(false);
     }
   }, [getRiderId]);
 
-  // Load on mount and focus
+  // Reload when screen is focused
   useFocusEffect(
     useCallback(() => {
-      loadBatteryHistory();
-    }, [loadBatteryHistory])
+      loadEntries();
+    }, [loadEntries])
   );
 
-  // Handle refresh
-  const handleRefresh = useCallback(() => {
-    loadBatteryHistory();
-  }, [loadBatteryHistory]);
-
-  // Delete entry
-  const handleDeleteEntry = useCallback((entryId) => {
-    Alert.alert(
-      t('confirm_delete'),
-      t('delete_battery_entry_confirm'),
-      [
-        { text: t('cancel'), onPress: () => {} },
-        {
-          text: t('delete'),
-          onPress: () => {
-            try {
-              const riderId = getRiderId();
-              const entries = batteryHistory.filter(e => e.id !== entryId);
-              
-              // Update local storage
-              LocalStore.set(`battery_entries_${riderId}`, JSON.stringify(entries));
-              
-              // Update state
-              setBatteryHistory(entries);
-              
-              // Recalculate totals
-              const totals = entries.reduce((acc, entry) => {
-                return {
-                  cost: acc.cost + (parseFloat(entry.cost) || 0),
-                  duration: acc.duration + (parseFloat(entry.duration) || 0),
-                  charges: acc.charges + 1,
-                };
-              }, { cost: 0, duration: 0, charges: 0 });
-              
-              setTotalCost(totals.cost);
-              setTotalDuration(totals.duration);
-              setTotalCharges(totals.charges);
-              
-              Alert.alert(t('success'), t('battery_entry_deleted'));
-            } catch (err) {
-              Alert.alert(t('error'), t('failed_to_delete_entry'));
-            }
-          },
-          style: 'destructive',
-        },
-      ]
-    );
-  }, [batteryHistory, getRiderId, t]);
-
-  if (loading && batteryHistory.length === 0) {
-    return (
-      <View style={styles.container}>
-        <BackLink title={t('battery_cost_history')} />
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>{t('loading_battery_history')}</Text>
-        </View>
-      </View>
-    );
-  }
-
-  const renderBatteryEntry = ({ item }) => (
-    <View style={styles.historyCard}>
-      <View style={styles.historyHeader}>
-        <View>
-          <Text style={styles.historyDate}>
-            📅 {new Date(item.date || item.created_at).toLocaleDateString()}
-          </Text>
-          <Text style={styles.historyTime}>
-            {new Date(item.date || item.created_at).toLocaleTimeString()}
-          </Text>
-        </View>
-        <TouchableOpacity
-          onPress={() => handleDeleteEntry(item.id)}
-          style={styles.deleteButton}
-        >
-          <Text style={styles.deleteButtonText}>🗑️</Text>
-        </TouchableOpacity>
-      </View>
+  // Filter entries based on period
+  const filteredEntries = useMemo(() => {
+    const now = new Date();
+    
+    return allEntries.filter(entry => {
+      const entryDate = new Date(entry.date);
       
-      <View style={styles.historyDetails}>
-        <View style={styles.detailRow}>
-          <Text style={styles.detailLabel}>{t('duration')}</Text>
-          <Text style={styles.detailValue}>{item.duration} mins</Text>
+      switch (selectedPeriod) {
+        case 'thisMonth': {
+          return entryDate.getMonth() === now.getMonth() && 
+                 entryDate.getFullYear() === now.getFullYear();
+        }
+        case 'lastMonth': {
+          const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1);
+          return entryDate.getMonth() === lastMonth.getMonth() && 
+                 entryDate.getFullYear() === lastMonth.getFullYear();
+        }
+        case 'last6Months': {
+          const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6);
+          return entryDate >= sixMonthsAgo;
+        }
+        case 'allTime': {
+          return true;
+        }
+        default:
+          return true;
+      }
+    });
+  }, [allEntries, selectedPeriod]);
+
+  // Calculate stats for selected period
+  const periodStats = useMemo(() => {
+    const totalCost = filteredEntries.reduce((sum, e) => sum + (e.cost || 0), 0);
+    const totalDuration = filteredEntries.reduce((sum, e) => sum + (e.duration || 0), 0);
+    
+    return {
+      totalCost,
+      totalDuration,
+      average: filteredEntries.length > 0 ? (totalCost / filteredEntries.length).toFixed(2) : 0,
+      count: filteredEntries.length,
+    };
+  }, [filteredEntries]);
+
+  // Period tab data
+  const periods = [
+    { id: 'thisMonth', label: t('this_month') || 'This Month' },
+    { id: 'lastMonth', label: t('last_month') || 'Last Month' },
+    { id: 'last6Months', label: t('last_6_months') || 'Last 6 Months' },
+    { id: 'allTime', label: t('all_time') || 'All Time' },
+  ];
+
+  // Render individual entry
+  const renderEntryItem = ({ item }) => {
+    const entryDate = new Date(item.date);
+    const formattedDate = entryDate.toLocaleDateString('en-US', { 
+      month: 'short', 
+      day: 'numeric',
+      year: 'numeric'
+    });
+    const costPerMinute = (item.cost / item.duration).toFixed(2);
+
+    return (
+      <View style={styles.entryCard}>
+        <View style={styles.entryHeader}>
+          <View>
+            <Text style={styles.entryDate}>{formattedDate}</Text>
+            <Text style={styles.entrySubtext}>
+              {item.battery_percent ? `Charged to ${item.battery_percent}%` : 'Battery charge session'}
+            </Text>
+          </View>
+          <Text style={styles.entryCost}>KES {item.cost.toLocaleString()}</Text>
         </View>
-        <View style={styles.detailRow}>
-          <Text style={styles.detailLabel}>{t('cost')}</Text>
-          <Text style={styles.detailValue}>KES {parseFloat(item.cost).toFixed(2)}</Text>
+        
+        <View style={styles.entryDetails}>
+          <View style={styles.detailItem}>
+            <Text style={styles.detailLabel}>⏱️ {t('duration') || 'Duration'}</Text>
+            <Text style={styles.detailValue}>{Math.round(item.duration)} m</Text>
+          </View>
+          <View style={styles.detailItem}>
+            <Text style={styles.detailLabel}>💰 {t('per_minute') || 'Per Minute'}</Text>
+            <Text style={styles.detailValue}>KES {costPerMinute}</Text>
+          </View>
         </View>
-        <View style={styles.detailRow}>
-          <Text style={styles.detailLabel}>{t('cost_per_minute')}</Text>
-          <Text style={styles.detailValue}>
-            KES {((parseFloat(item.cost) / parseFloat(item.duration)) || 0).toFixed(2)}
-          </Text>
-        </View>
-        {item.battery_percent && (
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>{t('battery_percent')}</Text>
-            <Text style={styles.detailValue}>{item.battery_percent}%</Text>
+
+        {item.notes && (
+          <View style={styles.entryNotes}>
+            <Text style={styles.notesLabel}>{t('notes') || 'Notes'}:</Text>
+            <Text style={styles.notesText}>{item.notes}</Text>
+          </View>
+        )}
+
+        {!item.synced && (
+          <View style={styles.offlineIndicator}>
+            <Text style={styles.offlineIndicatorText}>⏳ {t('not_synced') || 'Pending sync'}</Text>
           </View>
         )}
       </View>
-      
-      {item.notes && (
-        <View style={styles.notesRow}>
-          <Text style={styles.notesLabel}>{t('notes')}</Text>
-          <Text style={styles.notesText}>{item.notes}</Text>
-        </View>
-      )}
-      
-      {!item.synced && (
-        <View style={styles.pendingSyncBadge}>
-          <Text style={styles.pendingSyncText}>⏳ {t('pending_sync')}</Text>
-        </View>
-      )}
-    </View>
-  );
+    );
+  };
 
   return (
     <View style={styles.container}>
-      <BackLink title={t('battery_cost_history')} onRefresh={handleRefresh} />
-      
+      {/* Header */}
+      <View style={styles.headerContainer}>
+        <BackLink title={t('battery_history') || 'Battery History'} />
+      </View>
+
       {/* Offline Indicator */}
       {isOffline && (
         <View style={styles.offlineBanner}>
           <Text style={styles.offlineText}>
-            📶 {t('working_offline')} - {t('viewing_cached_data')}
+            📶 {t('working_offline') || 'Working offline'}
           </Text>
         </View>
       )}
 
-      {/* Summary */}
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>{t('total_cost')}</Text>
-          <Text style={styles.summaryValue}>KES {totalCost.toFixed(2)}</Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>{t('total_duration')}</Text>
-          <Text style={styles.summaryValue}>{totalDuration} mins</Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>{t('charges')}</Text>
-          <Text style={styles.summaryValue}>{totalCharges}</Text>
-        </View>
-        {totalDuration > 0 && (
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>{t('avg_per_min')}</Text>
-            <Text style={styles.summaryValue}>
-              KES {(totalCost / totalDuration).toFixed(2)}
-            </Text>
-          </View>
-        )}
+      {/* Period Tabs */}
+      <View style={styles.tabsContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {periods.map((period) => (
+            <TouchableOpacity
+              key={period.id}
+              style={[
+                styles.tab,
+                selectedPeriod === period.id && styles.tabActive,
+              ]}
+              onPress={() => setSelectedPeriod(period.id)}
+            >
+              <Text
+                style={[
+                  styles.tabLabel,
+                  selectedPeriod === period.id && styles.tabLabelActive,
+                ]}
+              >
+                {period.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       </View>
 
-      {/* History List */}
-      {batteryHistory.length > 0 ? (
+      {/* Stats for selected period */}
+      {!loading && filteredEntries.length > 0 && (
+        <View style={styles.statsContainer}>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>{t('total_cost') || 'Total Cost'}</Text>
+            <Text style={styles.statValue}>KES {periodStats.totalCost.toLocaleString()}</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>{t('total_time') || 'Total Time'}</Text>
+            <Text style={styles.statValue}>{Math.round(periodStats.totalDuration)} m</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>{t('average') || 'Average'}</Text>
+            <Text style={styles.statValue}>KES {periodStats.average}</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.statLabel}>{t('entries') || 'Entries'}</Text>
+            <Text style={styles.statValue}>{periodStats.count}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* Entries List or Empty/Loading States */}
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color="#ff7a1a" />
+          <Text style={styles.loadingText}>{t('loading') || 'Loading...'}</Text>
+        </View>
+      ) : filteredEntries.length > 0 ? (
         <FlatList
-          data={batteryHistory}
-          renderItem={renderBatteryEntry}
-          keyExtractor={(item, index) => item.id || index.toString()}
+          data={filteredEntries}
+          renderItem={renderEntryItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContainer}
           scrollEnabled={false}
-          contentContainerStyle={styles.historyList}
-          ListFooterComponent={<View style={{ height: 20 }} />}
         />
       ) : (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyIcon}>🔋</Text>
-          <Text style={styles.emptyText}>{t('no_battery_history')}</Text>
-          <Text style={styles.emptySubtext}>
-            {isOffline ? t('no_cached_battery_data') : t('start_recording_charges')}
+        <View style={styles.centerContainer}>
+          <Text style={styles.emptyStateIcon}>🔋</Text>
+          <Text style={styles.emptyStateTitle}>
+            {t('no_battery_entries_period') || 'No battery entries'}
           </Text>
+          <Text style={styles.emptyStateMessage}>
+            {t('no_battery_entries_in_period') || 'No battery entries for the selected period'}
+          </Text>
+          <TouchableOpacity
+            style={styles.emptyStateButton}
+            onPress={() => navigation.navigate('BatteryEntry')}
+          >
+            <Text style={styles.emptyStateButtonText}>
+              {t('record_entry') || 'Record Entry'}
+            </Text>
+          </TouchableOpacity>
         </View>
       )}
     </View>
   );
-};
-
-const isNetworkError = (err) => {
-  return !err.response || err.code === 'ERR_NETWORK' || err.message.includes('Network');
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#f6f4ef',
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 15,
-    fontSize: 14,
-    color: '#666',
+  headerContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 12,
   },
   offlineBanner: {
     backgroundColor: '#FFA500',
-    padding: 12,
-    margin: 10,
-    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    marginBottom: 16,
   },
   offlineText: {
     color: '#fff',
@@ -344,132 +287,182 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     textAlign: 'center',
   },
-  summaryCard: {
+  tabsContainer: {
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7e4db',
+  },
+  tab: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    marginRight: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
     backgroundColor: '#fff',
-    margin: 10,
-    padding: 15,
-    borderRadius: 10,
+  },
+  tabActive: {
+    backgroundColor: '#ff7a1a',
+    borderColor: '#ff7a1a',
+  },
+  tabLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1a1c20',
+  },
+  tabLabelActive: {
+    color: '#fff',
+  },
+  statsContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    elevation: 2,
-    flexWrap: 'wrap',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    gap: 8,
   },
-  summaryItem: {
-    alignItems: 'center',
-    width: '25%',
-    marginVertical: 5,
-  },
-  summaryLabel: {
-    fontSize: 11,
-    color: '#666',
-    marginBottom: 5,
-  },
-  summaryValue: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#007AFF',
-  },
-  historyList: {
-    paddingHorizontal: 10,
-  },
-  historyCard: {
+  statItem: {
+    flex: 1,
     backgroundColor: '#fff',
-    marginVertical: 5,
-    padding: 12,
-    borderRadius: 8,
-    elevation: 1,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 10,
+    padding: 10,
+    alignItems: 'center',
   },
-  historyHeader: {
+  statLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.04,
+    color: '#5b606c',
+    marginBottom: 4,
+  },
+  statValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ff7a1a',
+  },
+  listContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  entryCard: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+  },
+  entryHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 10,
+    marginBottom: 12,
   },
-  historyDate: {
+  entryDate: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#333',
+    color: '#1a1c20',
+    marginBottom: 2,
   },
-  historyTime: {
+  entrySubtext: {
     fontSize: 12,
-    color: '#999',
-    marginTop: 3,
+    color: '#5b606c',
   },
-  deleteButton: {
-    padding: 5,
-  },
-  deleteButtonText: {
+  entryCost: {
     fontSize: 16,
+    fontWeight: '700',
+    color: '#ff7a1a',
   },
-  historyDetails: {
-    backgroundColor: '#f9f9f9',
-    padding: 10,
-    borderRadius: 6,
+  entryDetails: {
+    flexDirection: 'row',
+    gap: 10,
     marginBottom: 10,
   },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 5,
+  detailItem: {
+    flex: 1,
+    backgroundColor: '#f0f8ff',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   detailLabel: {
-    fontSize: 12,
-    color: '#666',
+    fontSize: 11,
+    color: '#5b606c',
+    marginBottom: 2,
   },
   detailValue: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#333',
+    color: '#1a1c20',
   },
-  notesRow: {
-    backgroundColor: '#E8F4F8',
+  entryNotes: {
+    backgroundColor: '#f6f4ef',
+    borderRadius: 8,
     padding: 10,
-    borderRadius: 6,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   notesLabel: {
     fontSize: 11,
-    color: '#00695C',
     fontWeight: '600',
-    marginBottom: 5,
+    color: '#5b606c',
+    marginBottom: 4,
   },
   notesText: {
     fontSize: 12,
-    color: '#00695C',
+    color: '#1a1c20',
     lineHeight: 18,
   },
-  pendingSyncBadge: {
-    backgroundColor: '#FFFFCC',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 4,
-    alignSelf: 'flex-start',
+  offlineIndicator: {
+    backgroundColor: '#FFF3E0',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
-  pendingSyncText: {
-    fontSize: 11,
-    color: '#CC6600',
-    fontWeight: '600',
+  offlineIndicatorText: {
+    fontSize: 10,
+    color: '#F57C00',
+    fontWeight: '500',
   },
-  emptyState: {
+  centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 50,
+    paddingHorizontal: 20,
   },
-  emptyIcon: {
+  emptyStateIcon: {
     fontSize: 48,
-    marginBottom: 15,
+    marginBottom: 12,
   },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+  emptyStateTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1a1c20',
     marginBottom: 8,
   },
-  emptySubtext: {
-    fontSize: 13,
-    color: '#999',
+  emptyStateMessage: {
+    fontSize: 14,
+    color: '#5b606c',
     textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 20,
+  },
+  emptyStateButton: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+  },
+  emptyStateButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#5b606c',
+    marginTop: 12,
   },
 });
 
