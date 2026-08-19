@@ -1,467 +1,341 @@
 // rider-app/src/screens/energyHub/FuelHistoryScreen.js
-// ✅ COMPLETE REWRITE: Period tabs + Offline data loading + UI alignment
-// Features:
-// - Period tabs: This Month, Last Month, Last 6 Months, Since Joining
-// - Filter entries by selected period
-// - Load from offline storage
-// - Proper UI/UX alignment with cleaned.html design system
-// - Offline indicator and empty states
+// ✅ Offline-First Pattern 1: Load Data
+// ✅ Principle 1: LocalStore First - Cache history
+// ✅ Principle 3: getLocalRiderId Always
+// ✅ Principle 4: API with Fallback - Try API, fallback to cache
+// ✅ Principle 5: Sync Queue - Display pending operations
 
-import React, { useState, useFocusEffect, useCallback, useMemo } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
 import BackLink from '../../components/BackLink';
+import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
 import LocalStore from '../../offline/LocalStore';
-import { useTranslation } from '../../i18n/LocalizationProvider';
+import { getQueuedRecords, hoursSinceLastSync } from '../../offline/syncQueue';
 
-const FuelHistoryScreen = ({ navigation }) => {
-  const { t } = useTranslation();
-  const { state: riderState } = useRider();
-  
-  const [loading, setLoading] = useState(false);
+const PAGE_SIZE = 10;
+
+export default function FuelHistoryScreen({ bikeProfile, navigation }) {
+  const { state } = useRider();
+  const [localRiderId, setLocalRiderId] = useState(null);
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [page, setPage] = useState(1);
+  const [period, setPeriod] = useState('thisMonth');
   const [allEntries, setAllEntries] = useState([]);
-  const [selectedPeriod, setSelectedPeriod] = useState('thisMonth');
   const [isOffline, setIsOffline] = useState(false);
+  const [queuedCount, setQueuedCount] = useState(0);
+  const [hoursSinceSync, setHoursSinceSync] = useState(0);
 
-  const getRiderId = useCallback(() => {
-    try {
-      return getLocalRiderId();
-    } catch (err) {
-      return riderState?.riderId;
-    }
-  }, [riderState]);
+  const isElectric = bikeProfile?.fuelType === 'electric';
 
-  // Load all fuel entries from offline storage
-  const loadEntries = useCallback(async () => {
-    try {
-      setLoading(true);
-      const riderId = getRiderId();
-      
-      if (!riderId) {
-        setLoading(false);
-        return;
+  // ✅ Principle 3: Get rider ID from offline database
+  useEffect(() => {
+    async function loadRiderId() {
+      try {
+        const id = await getLocalRiderId();
+        setLocalRiderId(id);
+      } catch (err) {
+        console.error('Error loading riderId:', err);
       }
-
-      // Load from offline storage
-      const storedJson = LocalStore.get(`fuel_entries_${riderId}`);
-      const entries = storedJson ? JSON.parse(storedJson) : [];
-      
-      setAllEntries(entries);
-      setIsOffline(true);
-
-    } catch (err) {
-      console.error('Error loading entries:', err);
-      setIsOffline(false);
-    } finally {
-      setLoading(false);
     }
-  }, [getRiderId]);
+    loadRiderId();
+  }, []);
 
-  // Reload when screen is focused
-  useFocusEffect(
-    useCallback(() => {
-      loadEntries();
-    }, [loadEntries])
-  );
+  const effectiveRiderId = localRiderId || state?.riderId;
 
-  // Filter entries based on period
-  const filteredEntries = useMemo(() => {
+  // ✅ Principle 5: Check sync status
+  useEffect(() => {
+    const hours = hoursSinceLastSync();
+    setHoursSinceSync(hours);
+    
+    const queued = getQueuedRecords();
+    setQueuedCount(queued.length);
+  }, []);
+
+  // Get period date range
+  const getPeriodRange = useCallback((selectedPeriod) => {
     const now = new Date();
-    
-    return allEntries.filter(entry => {
-      const entryDate = new Date(entry.date);
-      
-      switch (selectedPeriod) {
-        case 'thisMonth': {
-          return entryDate.getMonth() === now.getMonth() && 
-                 entryDate.getFullYear() === now.getFullYear();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    const sixMonthsStart = new Date(now.getFullYear(), now.getMonth() - 5, 1).getTime();
+
+    switch (selectedPeriod) {
+      case 'thisMonth':
+        return { start: thisMonthStart, end: now.getTime() };
+      case 'lastMonth':
+        return { start: lastMonthStart, end: thisMonthStart - 1 };
+      case 'last6':
+        return { start: sixMonthsStart, end: now.getTime() };
+      case 'sinceJoining':
+        return { start: 0, end: now.getTime() };
+      default:
+        return { start: thisMonthStart, end: now.getTime() };
+    }
+  }, []);
+
+  // ✅ Pattern 1: Load Data - Principle 4: API with Fallback
+  useEffect(() => {
+    let isMounted = true;
+
+    if (!effectiveRiderId) {
+      setLoading(false);
+      return;
+    }
+
+    async function fetchAllEntries() {
+      try {
+        setLoading(true);
+        setError('');
+
+        // Try to fetch from API
+        const response = await api.get('/fuel-maintenance/fuel-entry/history', {
+          params: {
+            rider_id: effectiveRiderId,
+            page: 1,
+            limit: 50,
+          }
+        });
+
+        if (isMounted) {
+          const items = (response.data?.entries || []).sort((a, b) => 
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+          
+          setAllEntries(items);
+          
+          // ✅ Principle 1: Cache the result for offline use
+          LocalStore.set(`fuel_history_${effectiveRiderId}`, JSON.stringify(items));
+          setIsOffline(false);
+          setPage(1);
         }
-        case 'lastMonth': {
-          const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1);
-          return entryDate.getMonth() === lastMonth.getMonth() && 
-                 entryDate.getFullYear() === lastMonth.getFullYear();
+      } catch (err) {
+        console.error('Fetch error:', err);
+
+        // ✅ Principle 4: Fallback to cache on network error
+        if (err.response?.status === 0 || err.message.includes('Network')) {
+          try {
+            const cached = LocalStore.get(`fuel_history_${effectiveRiderId}`);
+            if (cached && isMounted) {
+              const items = JSON.parse(cached);
+              setAllEntries(items);
+              setIsOffline(true);
+              setError('');
+            }
+          } catch (e) {
+            console.error('Cache load failed:', e);
+            setError('Failed to load history');
+          }
+        } else {
+          setError('Failed to load history');
         }
-        case 'last6Months': {
-          const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6);
-          return entryDate >= sixMonthsAgo;
+      } finally {
+        if (isMounted) {
+          setLoading(false);
         }
-        case 'allTime': {
-          return true;
-        }
-        default:
-          return true;
       }
+    }
+
+    fetchAllEntries();
+    return () => { isMounted = false; };
+  }, [effectiveRiderId]);
+
+  // Filter entries by period
+  useEffect(() => {
+    const { start, end } = getPeriodRange(period);
+    const filtered = allEntries.filter(e => {
+      const ts = new Date(e.created_at).getTime();
+      return ts >= start && ts <= end;
     });
-  }, [allEntries, selectedPeriod]);
+    setEntries(filtered);
+    setPage(1);
+  }, [period, allEntries, getPeriodRange]);
 
-  // Calculate stats for selected period
-  const periodStats = useMemo(() => {
-    const totalCost = filteredEntries.reduce((sum, e) => sum + (e.cost || 0), 0);
-    const totalLitres = filteredEntries.reduce((sum, e) => sum + (e.litres || 0), 0);
-    
-    return {
-      totalCost,
-      totalLitres,
-      average: filteredEntries.length > 0 ? (totalCost / filteredEntries.length).toFixed(2) : 0,
-      count: filteredEntries.length,
-    };
-  }, [filteredEntries]);
+  // Paginate current entries
+  const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
+  const pageItems = entries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalSpent = entries.reduce((sum, e) => sum + (e.cost || 0), 0);
 
-  // Period tab data
-  const periods = [
-    { id: 'thisMonth', label: t('this_month') || 'This Month' },
-    { id: 'lastMonth', label: t('last_month') || 'Last Month' },
-    { id: 'last6Months', label: t('last_6_months') || 'Last 6 Months' },
-    { id: 'allTime', label: t('all_time') || 'All Time' },
-  ];
+  const getModeLabel = useCallback((mode) => {
+    const labels = { petrol: '⛽ Fuel purchase', swap: '🔋 Battery swap', charging: '🔌 Charging' };
+    return labels[mode?.toLowerCase()] || mode;
+  }, []);
 
-  // Render individual entry
-  const renderEntryItem = ({ item }) => {
-    const entryDate = new Date(item.date);
-    const formattedDate = entryDate.toLocaleDateString('en-US', { 
-      month: 'short', 
+  const formatDate = useCallback((timestamp) => {
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-KE', {
+      month: 'short',
       day: 'numeric',
-      year: 'numeric'
+      year: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
     });
-    const costPerLitre = (item.cost / item.litres).toFixed(2);
+  }, []);
 
+  if (loading) {
     return (
-      <View style={styles.entryCard}>
-        <View style={styles.entryHeader}>
-          <View>
-            <Text style={styles.entryDate}>{formattedDate}</Text>
-            <Text style={styles.entryStation}>{item.station || 'Not specified'}</Text>
-          </View>
-          <Text style={styles.entryCost}>KES {item.cost.toLocaleString()}</Text>
-        </View>
-        
-        <View style={styles.entryDetails}>
-          <View style={styles.detailItem}>
-            <Text style={styles.detailLabel}>⛽ {t('litres') || 'Litres'}</Text>
-            <Text style={styles.detailValue}>{item.litres.toFixed(1)} L</Text>
-          </View>
-          <View style={styles.detailItem}>
-            <Text style={styles.detailLabel}>💰 {t('per_litre') || 'Per Litre'}</Text>
-            <Text style={styles.detailValue}>KES {costPerLitre}</Text>
-          </View>
-        </View>
-
-        {item.notes && (
-          <View style={styles.entryNotes}>
-            <Text style={styles.notesLabel}>{t('notes') || 'Notes'}:</Text>
-            <Text style={styles.notesText}>{item.notes}</Text>
-          </View>
-        )}
-
-        {!item.synced && (
-          <View style={styles.offlineIndicator}>
-            <Text style={styles.offlineIndicatorText}>⏳ {t('not_synced') || 'Pending sync'}</Text>
-          </View>
-        )}
+      <View style={styles.container}>
+        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+        <Text style={styles.title}>Fuel Cost History</Text>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </View>
     );
-  };
+  }
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.headerContainer}>
-        <BackLink title={t('fuel_history') || 'Fuel History'} />
-      </View>
+    <ScrollView style={styles.container}>
+      <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+      <Text style={styles.title}>{isElectric ? 'Charge Battery Cost History' : 'Fuel Cost History'}</Text>
 
-      {/* Offline Indicator */}
+      {/* ✅ Pattern 4: Display Offline Indicator */}
       {isOffline && (
         <View style={styles.offlineBanner}>
-          <Text style={styles.offlineText}>
-            📶 {t('working_offline') || 'Working offline'}
-          </Text>
+          <Text style={styles.offlineBannerText}>📶 Offline · Last synced {hoursSinceSync}h ago</Text>
+        </View>
+      )}
+
+      {/* ✅ Principle 5: Display pending sync operations */}
+      {queuedCount > 0 && (
+        <View style={styles.pendingBanner}>
+          <Text style={styles.pendingBannerText}>⏳ {queuedCount} pending operation{queuedCount !== 1 ? 's' : ''} · Will sync when online</Text>
         </View>
       )}
 
       {/* Period Tabs */}
-      <View style={styles.tabsContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {periods.map((period) => (
-            <TouchableOpacity
-              key={period.id}
-              style={[
-                styles.tab,
-                selectedPeriod === period.id && styles.tabActive,
-              ]}
-              onPress={() => setSelectedPeriod(period.id)}
-            >
-              <Text
-                style={[
-                  styles.tabLabel,
-                  selectedPeriod === period.id && styles.tabLabelActive,
-                ]}
-              >
-                {period.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* Stats for selected period */}
-      {!loading && filteredEntries.length > 0 && (
-        <View style={styles.statsContainer}>
-          <View style={styles.statItem}>
-            <Text style={styles.statLabel}>{t('total_cost') || 'Total Cost'}</Text>
-            <Text style={styles.statValue}>KES {periodStats.totalCost.toLocaleString()}</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statLabel}>{t('total_litres') || 'Total Litres'}</Text>
-            <Text style={styles.statValue}>{periodStats.totalLitres.toFixed(1)} L</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statLabel}>{t('average') || 'Average'}</Text>
-            <Text style={styles.statValue}>KES {periodStats.average}</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statLabel}>{t('entries') || 'Entries'}</Text>
-            <Text style={styles.statValue}>{periodStats.count}</Text>
-          </View>
-        </View>
-      )}
-
-      {/* Entries List or Empty/Loading States */}
-      {loading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#ff7a1a" />
-          <Text style={styles.loadingText}>{t('loading') || 'Loading...'}</Text>
-        </View>
-      ) : filteredEntries.length > 0 ? (
-        <FlatList
-          data={filteredEntries}
-          renderItem={renderEntryItem}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContainer}
-          scrollEnabled={false}
-        />
-      ) : (
-        <View style={styles.centerContainer}>
-          <Text style={styles.emptyStateIcon}>⛽</Text>
-          <Text style={styles.emptyStateTitle}>
-            {t('no_fuel_entries_period') || 'No fuel entries'}
-          </Text>
-          <Text style={styles.emptyStateMessage}>
-            {t('no_fuel_entries_in_period') || 'No fuel entries for the selected period'}
-          </Text>
+      <View style={styles.periodTabs}>
+        {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => (
           <TouchableOpacity
-            style={styles.emptyStateButton}
-            onPress={() => navigation.navigate('FuelEntry')}
+            key={p}
+            style={[styles.periodTab, period === p && styles.periodTabActive]}
+            onPress={() => setPeriod(p)}
           >
-            <Text style={styles.emptyStateButtonText}>
-              {t('record_entry') || 'Record Entry'}
+            <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
+              {p === 'thisMonth' ? 'This Month' : p === 'lastMonth' ? 'Last Month' : p === 'last6' ? '6 Months' : 'Since Joining'}
             </Text>
           </TouchableOpacity>
+        ))}
+      </View>
+
+      {error && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>{error}</Text>
         </View>
       )}
-    </View>
+
+      {/* Summary Card */}
+      <View style={styles.card}>
+        <View style={styles.kvRow}>
+          <Text style={styles.kvLabel}>Total Spent</Text>
+          <Text style={styles.kvValue}>KSh {totalSpent.toLocaleString()}</Text>
+        </View>
+        <View style={styles.kvRow}>
+          <Text style={styles.kvLabel}>Entries Logged</Text>
+          <Text style={styles.kvValue}>{entries.length}</Text>
+        </View>
+      </View>
+
+      {/* Entries Card */}
+      <View style={styles.card}>
+        {pageItems.length > 0 ? (
+          pageItems.map((entry, idx) => (
+            <View key={idx} style={styles.tripRow}>
+              <View style={styles.tripRowLeft}>
+                <Text style={styles.tripRowMode}>{getModeLabel(entry.mode)}</Text>
+                <Text style={styles.tripRowTime}>
+                  {formatDate(entry.created_at)}
+                  {entry.odometer_reading ? ` · ${entry.odometer_reading.toLocaleString()} km` : ''}
+                </Text>
+              </View>
+              <View style={styles.tripRowRight}>
+                <Text style={styles.tripRowAmount}>KSh {entry.cost.toLocaleString()}</Text>
+              </View>
+            </View>
+          ))
+        ) : (
+          <Text style={styles.emptyHint}>No entries for this period.</Text>
+        )}
+      </View>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <View style={styles.paginationContainer}>
+          <Text style={styles.paginationMeta}>
+            Showing {pageItems.length ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, entries.length)} of {entries.length}
+          </Text>
+          <View style={styles.pagination}>
+            <TouchableOpacity
+              style={[styles.pageBtn, page === 1 && styles.pageBtnDisabled]}
+              onPress={() => setPage(Math.max(1, page - 1))}
+              disabled={page === 1}
+            >
+              <Text style={styles.pageBtnText}>‹</Text>
+            </TouchableOpacity>
+
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+              <TouchableOpacity
+                key={p}
+                style={[styles.pageBtn, p === page && styles.pageBtnActive]}
+                onPress={() => setPage(p)}
+              >
+                <Text style={[styles.pageBtnText, p === page && styles.pageBtnTextActive]}>{p}</Text>
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity
+              style={[styles.pageBtn, page === totalPages && styles.pageBtnDisabled]}
+              onPress={() => setPage(Math.min(totalPages, page + 1))}
+              disabled={page === totalPages}
+            >
+              <Text style={styles.pageBtnText}>›</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+    </ScrollView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f6f4ef',
-  },
-  headerContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
-  },
-  offlineBanner: {
-    backgroundColor: '#FFA500',
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    marginBottom: 16,
-  },
-  offlineText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  tabsContainer: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db',
-  },
-  tab: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    marginRight: 8,
-    borderRadius: 20,
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    backgroundColor: '#fff',
-  },
-  tabActive: {
-    backgroundColor: '#ff7a1a',
-    borderColor: '#ff7a1a',
-  },
-  tabLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1a1c20',
-  },
-  tabLabelActive: {
-    color: '#fff',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    gap: 8,
-  },
-  statItem: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    padding: 10,
-    alignItems: 'center',
-  },
-  statLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.04,
-    color: '#5b606c',
-    marginBottom: 4,
-  },
-  statValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#ff7a1a',
-  },
-  listContainer: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-  },
-  entryCard: {
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-  },
-  entryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
-  },
-  entryDate: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1a1c20',
-    marginBottom: 2,
-  },
-  entryStation: {
-    fontSize: 12,
-    color: '#5b606c',
-  },
-  entryCost: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#ff7a1a',
-  },
-  entryDetails: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 10,
-  },
-  detailItem: {
-    flex: 1,
-    backgroundColor: '#f0f8ff',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  detailLabel: {
-    fontSize: 11,
-    color: '#5b606c',
-    marginBottom: 2,
-  },
-  detailValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1a1c20',
-  },
-  entryNotes: {
-    backgroundColor: '#f6f4ef',
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
-  },
-  notesLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#5b606c',
-    marginBottom: 4,
-  },
-  notesText: {
-    fontSize: 12,
-    color: '#1a1c20',
-    lineHeight: 18,
-  },
-  offlineIndicator: {
-    backgroundColor: '#FFF3E0',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  offlineIndicatorText: {
-    fontSize: 10,
-    color: '#F57C00',
-    fontWeight: '500',
-  },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-  },
-  emptyStateIcon: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
-  emptyStateTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 8,
-  },
-  emptyStateMessage: {
-    fontSize: 14,
-    color: '#5b606c',
-    textAlign: 'center',
-    marginBottom: 20,
-    lineHeight: 20,
-  },
-  emptyStateButton: {
-    backgroundColor: '#ff7a1a',
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-  },
-  emptyStateButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  loadingText: {
-    fontSize: 14,
-    color: '#5b606c',
-    marginTop: 12,
-  },
-});
+  container: { flex: 1, backgroundColor: '#f6f4ef', padding: 0 },
+  title: { fontFamily: 'SpaceGrotesk-Bold', fontSize: 24, fontWeight: '700', color: '#1a1c20', marginBottom: 16, paddingHorizontal: 20, marginTop: 16 },
 
-export default FuelHistoryScreen;
+  offlineBanner: { backgroundColor: '#fff9e6', borderWidth: 1.5, borderColor: '#ffe6b3', borderRadius: 14, padding: 12, marginHorizontal: 20, marginBottom: 8 },
+  offlineBannerText: { fontSize: 11.5, color: '#b88900', fontWeight: '600' },
+
+  pendingBanner: { backgroundColor: '#e8f4f8', borderWidth: 1.5, borderColor: '#b3dce8', borderRadius: 14, padding: 12, marginHorizontal: 20, marginBottom: 8 },
+  pendingBannerText: { fontSize: 11.5, color: '#1b5e7a', fontWeight: '600' },
+
+  periodTabs: { flexDirection: 'row', gap: 8, marginHorizontal: 20, marginBottom: 16 },
+  periodTab: { flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1.5, borderColor: '#e7e4db', backgroundColor: '#fff', alignItems: 'center' },
+  periodTabActive: { backgroundColor: '#ff7a1a', borderColor: '#ff7a1a' },
+  periodTabText: { fontSize: 11, fontWeight: '600', color: '#5b606c' },
+  periodTabTextActive: { color: '#fff' },
+
+  errorBanner: { backgroundColor: '#fdecea', borderWidth: 1.5, borderColor: '#f6cac7', borderRadius: 14, padding: 12, marginHorizontal: 20, marginBottom: 14 },
+  errorBannerText: { fontSize: 11.5, color: '#a5312c', fontWeight: '600' },
+
+  card: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e7e4db', borderRadius: 16, padding: 16, marginHorizontal: 20, marginBottom: 12 },
+  kvRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10 },
+  kvLabel: { fontSize: 12, color: '#5b606c', fontWeight: '500' },
+  kvValue: { fontSize: 14, fontWeight: '700', color: '#1a1c20' },
+
+  tripRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f0ede7' },
+  tripRowLeft: { flex: 1 },
+  tripRowMode: { fontSize: 13, fontWeight: '600', color: '#1a1c20', marginBottom: 4 },
+  tripRowTime: { fontSize: 11, color: '#5b606c', fontWeight: '500' },
+  tripRowRight: { justifyContent: 'center' },
+  tripRowAmount: { fontSize: 13, fontWeight: '700', color: '#1a1c20', textAlign: 'right' },
+
+  emptyHint: { fontSize: 12, color: '#5b606c', fontWeight: '500', paddingVertical: 12, textAlign: 'center' },
+
+  paginationContainer: { marginHorizontal: 20, marginBottom: 20 },
+  paginationMeta: { fontSize: 11, color: '#5b606c', fontWeight: '500', marginBottom: 8, textAlign: 'center' },
+  pagination: { flexDirection: 'row', justifyContent: 'center', gap: 4 },
+  pageBtn: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1.5, borderColor: '#e7e4db', backgroundColor: '#fff' },
+  pageBtnActive: { backgroundColor: '#ff7a1a', borderColor: '#ff7a1a' },
+  pageBtnDisabled: { backgroundColor: '#f0ede7', borderColor: '#e7e4db' },
+  pageBtnText: { fontSize: 11, fontWeight: '600', color: '#5b606c' },
+  pageBtnTextActive: { color: '#fff' },
+});
