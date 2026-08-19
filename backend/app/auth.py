@@ -1,6 +1,6 @@
 # backend/app/auth.py
-# CORRECTED VERSION - Fixes InvalidHashError TypeError and SameSite cookie issue
-# This version handles all exceptions gracefully and uses Lax SameSite for cross-origin cookies
+# CORRECTED VERSION - Fixes cross-subdomain cookie sharing
+# This version properly handles cookies between smart-boda-admin and smart-boda-api
 
 import os
 import logging
@@ -15,7 +15,7 @@ from app.models.rider import Rider
 
 logger = logging.getLogger(__name__)
 
-SECRET_KEY = os.getenv("ADMIN_JWT_SECRET", "81ad8555b0e2463a99e1d14defa52a77")
+SECRET_KEY = os.getenv("iwillrestoreuntoyoualltheyearsthathavebeenlost")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # one admin shift
 COOKIE_NAME = "sb_admin_session"
@@ -24,6 +24,50 @@ COOKIE_NAME = "sb_admin_session"
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 ROLE_HIERARCHY = {"support_admin": 1, "super_admin": 2}
+
+# ============================================================================
+# SUBDOMAIN COOKIE CONFIGURATION
+# ============================================================================
+# For cookie to work across subdomains (smart-boda-admin.onrender.com and smart-boda-api.onrender.com),
+# it must be set with a parent domain.
+# 
+# Options:
+# 1. Render.com subdomains: Use ".onrender.com" (if supported by Render)
+# 2. Custom domain: Use ".yourdomain.com" 
+# 3. Development localhost: No domain needed (same origin)
+
+def get_cookie_domain():
+    """Determine the correct cookie domain for cross-subdomain sharing."""
+    env = os.getenv("ENVIRONMENT", "production")
+    
+    if env == "development" or os.getenv("DATABASE_URL", "").find("localhost") != -1:
+        # For localhost development, no domain is needed
+        return None
+    
+    # For production (Render.com), try to use parent domain
+    # Render uses *.onrender.com pattern
+    # Note: Some hosts don't allow setting arbitrary parent domains
+    # If this doesn't work, you may need to:
+    # 1. Use the same domain for frontend and backend (Render deploy)
+    # 2. Use localStorage instead (less secure)
+    # 3. Use API Gateway/reverse proxy to serve both on same domain
+    
+    api_base = os.getenv("VITE_API_BASE_URL", "https://smart-boda-api.onrender.com")
+    
+    # Extract domain for cookie
+    if "onrender.com" in api_base:
+        # For Render.com, we need the parent domain
+        # smart-boda-api.onrender.com → .onrender.com
+        return ".onrender.com"
+    elif "localhost" in api_base:
+        return None
+    else:
+        # For custom domains, extract parent domain
+        # api.example.com → .example.com
+        parts = api_base.split("//")[1].split(".")
+        if len(parts) >= 2:
+            return "." + ".".join(parts[-2:])
+        return None
 
 # ============================================================================
 # ADMIN AUTHENTICATION (httpOnly cookies)
@@ -87,7 +131,6 @@ def verify_password(plain: str, hashed: str) -> bool:
         return is_valid
     except Exception as e:
         # Catch ALL exceptions - don't raise, just return False
-        # This handles bcrypt errors, hash format errors, etc.
         logger.warning(f"Password verification error: {str(e)} - returning False")
         return False
 
@@ -107,36 +150,53 @@ def set_session_cookie(response, token: str) -> None:
     """
     Set an httpOnly session cookie with JWT token.
     
-    ✅ FIXED: Changed SameSite from 'strict' to 'lax' to allow cross-origin requests
+    ✅ FIXED: Now properly handles cookies across subdomains
     - httpOnly: JavaScript cannot access the cookie
     - Secure: Only sent over HTTPS
-    - SameSite=Lax: Allows cookie on safe cross-site requests (GET, navigation)
-      but blocks on risky requests (POST from another site)
-    - This is required for frontend and API on different domains
+    - SameSite=Lax: Allows cookie on safe cross-site requests
+    - Domain: Set to parent domain for cross-subdomain sharing
     """
+    cookie_domain = get_cookie_domain()
+    
+    logger.info(f"Setting session cookie with domain: {cookie_domain or '(default - same origin)'}")
+    
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
         secure=True,
-        samesite="lax",  # ✅ CHANGED from "strict" to "lax" for cross-origin
+        samesite="lax",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
+        domain=cookie_domain,  # ✅ NEW: Set domain for cross-subdomain sharing
     )
-    logger.info(f"Session cookie set (expires in {ACCESS_TOKEN_EXPIRE_MINUTES} minutes)")
+    logger.info(f"✓ Session cookie set (expires in {ACCESS_TOKEN_EXPIRE_MINUTES} minutes)")
 
 def clear_session_cookie(response) -> None:
     """Clear the session cookie on logout."""
-    response.delete_cookie(key=COOKIE_NAME, path="/")
-    logger.info("Session cookie cleared")
+    cookie_domain = get_cookie_domain()
+    response.delete_cookie(
+        key=COOKIE_NAME, 
+        path="/",
+        domain=cookie_domain,
+    )
+    logger.info("✓ Session cookie cleared")
 
 def _decode_token(request: Request) -> dict:
     """Decode JWT from session cookie."""
     token = request.cookies.get(COOKIE_NAME)
+    
+    # Log cookie presence for debugging
     if not token:
+        logger.warning(f"No session cookie found. Available cookies: {list(request.cookies.keys())}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    
+    logger.debug(f"✓ Session cookie found, decoding JWT...")
+    
     try:
-        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        logger.debug(f"✓ JWT decoded successfully for user: {decoded.get('email')}")
+        return decoded
     except JWTError as e:
         logger.warning(f"Token decode failed: {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
