@@ -14,7 +14,7 @@ import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
 import LocalStore from '../../offline/LocalStore';
-import SyncQueue from '../../offline/SyncQueue';
+import SyncQueue from '../offline/SyncQueue';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 
 const FuelEntryScreen = ({ route, navigation }) => {
