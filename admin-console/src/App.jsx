@@ -35,8 +35,13 @@ import SystemHealth from './pages/SystemHealth';
 // Trip/Entry Rule Configuration, which the code itself already comments as
 // super-admin-only.
 function RequireAuth({ children, allowedRoles }) {
-  if (!isLoggedIn()) return <Navigate to="/login" replace />;
+  if (!isLoggedIn()) {
+    console.log('🔐 Access denied: user not logged in, redirecting to /login');
+    return <Navigate to="/login" replace />;
+  }
+  
   if (allowedRoles && !allowedRoles.includes(currentAdminRole())) {
+    console.warn(`⛔ Access denied: role '${currentAdminRole()}' not in ${JSON.stringify(allowedRoles)}`);
     return (
       <Shell>
         <div className="page">
@@ -46,6 +51,7 @@ function RequireAuth({ children, allowedRoles }) {
       </Shell>
     );
   }
+  
   return children;
 }
 
@@ -60,16 +66,56 @@ function Shell({ children }) {
 
 export default function App() {
   const [hydrated, setHydrated] = useState(false);
+  const [hydrateError, setHydrateError] = useState(null);
 
   // AUDIT FIX: session state now lives in memory (see auth/session.js), backed by an
   // httpOnly cookie -- this recovers "am I logged in" from the backend on page load
   // instead of just checking localStorage synchronously.
   useEffect(() => {
-    hydrateSession().finally(() => setHydrated(true));
+    async function initializeSession() {
+      try {
+        console.log('🚀 App initializing - checking for existing session...');
+        await hydrateSession();
+        console.log('✓ Session initialization complete');
+      } catch (error) {
+        console.error('⚠️ Session initialization error:', error);
+        setHydrateError(error);
+      } finally {
+        setHydrated(true);
+      }
+    }
+    
+    initializeSession();
   }, []);
 
-  if (!hydrated) return <div style={{ padding: 24 }}>Loading…</div>;
+  // ============================================================================
+  // LOADING STATE
+  // ============================================================================
+  if (!hydrated) {
+    return (
+      <div style={{ 
+        padding: 24, 
+        textAlign: 'center',
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <div>
+          <p style={{ fontSize: 16, marginBottom: 10 }}>Loading…</p>
+          {hydrateError && (
+            <p style={{ fontSize: 12, color: '#d32f2f', marginTop: 10 }}>
+              Note: Session check encountered an issue (this is OK if you're not logged in)
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
+  // ============================================================================
+  // ROUTES
+  // ============================================================================
   return (
     <BrowserRouter>
       <Routes>

@@ -1,6 +1,6 @@
 # backend/app/auth.py
-# CORRECTED VERSION - Fixes InvalidHashError TypeError
-# This version handles all exceptions gracefully without relying on specific exception classes
+# CORRECTED VERSION - Fixes InvalidHashError TypeError and SameSite cookie issue
+# This version handles all exceptions gracefully and uses Lax SameSite for cross-origin cookies
 
 import os
 import logging
@@ -106,21 +106,29 @@ def create_access_token(admin: AdminUser) -> str:
 def set_session_cookie(response, token: str) -> None:
     """
     Set an httpOnly session cookie with JWT token.
-    ✅ httpOnly + Secure + SameSite=Strict for security
+    
+    ✅ FIXED: Changed SameSite from 'strict' to 'lax' to allow cross-origin requests
+    - httpOnly: JavaScript cannot access the cookie
+    - Secure: Only sent over HTTPS
+    - SameSite=Lax: Allows cookie on safe cross-site requests (GET, navigation)
+      but blocks on risky requests (POST from another site)
+    - This is required for frontend and API on different domains
     """
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         httponly=True,
         secure=True,
-        samesite="strict",
+        samesite="lax",  # ✅ CHANGED from "strict" to "lax" for cross-origin
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
     )
+    logger.info(f"Session cookie set (expires in {ACCESS_TOKEN_EXPIRE_MINUTES} minutes)")
 
 def clear_session_cookie(response) -> None:
     """Clear the session cookie on logout."""
     response.delete_cookie(key=COOKIE_NAME, path="/")
+    logger.info("Session cookie cleared")
 
 def _decode_token(request: Request) -> dict:
     """Decode JWT from session cookie."""
@@ -129,7 +137,8 @@ def _decode_token(request: Request) -> dict:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
+    except JWTError as e:
+        logger.warning(f"Token decode failed: {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
 
 def get_current_admin(request: Request, db: Session = Depends(get_db)) -> AdminUser:
