@@ -1,9 +1,13 @@
 // rider-app/src/screens/energyHub/FuelHistoryScreen.js
-// ✅ CRITICAL FIX: Properly await getLocalRiderId() async function
-// Also reconstructs from individual entries for offline display
+// ✅ CRITICAL FIXES:
+// 1. Import useFocusEffect from @react-navigation/native (NOT react-native)
+// 2. Properly await getLocalRiderId() async function
+// 3. Reconstruct from individual entries for offline display
+// 4. Update cache immediately when new entries are added
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, useFocusEffect } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native'; // ✅ FIXED: Import from @react-navigation/native
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
@@ -190,71 +194,76 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
               .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
             setAllEntries(items);
-
-            // Update cache with fresh data
-            LocalStore.set(cacheKey, JSON.stringify(items));
             setIsOffline(false);
             setPage(1);
-
-            console.log(`✅ Loaded ${items.length} items from API`);
+            
+            // ✅ CACHE IT: Save to local storage for future offline access
+            LocalStore.set(cacheKey, JSON.stringify(items));
+            console.log(`✅ Synced ${items.length} entries from API and cached locally`);
           }
         } catch (apiErr) {
-          console.error('❌ API Error:', {
+          console.warn('⚠️ API fetch failed (using cache/offline data):', {
             status: apiErr.response?.status,
             message: apiErr.message,
-            url: apiErr.config?.url,
           });
+          setIsOffline(true);
+          // Data is already populated from cache or reconstruction above
+        }
 
-          // If we have no data at all and API failed
-          if (!allEntries.length && isMounted) {
-            setError('Failed to load history');
-            setIsOffline(true);
-          }
+        if (isMounted) {
+          setLoading(false);
         }
       } catch (err) {
         console.error('❌ Fetch error:', err);
         if (isMounted) {
           setError('Failed to load history');
-        }
-      } finally {
-        if (isMounted) {
           setLoading(false);
         }
       }
     }
 
     fetchHistory();
-    return () => { isMounted = false; };
+
+    return () => {
+      isMounted = false;
+    };
   }, [effectiveRiderId, reconstructHistoryFromIndividualEntries]);
 
   /**
-   * ✅ FOCUS LISTENER: Refresh data when screen comes into focus
-   * Ensures new entries are visible after returning from FuelEntryScreen
+   * ✅ REFRESH ON FOCUS: When screen comes into view, refresh data
+   * This catches any new entries added from FuelEntryScreen
    */
   useFocusEffect(
     useCallback(() => {
-      console.log('👁️ FuelHistoryScreen focused, refreshing sync status...');
-      
+      if (!effectiveRiderId) return;
+
       try {
-        // Update sync status
+        // Check sync status
         const hours = hoursSinceLastSync();
         setHoursSinceSync(hours);
 
         const queued = getQueuedRecords();
         setQueuedCount(queued.length);
 
-        // Check if we need to reload from local entries
+        // Check if cache has been updated - if so, refresh the view
         const cacheKey = `fuel_history_${effectiveRiderId}`;
         const cachedDataStr = LocalStore.get(cacheKey);
         
-        // If no cache, reconstruct (picks up newly added entries)
-        if (!cachedDataStr && effectiveRiderId) {
-          console.log('🔄 Reloading from individual entries...');
+        if (cachedDataStr) {
+          try {
+            const items = JSON.parse(cachedDataStr);
+            if (Array.isArray(items) && items.length > 0) {
+              setAllEntries(items);
+              console.log(`✅ Refreshed ${items.length} items from cache on focus`);
+            }
+          } catch (parseErr) {
+            console.warn('⚠️ Cache parse error on focus');
+          }
+        } else {
+          // Reconstruct from individual entries if cache is missing
           const reconstructed = reconstructHistoryFromIndividualEntries();
           if (reconstructed.length > 0) {
             setAllEntries(reconstructed);
-            setIsOffline(true);
-            setPage(1);
           }
         }
       } catch (err) {
