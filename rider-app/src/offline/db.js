@@ -1,5 +1,6 @@
 // rider-app/src/offline/db.js
 // ✅ FINAL FIX: All functions properly exported and working with LocalStore async API
+// Provides offline storage for rider status, auth, language, translations, and more
 
 import LocalStore from './LocalStore';
 

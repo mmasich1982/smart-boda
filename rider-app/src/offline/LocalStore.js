@@ -1,5 +1,5 @@
 // rider-app/src/offline/LocalStore.js
-// ✅ COMPLETE FIX: Adds all missing async methods
+// ✅ COMPLETE FIX: All async methods + sync fallback for compatibility
 // Now includes: kvGet, kvSet, queryRows, insertRow, updateRow, deleteRow
 // Uses localStorage with JSON serialization for PWA compatibility
 
@@ -347,7 +347,7 @@ const LocalStore = {
   },
 
   /**
-   * Delete a value from localStorage
+   * Delete a value from localStorage (supports both remove and delete names)
    * @param {string} key - Storage key
    * @returns {boolean} - True if successful
    */
@@ -370,6 +370,13 @@ const LocalStore = {
       console.error('LocalStore.delete error:', err.message);
       return false;
     }
+  },
+
+  /**
+   * Alias for delete() for backward compatibility
+   */
+  remove: (key) => {
+    return LocalStore.delete(key);
   },
 
   /**
