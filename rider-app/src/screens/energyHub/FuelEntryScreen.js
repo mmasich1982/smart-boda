@@ -1,6 +1,6 @@
 // rider-app/src/screens/energyHub/FuelEntryScreen.js
 // ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, clean UI, immediate feedback
-// No status banners - just "Saving..." and success/error only when needed
+// MINIMAL UI: Title + Error + Input + Button ONLY
 
 import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
@@ -202,7 +202,6 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
       <BackLink onPress={() => navigation.goBack()} label="← Back" />
       <Text style={styles.title}>{title}</Text>
 
-      {/* CRITICAL ERROR ONLY - Never show "working offline" message */}
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>{criticalError}</Text>
@@ -212,14 +211,12 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
         </View>
       )}
 
-      {/* SUCCESS MESSAGE - Brief, then disappear */}
       {successMessage && !saving && (
         <View style={styles.successBanner}>
           <Text style={styles.successBannerText}>✅ {successMessage}</Text>
         </View>
       )}
 
-      {/* Input Field - Clean, no clutter */}
       <View style={styles.field}>
         <Text style={styles.label}>
           Total Cost <Text style={styles.required}>*</Text>
@@ -239,7 +236,6 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
         <Text style={styles.hint}>Enter amount in KSh</Text>
       </View>
 
-      {/* Primary Button with loading state */}
       <TouchableOpacity
         style={[
           styles.primaryBtn,
@@ -280,7 +276,6 @@ const styles = StyleSheet.create({
     marginBottom: 20 
   },
   
-  // CRITICAL ERROR ONLY
   criticalErrorBanner: {
     backgroundColor: '#fdecea',
     borderWidth: 1.5,
@@ -305,7 +300,6 @@ const styles = StyleSheet.create({
     marginLeft: 12
   },
 
-  // Success message
   successBanner: {
     backgroundColor: '#e8f5e9',
     borderWidth: 1.5,
@@ -320,7 +314,6 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
 
-  // Input field
   field: { 
     marginBottom: 24 
   },
@@ -352,7 +345,6 @@ const styles = StyleSheet.create({
     fontWeight: '500' 
   },
 
-  // Primary button
   primaryBtn: { 
     backgroundColor: '#ff7a1a', 
     borderRadius: 14, 
