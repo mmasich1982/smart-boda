@@ -262,15 +262,6 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
           </Text>
         </View>
       </TouchableOpacity>
-
-      {/* Helpful hint - No sync status */}
-      <View style={styles.hintCard}>
-        <Text style={styles.hintText}>
-          {isElectric 
-            ? '💡 Your battery cost will be recorded and synced automatically.'
-            : '💡 Your fuel cost will be recorded and synced automatically.'}
-        </Text>
-      </View>
     </ScrollView>
   );
 }
@@ -391,21 +382,5 @@ const styles = StyleSheet.create({
     fontSize: 16, 
     fontWeight: '700',
     letterSpacing: 0.02
-  },
-
-  // Helpful hint card
-  hintCard: {
-    backgroundColor: '#fef9f0',
-    borderWidth: 1.5,
-    borderColor: '#f5e6d3',
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 8
-  },
-  hintText: {
-    fontSize: 12,
-    color: '#5b606c',
-    fontWeight: '500',
-    lineHeight: 16
   }
 });
