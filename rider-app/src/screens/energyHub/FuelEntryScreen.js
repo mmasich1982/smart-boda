@@ -1,5 +1,5 @@
 // rider-app/src/screens/energyHub/FuelEntryScreen.js
-// ✅ Offline-First Pattern 2: Record Data Entry
+// ✅ Offline-First Pattern 2: Record Data Entry (CORRECTED)
 // ✅ Principle 1: LocalStore First - Store entries locally
 // ✅ Principle 3: getLocalRiderId Always
 // ✅ Principle 4: API with Fallback - Try sync, fallback to queue
@@ -29,8 +29,10 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
   useEffect(() => {
     async function loadRiderId() {
       try {
-        const id = await getLocalRiderId();
-        setLocalRiderId(id);
+        const id = getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+        }
       } catch (err) {
         console.error('Error loading riderId:', err);
       }
@@ -44,6 +46,11 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
   const handleSave = async () => {
     if (!totalCost || parseFloat(totalCost) <= 0) {
       setError('Please enter a valid cost');
+      return;
+    }
+
+    if (!effectiveRiderId) {
+      setError('Rider information not available');
       return;
     }
 
@@ -75,28 +82,34 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
       });
 
       // Try to sync immediately (Principle 4: API with Fallback)
+      let syncSuccess = false;
       try {
-        const response = await api.post(`/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`, payload);
+        const response = await api.post(
+          `/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`, 
+          payload
+        );
 
         if (response.status === 200 || response.status === 201) {
           setIsOffline(false);
           setError('');
-          // Success - navigate to history
-          navigation.navigate('FuelHistory');
+          syncSuccess = true;
+          console.log('✅ Entry synced successfully');
         }
       } catch (apiErr) {
         // Network error - data already saved offline and queued
-        console.warn('API sync failed, using offline queue:', apiErr);
+        console.warn('API sync failed, using offline queue:', apiErr?.message);
         setIsOffline(true);
-        
-        // Still navigate to history after a short delay
-        setTimeout(() => {
-          navigation.navigate('FuelHistory');
-        }, 1500);
+        // Data is queued, will sync later
       }
+
+      // Navigate after short delay to show success feedback
+      setTimeout(() => {
+        navigation.navigate('FuelHistory');
+      }, 1000);
+
     } catch (err) {
       console.error('Save error:', err);
-      setError(err.response?.data?.detail || 'Failed to save entry. Please try again.');
+      setError(err?.response?.data?.detail || 'Failed to save entry. Please try again.');
     } finally {
       setSaving(false);
     }
@@ -104,28 +117,20 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
 
   if (!effectiveRiderId) {
     return (
-      <View style={styles.container}>
-        <View>
-          <BackLink onPress={() => navigation.goBack()} label="← Back" />
-        </View>
-        <View>
-          <Text style={styles.title}>{title}</Text>
-        </View>
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label="← Back" />
+        <Text style={styles.title}>{title}</Text>
         <View style={styles.errorBanner}>
           <Text style={styles.errorBannerText}>Unable to load rider information</Text>
         </View>
-      </View>
+      </ScrollView>
     );
   }
 
   return (
     <ScrollView style={styles.container}>
-      <View>
-        <BackLink onPress={() => navigation.goBack()} label="← Back" />
-      </View>
-      <View>
-        <Text style={styles.title}>{title}</Text>
-      </View>
+      <BackLink onPress={() => navigation.goBack()} label="← Back" />
+      <Text style={styles.title}>{title}</Text>
 
       {/* ✅ Pattern 4: Display Offline Indicator */}
       {isOffline && (
@@ -159,7 +164,9 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
         onPress={handleSave}
         disabled={saving || !totalCost}
       >
-        <Text style={styles.primaryBtnText}>{saving ? 'Saving...' : `Record ${isElectric ? 'Battery' : 'Fuel'} Cost →`}</Text>
+        <Text style={styles.primaryBtnText}>
+          {saving ? 'Saving...' : `Record ${isElectric ? 'Battery' : 'Fuel'} Cost →`}
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );

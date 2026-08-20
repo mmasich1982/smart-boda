@@ -1,9 +1,8 @@
 // rider-app/src/screens/energyHub/FuelHubScreen.js
-// ✅ Offline-First Pattern 1: Load Data
+// ✅ Offline-First Pattern 1: Load Data (CORRECTED)
 // ✅ Principle 1: LocalStore First - Cache hub data
 // ✅ Principle 3: getLocalRiderId Always
-// ✅ Principle 4: API with Fallback - Try API, fallback to cache
-// ✅ Principle 5: Sync Queue - Display sync status
+// ✅ Principle 4: API with Fallback (if needed in future)
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
@@ -33,8 +32,10 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
   useEffect(() => {
     async function loadRiderId() {
       try {
-        const id = await getLocalRiderId();
-        setLocalRiderId(id);
+        const id = getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+        }
       } catch (err) {
         console.error('Error loading riderId:', err);
       }
@@ -64,53 +65,78 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
     async function fetchData() {
       try {
         setLoading(true);
-        const params = { rider_id: effectiveRiderId, bike_id: bikeProfile?.id };
+        setError('');
+
+        const params = { 
+          rider_id: effectiveRiderId, 
+          bike_id: bikeProfile?.id 
+        };
+
+        // Check cache first before API call
+        const cacheKey = `fuel_hub_${effectiveRiderId}`;
+        const cachedData = LocalStore.get(cacheKey);
+        
+        if (cachedData) {
+          try {
+            const parsedCache = JSON.parse(cachedData);
+            setOdometer(parsedCache.odometer || 0);
+            if (isElectric && parsedCache.batteryRange) {
+              setBatteryRange(parsedCache.batteryRange);
+            }
+            setIsOffline(true);
+            console.log('✅ Loaded from cache - showing offline data');
+          } catch (parseErr) {
+            console.warn('Cache parse error, will fetch fresh data');
+          }
+        }
 
         // Try to fetch from API
-        const odometerPromise = api.get('/fuel-maintenance/odometer', { params });
-        const batteryPromise = isElectric ? api.get('/fuel-maintenance/battery-range', { params }) : Promise.resolve(null);
+        try {
+          const odometerRes = await api.get('/fuel-maintenance/odometer', { params });
+          const odometerValue = odometerRes?.data?.odometer || 0;
 
-        const [odometerRes, batteryRes] = await Promise.all([odometerPromise, batteryPromise]);
-
-        if (isMounted) {
-          setOdometer(odometerRes.data?.odometer || 0);
-          
-          if (isElectric && batteryRes) {
-            setBatteryRange(batteryRes.data?.remaining_km || null);
+          let batteryRangeValue = null;
+          if (isElectric) {
+            try {
+              const batteryRes = await api.get('/fuel-maintenance/battery-range', { params });
+              batteryRangeValue = batteryRes?.data?.remaining_km || null;
+            } catch (batteryErr) {
+              console.warn('Battery range fetch failed:', batteryErr.message);
+            }
           }
 
-          // ✅ Principle 1: Cache the hub data for offline use
-          LocalStore.set(`fuel_hub_${effectiveRiderId}`, JSON.stringify({
-            odometer: odometerRes.data?.odometer || 0,
-            batteryRange: batteryRes?.data?.remaining_km || null,
-            timestamp: new Date().toISOString(),
-          }));
+          if (isMounted) {
+            setOdometer(odometerValue);
+            if (isElectric && batteryRangeValue !== null) {
+              setBatteryRange(batteryRangeValue);
+            }
 
-          setError('');
-          setIsOffline(false);
+            // ✅ Principle 1: Cache the hub data for offline use
+            LocalStore.set(cacheKey, JSON.stringify({
+              odometer: odometerValue,
+              batteryRange: batteryRangeValue,
+              timestamp: new Date().toISOString(),
+            }));
+
+            setError('');
+            setIsOffline(false);
+          }
+        } catch (apiErr) {
+          console.error('API fetch error:', apiErr);
+          
+          // Network error - data already loaded from cache if available
+          if (apiErr.response?.status === 0 || apiErr.message?.includes('Network') || !odometer) {
+            setIsOffline(true);
+            if (!odometer) {
+              setError('Unable to load. Please check your connection.');
+            }
+          }
         }
       } catch (err) {
         console.error('Fetch error:', err);
-
-        // ✅ Principle 4: Fallback to cache on network error
-        if (err.response?.status === 0 || err.message.includes('Network')) {
-          try {
-            const cached = LocalStore.get(`fuel_hub_${effectiveRiderId}`);
-            if (cached && isMounted) {
-              const data = JSON.parse(cached);
-              setOdometer(data.odometer);
-              if (isElectric) {
-                setBatteryRange(data.batteryRange);
-              }
-              setError('');
-              setIsOffline(true);
-            }
-          } catch (e) {
-            console.error('Cache load failed:', e);
-            setError('Failed to load hub data');
-          }
-        } else {
+        if (isMounted) {
           setError('Failed to load hub data');
+          setIsOffline(true);
         }
       } finally {
         if (isMounted) {
@@ -135,15 +161,11 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
     navigation.navigate('FuelHistory');
   }, [navigation]);
 
-  if (loading) {
+  if (loading && !isOffline) {
     return (
       <View style={styles.container}>
-        <View>
-          <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-        </View>
-        <View>
-          <Text style={styles.title}>{title}</Text>
-        </View>
+        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+        <Text style={styles.title}>{title}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </View>
     );
@@ -151,12 +173,8 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <View>
-        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-      </View>
-      <View>
-        <Text style={styles.title}>{title}</Text>
-      </View>
+      <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+      <Text style={styles.title}>{title}</Text>
 
       {/* ✅ Pattern 4: Display Offline Indicator */}
       {isOffline && (
@@ -172,11 +190,11 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
       )}
 
       {/* Odometer Card for Electric Bikes */}
-      {isElectric && (
+      {isElectric && odometer !== null && (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>🛣️ Odometer</Text>
           <Text style={styles.odometerValue}>
-            {odometer !== null ? `${odometer.toLocaleString()} km` : '—'}
+            {`${odometer.toLocaleString()} km`}
           </Text>
           {batteryRange !== null && (
             <Text style={[styles.hint, batteryRange <= 5 && styles.hintWarning]}>
@@ -187,7 +205,11 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
       )}
 
       {/* Main CTA Button */}
-      <TouchableOpacity style={styles.primaryBtn} onPress={handleFuelEntry}>
+      <TouchableOpacity 
+        style={styles.primaryBtn} 
+        onPress={handleFuelEntry}
+        disabled={loading}
+      >
         <Text style={styles.primaryBtnText}>{mainLabel} →</Text>
       </TouchableOpacity>
 

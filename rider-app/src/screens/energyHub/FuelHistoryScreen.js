@@ -1,12 +1,12 @@
 // rider-app/src/screens/energyHub/FuelHistoryScreen.js
-// ✅ Offline-First Pattern 1: Load Data
+// ✅ Offline-First Pattern 1: Load Data (CORRECTED)
 // ✅ Principle 1: LocalStore First - Cache history
 // ✅ Principle 3: getLocalRiderId Always
 // ✅ Principle 4: API with Fallback - Try API, fallback to cache
 // ✅ Principle 5: Sync Queue - Display pending operations
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
@@ -35,8 +35,10 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
   useEffect(() => {
     async function loadRiderId() {
       try {
-        const id = await getLocalRiderId();
-        setLocalRiderId(id);
+        const id = getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+        }
       } catch (err) {
         console.error('Error loading riderId:', err);
       }
@@ -55,7 +57,6 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
     setQueuedCount(queued.length);
   }, []);
 
-  // Get period date range
   const getPeriodRange = useCallback((selectedPeriod) => {
     const now = new Date();
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
@@ -90,45 +91,62 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
         setLoading(true);
         setError('');
 
-        // Try to fetch from API
-        const response = await api.get('/fuel-maintenance/fuel-entry/history', {
-          params: {
-            rider_id: effectiveRiderId,
-            page: 1,
-            limit: 50,
-          }
-        });
+        const cacheKey = `fuel_history_${effectiveRiderId}`;
 
-        if (isMounted) {
-          const items = (response.data?.entries || []).sort((a, b) => 
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          );
-          
-          setAllEntries(items);
-          
-          // ✅ Principle 1: Cache the result for offline use
-          LocalStore.set(`fuel_history_${effectiveRiderId}`, JSON.stringify(items));
-          setIsOffline(false);
-          setPage(1);
+        // Check cache first
+        const cachedData = LocalStore.get(cacheKey);
+        if (cachedData) {
+          try {
+            const items = JSON.parse(cachedData);
+            if (Array.isArray(items)) {
+              setAllEntries(items);
+              setIsOffline(true);
+              setPage(1);
+              console.log('✅ Loaded from cache - showing offline data');
+            }
+          } catch (parseErr) {
+            console.warn('Cache parse error');
+          }
+        }
+
+        // Try to fetch from API
+        try {
+          const response = await api.get('/fuel-maintenance/fuel-entry/history', {
+            params: {
+              rider_id: effectiveRiderId,
+              page: 1,
+              limit: 50,
+            }
+          });
+
+          if (isMounted) {
+            const items = (response.data?.entries || []).sort((a, b) => 
+              new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+            );
+            
+            setAllEntries(items);
+            
+            // ✅ Principle 1: Cache the result for offline use
+            LocalStore.set(cacheKey, JSON.stringify(items));
+            setIsOffline(false);
+            setPage(1);
+          }
+        } catch (apiErr) {
+          console.error('API fetch error:', apiErr);
+
+          // Network error - we already have cache or need to show error
+          if (apiErr.response?.status === 0 || apiErr.message?.includes('Network')) {
+            if (!allEntries.length) {
+              setError('Failed to load history');
+            }
+            setIsOffline(true);
+          } else {
+            setError('Failed to load history');
+          }
         }
       } catch (err) {
         console.error('Fetch error:', err);
-
-        // ✅ Principle 4: Fallback to cache on network error
-        if (err.response?.status === 0 || err.message.includes('Network')) {
-          try {
-            const cached = LocalStore.get(`fuel_history_${effectiveRiderId}`);
-            if (cached && isMounted) {
-              const items = JSON.parse(cached);
-              setAllEntries(items);
-              setIsOffline(true);
-              setError('');
-            }
-          } catch (e) {
-            console.error('Cache load failed:', e);
-            setError('Failed to load history');
-          }
-        } else {
+        if (isMounted) {
           setError('Failed to load history');
         }
       } finally {
@@ -142,7 +160,6 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
     return () => { isMounted = false; };
   }, [effectiveRiderId]);
 
-  // Filter entries by period
   useEffect(() => {
     const { start, end } = getPeriodRange(period);
     const filtered = allEntries.filter(e => {
@@ -153,7 +170,6 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
     setPage(1);
   }, [period, allEntries, getPeriodRange]);
 
-  // Paginate current entries
   const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
   const pageItems = entries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const totalSpent = entries.reduce((sum, e) => sum + (e.cost || 0), 0);
@@ -174,13 +190,13 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
     });
   }, []);
 
-  if (loading) {
+  if (loading && !isOffline) {
     return (
-      <View style={styles.container}>
+      <ScrollView style={styles.container}>
         <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-        <Text style={styles.title}>Fuel Cost History</Text>
+        <Text style={styles.title}>{isElectric ? 'Charge Battery Cost History' : 'Fuel Cost History'}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
-      </View>
+      </ScrollView>
     );
   }
 
