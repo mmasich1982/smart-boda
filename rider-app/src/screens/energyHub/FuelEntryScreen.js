@@ -1,37 +1,38 @@
 // rider-app/src/screens/energyHub/FuelEntryScreen.js
-// ✅ CRITICAL FIX: Properly await getLocalRiderId() async function
-// Previously was returning Promise {<pending>} causing [object Promise] in keys
+// ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, clean UI, immediate feedback
+// No status banners - just "Saving..." and success/error only when needed
 
 import React, { useState, useEffect } from 'react';
-import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
+import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
 import LocalStore from '../../offline/LocalStore';
 import { addToSyncQueue } from '../../offline/syncQueue';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 
 export default function FuelEntryScreen({ bikeProfile, navigation }) {
   const { state } = useRider();
   const [localRiderId, setLocalRiderId] = useState(null);
   const [totalCost, setTotalCost] = useState('');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [isOffline, setIsOffline] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
   const isElectric = bikeProfile?.fuelType === 'electric';
   const title = isElectric ? 'Record Battery Cost' : 'Record Fuel Cost';
 
-  // Load rider ID on mount - PROPERLY AWAIT THE ASYNC FUNCTION
+  // Load rider ID on mount
   useEffect(() => {
     const loadRiderId = async () => {
       try {
-        const id = await getLocalRiderId(); // ✅ AWAIT the async function
+        const id = await getLocalRiderId();
         if (id) {
           setLocalRiderId(id);
-          console.log('✅ FuelEntryScreen: Loaded rider ID:', id);
-        } else {
-          console.warn('⚠️ FuelEntryScreen: No rider ID found');
+          console.log('✅ FuelEntry: Loaded rider ID:', id);
         }
       } catch (err) {
         console.error('❌ Error loading rider ID:', err);
@@ -44,7 +45,7 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
   const effectiveRiderId = localRiderId || state?.riderId;
 
   /**
-   * ✅ UPDATE CACHE: Add new entry to the fuel_history cache
+   * ✅ UPDATE CACHE: Add new entry to fuel_history cache
    * This ensures FuelHistoryScreen displays the entry immediately
    */
   const updateFuelHistoryCache = (offlineRecord) => {
@@ -75,8 +76,6 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
       const success = LocalStore.set(cacheKey, JSON.stringify(items));
       if (success) {
         console.log(`✅ Updated fuel_history cache with new entry`);
-      } else {
-        console.warn('⚠️ Failed to update fuel_history cache');
       }
     } catch (err) {
       console.error('❌ Error updating cache:', err);
@@ -87,18 +86,19 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
     try {
       // Validation
       if (!totalCost || parseFloat(totalCost) <= 0) {
-        setError('Please enter a valid cost');
+        showCriticalError('Please enter a valid cost amount', 'validation');
         return;
       }
 
       if (!effectiveRiderId) {
-        setError('Rider ID not available. Please restart the app.');
-        console.error('❌ No effective rider ID:', { localRiderId, stateRiderId: state?.riderId });
+        showCriticalError('Rider ID not available. Please restart the app.', 'auth');
+        console.error('❌ No effective rider ID');
         return;
       }
 
       setSaving(true);
-      setError('');
+      clearCriticalError();
+      setSuccessMessage('');
 
       const payload = {
         mode: isElectric ? 'charging' : 'petrol',
@@ -111,16 +111,22 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
 
       console.log('💾 Saving entry:', { recordId, riderId: effectiveRiderId, cost: totalCost });
 
-      // Save locally
-      const localSaveSuccess = LocalStore.set(`fuel_entry_${recordId}`, JSON.stringify(offlineRecord));
+      // ALWAYS save locally first
+      const localSaveSuccess = LocalStore.set(
+        `fuel_entry_${recordId}`, 
+        JSON.stringify(offlineRecord)
+      );
+      
       if (!localSaveSuccess) {
-        throw new Error('Failed to save to local storage');
+        showCriticalError('Failed to save locally. Storage may be full.', 'storage');
+        setSaving(false);
+        return;
       }
 
-      // ✅ UPDATE CACHE IMMEDIATELY
+      // Update cache immediately for instant UI feedback
       updateFuelHistoryCache(offlineRecord);
 
-      // Add to sync queue
+      // Add to sync queue for background sync
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'fuel_entry',
@@ -133,51 +139,60 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
         console.warn('⚠️ Failed to add to queue, but local save succeeded');
       }
 
-      // Try to sync immediately
-      let syncSuccess = false;
-      try {
-        console.log('📡 Attempting to sync to API...');
-        const response = await api.post(
-          `/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`,
-          payload
-        );
+      // Try to sync immediately only if online
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Attempting to sync to API...');
+          const response = await api.post(
+            `/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`,
+            payload
+          );
 
-        if (response.status === 200 || response.status === 201) {
-          syncSuccess = true;
-          setIsOffline(false);
-          console.log('✅ Synced successfully to API');
+          if (response.status === 200 || response.status === 201) {
+            console.log('✅ Synced successfully to API');
+            // Success - show brief confirmation
+            setSuccessMessage(`${isElectric ? 'Battery' : 'Fuel'} cost recorded!`);
+            
+            // Navigate after brief success message
+            setTimeout(() => {
+              navigation.navigate('FuelHistory');
+            }, 800);
+            return;
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API sync failed (will retry later):', {
+            status: apiErr.response?.status,
+            message: apiErr.message,
+          });
+          // API failed but data is saved and queued - that's okay
         }
-      } catch (apiErr) {
-        console.warn('⚠️ API sync failed (will retry later):', {
-          status: apiErr.response?.status,
-          message: apiErr.message,
-          data: apiErr.response?.data,
-        });
-        setIsOffline(true);
-        // This is OK - data is queued locally
       }
 
-      // Navigate after delay to FuelHistory (which will now show the new entry)
+      // Either offline or API sync failed - but data is safely stored
+      // Show success and navigate
+      setSuccessMessage(`${isElectric ? 'Battery' : 'Fuel'} cost saved. Syncing...`);
+      
       setTimeout(() => {
         navigation.navigate('FuelHistory');
-      }, 1000);
+      }, 800);
 
     } catch (err) {
       console.error('❌ Save error:', err);
-      setError(err.response?.data?.detail || err.message || 'Failed to save entry');
+      showCriticalError(
+        err.response?.data?.detail || 'Failed to save entry. Please try again.',
+        'save_error'
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  if (!effectiveRiderId) {
+  if (!effectiveRiderId || !isInitialized) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={() => navigation.goBack()} label="← Back" />
         <Text style={styles.title}>{title}</Text>
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>❌ Rider ID not found. Restart the app.</Text>
-        </View>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
   }
@@ -187,58 +202,210 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
       <BackLink onPress={() => navigation.goBack()} label="← Back" />
       <Text style={styles.title}>{title}</Text>
 
-      {isOffline && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>📶 Working Offline · Will sync when connected</Text>
+      {/* CRITICAL ERROR ONLY - Never show "working offline" message */}
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>{criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.dismissText}>Dismiss</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {error && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>{error}</Text>
+      {/* SUCCESS MESSAGE - Brief, then disappear */}
+      {successMessage && !saving && (
+        <View style={styles.successBanner}>
+          <Text style={styles.successBannerText}>✅ {successMessage}</Text>
         </View>
       )}
 
+      {/* Input Field - Clean, no clutter */}
       <View style={styles.field}>
-        <Text style={styles.label}>Total Cost <Text style={styles.required}>*</Text></Text>
+        <Text style={styles.label}>
+          Total Cost <Text style={styles.required}>*</Text>
+        </Text>
         <TextInput
           style={styles.input}
           placeholder="e.g. 630"
           placeholderTextColor="#b0a89d"
           keyboardType="decimal-pad"
           value={totalCost}
-          onChangeText={setTotalCost}
+          onChangeText={(val) => {
+            setTotalCost(val);
+            clearCriticalError();
+          }}
           editable={!saving}
         />
         <Text style={styles.hint}>Enter amount in KSh</Text>
       </View>
 
+      {/* Primary Button with loading state */}
       <TouchableOpacity
-        style={[styles.primaryBtn, (saving || !totalCost) && styles.primaryBtnDisabled]}
+        style={[
+          styles.primaryBtn,
+          (saving || !totalCost) && styles.primaryBtnDisabled
+        ]}
         onPress={handleSave}
         disabled={saving || !totalCost}
+        activeOpacity={0.8}
       >
-        <Text style={styles.primaryBtnText}>
-          {saving ? 'Saving...' : `Record ${isElectric ? 'Battery' : 'Fuel'} Cost →`}
-        </Text>
+        <View style={styles.btnContent}>
+          {saving && (
+            <ActivityIndicator 
+              size="small" 
+              color="#fff" 
+              style={styles.btnSpinner}
+            />
+          )}
+          <Text style={styles.primaryBtnText}>
+            {saving ? 'Saving...' : `Record ${isElectric ? 'Battery' : 'Fuel'} Cost →`}
+          </Text>
+        </View>
       </TouchableOpacity>
+
+      {/* Helpful hint - No sync status */}
+      <View style={styles.hintCard}>
+        <Text style={styles.hintText}>
+          {isElectric 
+            ? '💡 Your battery cost will be recorded and synced automatically.'
+            : '💡 Your fuel cost will be recorded and synced automatically.'}
+        </Text>
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#f6f4ef' },
-  title: { fontFamily: 'SpaceGrotesk-Bold', fontSize: 22, fontWeight: '700', color: '#1a1c20', marginBottom: 20 },
-  offlineBanner: { backgroundColor: '#fff9e6', borderWidth: 1.5, borderColor: '#ffe6b3', borderRadius: 14, padding: 12, marginBottom: 14 },
-  offlineBannerText: { fontSize: 11.5, color: '#b88900', fontWeight: '600' },
-  errorBanner: { backgroundColor: '#fdecea', borderWidth: 1.5, borderColor: '#f6cac7', borderRadius: 14, padding: 12, marginBottom: 14 },
-  errorBannerText: { fontSize: 11.5, color: '#a5312c', fontWeight: '600' },
-  field: { marginBottom: 16 },
-  label: { fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.04, color: '#5b606c', marginBottom: 7 },
-  required: { color: '#e5650a' },
-  input: { width: '100%', padding: 13, borderRadius: 12, borderWidth: 1.5, borderColor: '#e7e4db', fontSize: 15, backgroundColor: '#fff', color: '#1a1c20' },
-  hint: { fontSize: 11.5, color: '#5b606c', marginTop: 6 },
-  primaryBtn: { backgroundColor: '#ff7a1a', borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginBottom: 10, shadowColor: '#ff7a1a', shadowOpacity: 0.55, shadowRadius: 16, shadowOffset: { width: 0, height: 6 } },
-  primaryBtnDisabled: { backgroundColor: '#e9dccc', shadowOpacity: 0 },
-  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  container: { 
+    flex: 1, 
+    padding: 20, 
+    backgroundColor: '#f6f4ef' 
+  },
+  title: { 
+    fontFamily: 'SpaceGrotesk-Bold', 
+    fontSize: 22, 
+    fontWeight: '700', 
+    color: '#1a1c20', 
+    marginBottom: 20 
+  },
+  
+  // CRITICAL ERROR ONLY
+  criticalErrorBanner: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1.5,
+    borderColor: '#f6cac7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  criticalErrorText: {
+    fontSize: 12,
+    color: '#a5312c',
+    fontWeight: '600',
+    flex: 1
+  },
+  dismissText: {
+    fontSize: 11,
+    color: '#a5312c',
+    fontWeight: '700',
+    marginLeft: 12
+  },
+
+  // Success message
+  successBanner: {
+    backgroundColor: '#e8f5e9',
+    borderWidth: 1.5,
+    borderColor: '#a5d6a7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16
+  },
+  successBannerText: {
+    fontSize: 12,
+    color: '#2e7d32',
+    fontWeight: '600'
+  },
+
+  // Input field
+  field: { 
+    marginBottom: 24 
+  },
+  label: { 
+    fontSize: 11.5, 
+    fontWeight: '700', 
+    textTransform: 'uppercase', 
+    letterSpacing: 0.04, 
+    color: '#5b606c', 
+    marginBottom: 8 
+  },
+  required: { 
+    color: '#e5650a' 
+  },
+  input: { 
+    width: '100%', 
+    padding: 14, 
+    borderRadius: 12, 
+    borderWidth: 1.5, 
+    borderColor: '#e7e4db', 
+    fontSize: 16, 
+    backgroundColor: '#fff', 
+    color: '#1a1c20',
+    marginBottom: 8
+  },
+  hint: { 
+    fontSize: 11.5, 
+    color: '#5b606c', 
+    fontWeight: '500' 
+  },
+
+  // Primary button
+  primaryBtn: { 
+    backgroundColor: '#ff7a1a', 
+    borderRadius: 14, 
+    paddingVertical: 16, 
+    alignItems: 'center', 
+    marginBottom: 16,
+    shadowColor: '#ff7a1a', 
+    shadowOpacity: 0.35, 
+    shadowRadius: 12, 
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6
+  },
+  primaryBtnDisabled: { 
+    backgroundColor: '#e9dccc', 
+    shadowOpacity: 0 
+  },
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  btnSpinner: {
+    marginRight: 10
+  },
+  primaryBtnText: { 
+    color: '#fff', 
+    fontSize: 16, 
+    fontWeight: '700',
+    letterSpacing: 0.02
+  },
+
+  // Helpful hint card
+  hintCard: {
+    backgroundColor: '#fef9f0',
+    borderWidth: 1.5,
+    borderColor: '#f5e6d3',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 8
+  },
+  hintText: {
+    fontSize: 12,
+    color: '#5b606c',
+    fontWeight: '500',
+    lineHeight: 16
+  }
 });
