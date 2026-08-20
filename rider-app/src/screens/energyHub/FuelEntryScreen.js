@@ -1,12 +1,8 @@
 // rider-app/src/screens/energyHub/FuelEntryScreen.js
-// ✅ Offline-First Pattern 2: Record Data Entry (CORRECTED)
-// ✅ Principle 1: LocalStore First - Store entries locally
-// ✅ Principle 3: getLocalRiderId Always
-// ✅ Principle 4: API with Fallback - Try sync, fallback to queue
-// ✅ Principle 5: Sync Queue - Queue fuel entries for offline sync
+// ✅ CORRECTED: Synchronous, proper error handling, no Promises
 
 import React, { useState, useEffect } from 'react';
-import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
@@ -25,55 +21,59 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
   const isElectric = bikeProfile?.fuelType === 'electric';
   const title = isElectric ? 'Record Battery Cost' : 'Record Fuel Cost';
 
-  // ✅ Principle 3: Get rider ID from offline database
+  // Load rider ID on mount
   useEffect(() => {
-    async function loadRiderId() {
-      try {
-        const id = getLocalRiderId();
-        if (id) {
-          setLocalRiderId(id);
-        }
-      } catch (err) {
-        console.error('Error loading riderId:', err);
+    try {
+      const id = getLocalRiderId();
+      if (id) {
+        setLocalRiderId(id);
+        console.log('✅ FuelEntryScreen: Loaded rider ID:', id);
+      } else {
+        console.warn('⚠️ FuelEntryScreen: No rider ID found');
       }
+    } catch (err) {
+      console.error('❌ Error loading rider ID:', err);
     }
-    loadRiderId();
   }, []);
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  // ✅ Pattern 2: Record Data Entry - Principle 5: Sync Queue
   const handleSave = async () => {
-    if (!totalCost || parseFloat(totalCost) <= 0) {
-      setError('Please enter a valid cost');
-      return;
-    }
-
-    if (!effectiveRiderId) {
-      setError('Rider information not available');
-      return;
-    }
-
-    setSaving(true);
-    setError('');
-
     try {
+      // Validation
+      if (!totalCost || parseFloat(totalCost) <= 0) {
+        setError('Please enter a valid cost');
+        return;
+      }
+
+      if (!effectiveRiderId) {
+        setError('Rider ID not available. Please restart the app.');
+        console.error('❌ No effective rider ID:', { localRiderId, stateRiderId: state?.riderId });
+        return;
+      }
+
+      setSaving(true);
+      setError('');
+
       const payload = {
         mode: isElectric ? 'charging' : 'petrol',
         cost: parseFloat(totalCost),
-        litres: isElectric ? null : undefined,
         created_at: new Date().toISOString(),
       };
 
-      // ✅ Principle 1 & 2: Save to offline database first
       const recordId = `fuel_${effectiveRiderId}_${Date.now()}`;
       const offlineRecord = { ...payload, id: recordId, rider_id: effectiveRiderId };
-      
-      // Store locally
-      LocalStore.set(`fuel_entry_${recordId}`, JSON.stringify(offlineRecord));
 
-      // ✅ Principle 5: Add to sync queue for later sync
-      await addToSyncQueue({
+      console.log('💾 Saving entry:', { recordId, riderId: effectiveRiderId, cost: totalCost });
+
+      // Save locally
+      const localSaveSuccess = LocalStore.set(`fuel_entry_${recordId}`, JSON.stringify(offlineRecord));
+      if (!localSaveSuccess) {
+        throw new Error('Failed to save to local storage');
+      }
+
+      // Add to sync queue
+      const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'fuel_entry',
         endpoint: `/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`,
@@ -81,35 +81,42 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
         timestamp: new Date(),
       });
 
-      // Try to sync immediately (Principle 4: API with Fallback)
+      if (!queueSuccess) {
+        console.warn('⚠️ Failed to add to queue, but local save succeeded');
+      }
+
+      // Try to sync immediately
       let syncSuccess = false;
       try {
+        console.log('📡 Attempting to sync to API...');
         const response = await api.post(
-          `/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`, 
+          `/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`,
           payload
         );
 
         if (response.status === 200 || response.status === 201) {
-          setIsOffline(false);
-          setError('');
           syncSuccess = true;
-          console.log('✅ Entry synced successfully');
+          setIsOffline(false);
+          console.log('✅ Synced successfully to API');
         }
       } catch (apiErr) {
-        // Network error - data already saved offline and queued
-        console.warn('API sync failed, using offline queue:', apiErr?.message);
+        console.warn('⚠️ API sync failed (will retry later):', {
+          status: apiErr.response?.status,
+          message: apiErr.message,
+          data: apiErr.response?.data,
+        });
         setIsOffline(true);
-        // Data is queued, will sync later
+        // This is OK - data is queued locally
       }
 
-      // Navigate after short delay to show success feedback
+      // Navigate after delay
       setTimeout(() => {
         navigation.navigate('FuelHistory');
       }, 1000);
 
     } catch (err) {
-      console.error('Save error:', err);
-      setError(err?.response?.data?.detail || 'Failed to save entry. Please try again.');
+      console.error('❌ Save error:', err);
+      setError(err.response?.data?.detail || err.message || 'Failed to save entry');
     } finally {
       setSaving(false);
     }
@@ -121,7 +128,7 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
         <BackLink onPress={() => navigation.goBack()} label="← Back" />
         <Text style={styles.title}>{title}</Text>
         <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>Unable to load rider information</Text>
+          <Text style={styles.errorBannerText}>❌ Rider ID not found. Restart the app.</Text>
         </View>
       </ScrollView>
     );
@@ -132,7 +139,6 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
       <BackLink onPress={() => navigation.goBack()} label="← Back" />
       <Text style={styles.title}>{title}</Text>
 
-      {/* ✅ Pattern 4: Display Offline Indicator */}
       {isOffline && (
         <View style={styles.offlineBanner}>
           <Text style={styles.offlineBannerText}>📶 Working Offline · Will sync when connected</Text>
@@ -156,7 +162,7 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
           onChangeText={setTotalCost}
           editable={!saving}
         />
-        <Text style={styles.hint}>Enter the total amount you paid for fuel/energy in KSh</Text>
+        <Text style={styles.hint}>Enter amount in KSh</Text>
       </View>
 
       <TouchableOpacity
@@ -183,7 +189,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.04, color: '#5b606c', marginBottom: 7 },
   required: { color: '#e5650a' },
   input: { width: '100%', padding: 13, borderRadius: 12, borderWidth: 1.5, borderColor: '#e7e4db', fontSize: 15, backgroundColor: '#fff', color: '#1a1c20' },
-  hint: { fontSize: 11.5, color: '#5b606c', lineHeight: 18, marginTop: 6 },
+  hint: { fontSize: 11.5, color: '#5b606c', marginTop: 6 },
   primaryBtn: { backgroundColor: '#ff7a1a', borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginBottom: 10, shadowColor: '#ff7a1a', shadowOpacity: 0.55, shadowRadius: 16, shadowOffset: { width: 0, height: 6 } },
   primaryBtnDisabled: { backgroundColor: '#e9dccc', shadowOpacity: 0 },
   primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },

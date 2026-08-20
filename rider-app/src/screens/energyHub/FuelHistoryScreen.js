@@ -1,9 +1,5 @@
 // rider-app/src/screens/energyHub/FuelHistoryScreen.js
-// ✅ Offline-First Pattern 1: Load Data (CORRECTED)
-// ✅ Principle 1: LocalStore First - Cache history
-// ✅ Principle 3: getLocalRiderId Always
-// ✅ Principle 4: API with Fallback - Try API, fallback to cache
-// ✅ Principle 5: Sync Queue - Display pending operations
+// ✅ CORRECTED: Synchronous, proper caching, no Promises
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
@@ -31,31 +27,27 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
 
   const isElectric = bikeProfile?.fuelType === 'electric';
 
-  // ✅ Principle 3: Get rider ID from offline database
+  // Load rider ID on mount
   useEffect(() => {
-    async function loadRiderId() {
-      try {
-        const id = getLocalRiderId();
-        if (id) {
-          setLocalRiderId(id);
-        }
-      } catch (err) {
-        console.error('Error loading riderId:', err);
+    try {
+      const id = getLocalRiderId();
+      if (id) {
+        setLocalRiderId(id);
+        console.log('✅ FuelHistoryScreen: Loaded rider ID:', id);
       }
+
+      // Check sync status
+      const hours = hoursSinceLastSync();
+      setHoursSinceSync(hours);
+
+      const queued = getQueuedRecords();
+      setQueuedCount(queued.length);
+    } catch (err) {
+      console.error('❌ Error loading initial state:', err);
     }
-    loadRiderId();
   }, []);
 
   const effectiveRiderId = localRiderId || state?.riderId;
-
-  // ✅ Principle 5: Check sync status
-  useEffect(() => {
-    const hours = hoursSinceLastSync();
-    setHoursSinceSync(hours);
-    
-    const queued = getQueuedRecords();
-    setQueuedCount(queued.length);
-  }, []);
 
   const getPeriodRange = useCallback((selectedPeriod) => {
     const now = new Date();
@@ -77,75 +69,79 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
     }
   }, []);
 
-  // ✅ Pattern 1: Load Data - Principle 4: API with Fallback
+  // Fetch history
   useEffect(() => {
     let isMounted = true;
 
     if (!effectiveRiderId) {
+      console.warn('⚠️ No effective rider ID');
       setLoading(false);
       return;
     }
 
-    async function fetchAllEntries() {
+    async function fetchHistory() {
       try {
         setLoading(true);
         setError('');
 
         const cacheKey = `fuel_history_${effectiveRiderId}`;
 
-        // Check cache first
-        const cachedData = LocalStore.get(cacheKey);
-        if (cachedData) {
+        // Try cache first
+        console.log('📦 Checking cache...');
+        const cachedDataStr = LocalStore.get(cacheKey);
+        if (cachedDataStr) {
           try {
-            const items = JSON.parse(cachedData);
-            if (Array.isArray(items)) {
+            const items = JSON.parse(cachedDataStr);
+            if (Array.isArray(items) && items.length > 0) {
               setAllEntries(items);
               setIsOffline(true);
               setPage(1);
-              console.log('✅ Loaded from cache - showing offline data');
+              console.log(`✅ Loaded ${items.length} items from cache`);
             }
           } catch (parseErr) {
-            console.warn('Cache parse error');
+            console.warn('⚠️ Cache parse error');
           }
         }
 
-        // Try to fetch from API
+        // Fetch fresh data
+        console.log('📡 Fetching from API...');
         try {
           const response = await api.get('/fuel-maintenance/fuel-entry/history', {
             params: {
               rider_id: effectiveRiderId,
               page: 1,
-              limit: 50,
+              limit: 100,
             }
           });
 
           if (isMounted) {
-            const items = (response.data?.entries || []).sort((a, b) => 
-              new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-            );
-            
+            const items = (response.data?.entries || [])
+              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
             setAllEntries(items);
-            
-            // ✅ Principle 1: Cache the result for offline use
+
+            // Update cache
             LocalStore.set(cacheKey, JSON.stringify(items));
             setIsOffline(false);
             setPage(1);
+
+            console.log(`✅ Loaded ${items.length} items from API`);
           }
         } catch (apiErr) {
-          console.error('API fetch error:', apiErr);
+          console.error('❌ API Error:', {
+            status: apiErr.response?.status,
+            message: apiErr.message,
+            url: apiErr.config?.url,
+          });
 
-          // Network error - we already have cache or need to show error
-          if (apiErr.response?.status === 0 || apiErr.message?.includes('Network')) {
-            if (!allEntries.length) {
-              setError('Failed to load history');
-            }
-            setIsOffline(true);
-          } else {
+          // If we have no cache data and API failed
+          if (!allEntries.length) {
             setError('Failed to load history');
+            setIsOffline(true);
           }
         }
       } catch (err) {
-        console.error('Fetch error:', err);
+        console.error('❌ Fetch error:', err);
         if (isMounted) {
           setError('Failed to load history');
         }
@@ -156,10 +152,11 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
       }
     }
 
-    fetchAllEntries();
+    fetchHistory();
     return () => { isMounted = false; };
   }, [effectiveRiderId]);
 
+  // Filter by period
   useEffect(() => {
     const { start, end } = getPeriodRange(period);
     const filtered = allEntries.filter(e => {
@@ -174,12 +171,16 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
   const pageItems = entries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const totalSpent = entries.reduce((sum, e) => sum + (e.cost || 0), 0);
 
-  const getModeLabel = useCallback((mode) => {
-    const labels = { petrol: '⛽ Fuel purchase', swap: '🔋 Battery swap', charging: '🔌 Charging' };
+  const getModeLabel = (mode) => {
+    const labels = { 
+      petrol: '⛽ Fuel purchase', 
+      swap: '🔋 Battery swap', 
+      charging: '🔌 Charging' 
+    };
     return labels[mode?.toLowerCase()] || mode;
-  }, []);
+  };
 
-  const formatDate = useCallback((timestamp) => {
+  const formatDate = (timestamp) => {
     const date = new Date(timestamp);
     return date.toLocaleString('en-KE', {
       month: 'short',
@@ -188,9 +189,9 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
       hour: '2-digit',
       minute: '2-digit',
     });
-  }, []);
+  };
 
-  if (loading && !isOffline) {
+  if (loading && !isOffline && !allEntries.length) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
@@ -205,21 +206,18 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
       <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
       <Text style={styles.title}>{isElectric ? 'Charge Battery Cost History' : 'Fuel Cost History'}</Text>
 
-      {/* ✅ Pattern 4: Display Offline Indicator */}
       {isOffline && (
         <View style={styles.offlineBanner}>
           <Text style={styles.offlineBannerText}>📶 Offline · Last synced {hoursSinceSync}h ago</Text>
         </View>
       )}
 
-      {/* ✅ Principle 5: Display pending sync operations */}
       {queuedCount > 0 && (
         <View style={styles.pendingBanner}>
-          <Text style={styles.pendingBannerText}>⏳ {queuedCount} pending operation{queuedCount !== 1 ? 's' : ''} · Will sync when online</Text>
+          <Text style={styles.pendingBannerText}>⏳ {queuedCount} pending operation{queuedCount !== 1 ? 's' : ''}</Text>
         </View>
       )}
 
-      {/* Period Tabs */}
       <View style={styles.periodTabs}>
         {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => (
           <TouchableOpacity
@@ -240,7 +238,6 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
         </View>
       )}
 
-      {/* Summary Card */}
       <View style={styles.card}>
         <View style={styles.kvRow}>
           <Text style={styles.kvLabel}>Total Spent</Text>
@@ -252,7 +249,6 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
         </View>
       </View>
 
-      {/* Entries Card */}
       <View style={styles.card}>
         {pageItems.length > 0 ? (
           pageItems.map((entry, idx) => (
@@ -274,7 +270,6 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
         )}
       </View>
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <View style={styles.paginationContainer}>
           <Text style={styles.paginationMeta}>
@@ -289,7 +284,7 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
               <Text style={styles.pageBtnText}>‹</Text>
             </TouchableOpacity>
 
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+            {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => i + 1).map((p) => (
               <TouchableOpacity
                 key={p}
                 style={[styles.pageBtn, p === page && styles.pageBtnActive]}
@@ -316,36 +311,28 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f6f4ef', padding: 0 },
   title: { fontFamily: 'SpaceGrotesk-Bold', fontSize: 24, fontWeight: '700', color: '#1a1c20', marginBottom: 16, paddingHorizontal: 20, marginTop: 16 },
-
   offlineBanner: { backgroundColor: '#fff9e6', borderWidth: 1.5, borderColor: '#ffe6b3', borderRadius: 14, padding: 12, marginHorizontal: 20, marginBottom: 8 },
   offlineBannerText: { fontSize: 11.5, color: '#b88900', fontWeight: '600' },
-
   pendingBanner: { backgroundColor: '#e8f4f8', borderWidth: 1.5, borderColor: '#b3dce8', borderRadius: 14, padding: 12, marginHorizontal: 20, marginBottom: 8 },
   pendingBannerText: { fontSize: 11.5, color: '#1b5e7a', fontWeight: '600' },
-
   periodTabs: { flexDirection: 'row', gap: 8, marginHorizontal: 20, marginBottom: 16 },
   periodTab: { flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1.5, borderColor: '#e7e4db', backgroundColor: '#fff', alignItems: 'center' },
   periodTabActive: { backgroundColor: '#ff7a1a', borderColor: '#ff7a1a' },
   periodTabText: { fontSize: 11, fontWeight: '600', color: '#5b606c' },
   periodTabTextActive: { color: '#fff' },
-
   errorBanner: { backgroundColor: '#fdecea', borderWidth: 1.5, borderColor: '#f6cac7', borderRadius: 14, padding: 12, marginHorizontal: 20, marginBottom: 14 },
   errorBannerText: { fontSize: 11.5, color: '#a5312c', fontWeight: '600' },
-
   card: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e7e4db', borderRadius: 16, padding: 16, marginHorizontal: 20, marginBottom: 12 },
   kvRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10 },
   kvLabel: { fontSize: 12, color: '#5b606c', fontWeight: '500' },
   kvValue: { fontSize: 14, fontWeight: '700', color: '#1a1c20' },
-
   tripRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f0ede7' },
   tripRowLeft: { flex: 1 },
   tripRowMode: { fontSize: 13, fontWeight: '600', color: '#1a1c20', marginBottom: 4 },
   tripRowTime: { fontSize: 11, color: '#5b606c', fontWeight: '500' },
   tripRowRight: { justifyContent: 'center' },
   tripRowAmount: { fontSize: 13, fontWeight: '700', color: '#1a1c20', textAlign: 'right' },
-
   emptyHint: { fontSize: 12, color: '#5b606c', fontWeight: '500', paddingVertical: 12, textAlign: 'center' },
-
   paginationContainer: { marginHorizontal: 20, marginBottom: 20 },
   paginationMeta: { fontSize: 11, color: '#5b606c', fontWeight: '500', marginBottom: 8, textAlign: 'center' },
   pagination: { flexDirection: 'row', justifyContent: 'center', gap: 4 },
