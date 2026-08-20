@@ -1,5 +1,6 @@
 // rider-app/src/screens/energyHub/FuelEntryScreen.js
-// ✅ FIXED: Cache invalidation on save + Updates fuel_history cache immediately
+// ✅ CRITICAL FIX: Properly await getLocalRiderId() async function
+// Previously was returning Promise {<pending>} causing [object Promise] in keys
 
 import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
@@ -21,19 +22,23 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
   const isElectric = bikeProfile?.fuelType === 'electric';
   const title = isElectric ? 'Record Battery Cost' : 'Record Fuel Cost';
 
-  // Load rider ID on mount
+  // Load rider ID on mount - PROPERLY AWAIT THE ASYNC FUNCTION
   useEffect(() => {
-    try {
-      const id = getLocalRiderId();
-      if (id) {
-        setLocalRiderId(id);
-        console.log('✅ FuelEntryScreen: Loaded rider ID:', id);
-      } else {
-        console.warn('⚠️ FuelEntryScreen: No rider ID found');
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId(); // ✅ AWAIT the async function
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ FuelEntryScreen: Loaded rider ID:', id);
+        } else {
+          console.warn('⚠️ FuelEntryScreen: No rider ID found');
+        }
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
       }
-    } catch (err) {
-      console.error('❌ Error loading rider ID:', err);
-    }
+    };
+    
+    loadRiderId();
   }, []);
 
   const effectiveRiderId = localRiderId || state?.riderId;
@@ -112,7 +117,7 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
         throw new Error('Failed to save to local storage');
       }
 
-      // ✅ UPDATE CACHE IMMEDIATELY (FIX: This was missing)
+      // ✅ UPDATE CACHE IMMEDIATELY
       updateFuelHistoryCache(offlineRecord);
 
       // Add to sync queue

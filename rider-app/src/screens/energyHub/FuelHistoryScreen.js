@@ -1,5 +1,6 @@
 // rider-app/src/screens/energyHub/FuelHistoryScreen.js
-// ✅ FIXED: Reconstructs from individual entries + focus listener for immediate display
+// ✅ CRITICAL FIX: Properly await getLocalRiderId() async function
+// Also reconstructs from individual entries for offline display
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, useFocusEffect } from 'react-native';
@@ -27,24 +28,28 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
 
   const isElectric = bikeProfile?.fuelType === 'electric';
 
-  // Load rider ID on mount
+  // Load rider ID on mount - PROPERLY AWAIT THE ASYNC FUNCTION
   useEffect(() => {
-    try {
-      const id = getLocalRiderId();
-      if (id) {
-        setLocalRiderId(id);
-        console.log('✅ FuelHistoryScreen: Loaded rider ID:', id);
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId(); // ✅ AWAIT the async function
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ FuelHistoryScreen: Loaded rider ID:', id);
+        }
+
+        // Check sync status
+        const hours = hoursSinceLastSync();
+        setHoursSinceSync(hours);
+
+        const queued = getQueuedRecords();
+        setQueuedCount(queued.length);
+      } catch (err) {
+        console.error('❌ Error loading initial state:', err);
       }
-
-      // Check sync status
-      const hours = hoursSinceLastSync();
-      setHoursSinceSync(hours);
-
-      const queued = getQueuedRecords();
-      setQueuedCount(queued.length);
-    } catch (err) {
-      console.error('❌ Error loading initial state:', err);
-    }
+    };
+    
+    loadRiderId();
   }, []);
 
   const effectiveRiderId = localRiderId || state?.riderId;
@@ -133,15 +138,17 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
           try {
             const items = JSON.parse(cachedDataStr);
             if (Array.isArray(items) && items.length > 0) {
-              setAllEntries(items);
-              setIsOffline(true);
-              setPage(1);
-              console.log(`✅ Loaded ${items.length} items from cache`);
+              if (isMounted) {
+                setAllEntries(items);
+                setIsOffline(true);
+                setPage(1);
+                console.log(`✅ Loaded ${items.length} items from cache`);
+              }
             } else {
               // Cache is empty, reconstruct from entries
               console.log('📋 Cache is empty, reconstructing from entries...');
               const reconstructed = reconstructHistoryFromIndividualEntries();
-              if (reconstructed.length > 0) {
+              if (isMounted && reconstructed.length > 0) {
                 setAllEntries(reconstructed);
                 setIsOffline(true);
                 setPage(1);
@@ -150,17 +157,17 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
           } catch (parseErr) {
             console.warn('⚠️ Cache parse error, trying individual entries');
             const reconstructed = reconstructHistoryFromIndividualEntries();
-            if (reconstructed.length > 0) {
+            if (isMounted && reconstructed.length > 0) {
               setAllEntries(reconstructed);
               setIsOffline(true);
               setPage(1);
             }
           }
         } else {
-          // ✅ NO CACHE: Reconstruct from individual entries (FIX: This was missing)
+          // ✅ NO CACHE: Reconstruct from individual entries
           console.log('📋 No cache found, reconstructing from individual entries...');
           const reconstructed = reconstructHistoryFromIndividualEntries();
-          if (reconstructed.length > 0) {
+          if (isMounted && reconstructed.length > 0) {
             setAllEntries(reconstructed);
             setIsOffline(true);
             setPage(1);
