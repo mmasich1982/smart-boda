@@ -242,6 +242,7 @@ export const enqueue = async (type, data) => {
 
     // Map type to endpoint (if needed by backend)
     const endpointMap = {
+      'bike_profile': '/api/bike-profile',
       'fuel_entry': '/api/fuel-entries',
       'battery_entry': '/api/battery-entries',
       'odometer_reading': '/api/odometer-readings',
