@@ -1,8 +1,8 @@
 // rider-app/src/screens/energyHub/FuelHistoryScreen.js
-// ✅ CORRECTED: Synchronous, proper caching, no Promises
+// ✅ FIXED: Reconstructs from individual entries + focus listener for immediate display
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, useFocusEffect } from 'react-native';
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
@@ -69,7 +69,47 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
     }
   }, []);
 
-  // Fetch history
+  /**
+   * ✅ RECONSTRUCT FROM ENTRIES: Fallback to scan individual fuel_entry_* records
+   * This ensures offline entries show immediately without waiting for API sync
+   */
+  const reconstructHistoryFromIndividualEntries = useCallback(() => {
+    try {
+      console.log('🔍 Reconstructing history from individual entries...');
+      const entries = [];
+      
+      // Get all keys that start with 'fuel_entry_'
+      const allKeys = LocalStore.listKeys('fuel_entry_');
+      console.log(`📋 Found ${allKeys.length} individual fuel entries`);
+      
+      for (const key of allKeys) {
+        try {
+          const value = LocalStore.get(key);
+          if (value) {
+            const entry = JSON.parse(value);
+            if (entry && entry.rider_id === effectiveRiderId) {
+              entries.push(entry);
+            }
+          }
+        } catch (parseErr) {
+          console.warn(`⚠️ Failed to parse entry ${key}`);
+        }
+      }
+      
+      // Sort by created_at (newest first)
+      entries.sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      
+      console.log(`✅ Reconstructed ${entries.length} entries from local storage`);
+      return entries;
+    } catch (err) {
+      console.error('❌ Error reconstructing entries:', err);
+      return [];
+    }
+  }, [effectiveRiderId]);
+
+  // Fetch history - with fallback to individual entries
   useEffect(() => {
     let isMounted = true;
 
@@ -97,13 +137,37 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
               setIsOffline(true);
               setPage(1);
               console.log(`✅ Loaded ${items.length} items from cache`);
+            } else {
+              // Cache is empty, reconstruct from entries
+              console.log('📋 Cache is empty, reconstructing from entries...');
+              const reconstructed = reconstructHistoryFromIndividualEntries();
+              if (reconstructed.length > 0) {
+                setAllEntries(reconstructed);
+                setIsOffline(true);
+                setPage(1);
+              }
             }
           } catch (parseErr) {
-            console.warn('⚠️ Cache parse error');
+            console.warn('⚠️ Cache parse error, trying individual entries');
+            const reconstructed = reconstructHistoryFromIndividualEntries();
+            if (reconstructed.length > 0) {
+              setAllEntries(reconstructed);
+              setIsOffline(true);
+              setPage(1);
+            }
+          }
+        } else {
+          // ✅ NO CACHE: Reconstruct from individual entries (FIX: This was missing)
+          console.log('📋 No cache found, reconstructing from individual entries...');
+          const reconstructed = reconstructHistoryFromIndividualEntries();
+          if (reconstructed.length > 0) {
+            setAllEntries(reconstructed);
+            setIsOffline(true);
+            setPage(1);
           }
         }
 
-        // Fetch fresh data
+        // Fetch fresh data from API
         console.log('📡 Fetching from API...');
         try {
           const response = await api.get('/fuel-maintenance/fuel-entry/history', {
@@ -120,7 +184,7 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
 
             setAllEntries(items);
 
-            // Update cache
+            // Update cache with fresh data
             LocalStore.set(cacheKey, JSON.stringify(items));
             setIsOffline(false);
             setPage(1);
@@ -134,8 +198,8 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
             url: apiErr.config?.url,
           });
 
-          // If we have no cache data and API failed
-          if (!allEntries.length) {
+          // If we have no data at all and API failed
+          if (!allEntries.length && isMounted) {
             setError('Failed to load history');
             setIsOffline(true);
           }
@@ -154,7 +218,43 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
 
     fetchHistory();
     return () => { isMounted = false; };
-  }, [effectiveRiderId]);
+  }, [effectiveRiderId, reconstructHistoryFromIndividualEntries]);
+
+  /**
+   * ✅ FOCUS LISTENER: Refresh data when screen comes into focus
+   * Ensures new entries are visible after returning from FuelEntryScreen
+   */
+  useFocusEffect(
+    useCallback(() => {
+      console.log('👁️ FuelHistoryScreen focused, refreshing sync status...');
+      
+      try {
+        // Update sync status
+        const hours = hoursSinceLastSync();
+        setHoursSinceSync(hours);
+
+        const queued = getQueuedRecords();
+        setQueuedCount(queued.length);
+
+        // Check if we need to reload from local entries
+        const cacheKey = `fuel_history_${effectiveRiderId}`;
+        const cachedDataStr = LocalStore.get(cacheKey);
+        
+        // If no cache, reconstruct (picks up newly added entries)
+        if (!cachedDataStr && effectiveRiderId) {
+          console.log('🔄 Reloading from individual entries...');
+          const reconstructed = reconstructHistoryFromIndividualEntries();
+          if (reconstructed.length > 0) {
+            setAllEntries(reconstructed);
+            setIsOffline(true);
+            setPage(1);
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ Error in focus effect:', err);
+      }
+    }, [effectiveRiderId, reconstructHistoryFromIndividualEntries])
+  );
 
   // Filter by period
   useEffect(() => {

@@ -1,5 +1,5 @@
 // rider-app/src/screens/energyHub/FuelEntryScreen.js
-// ✅ CORRECTED: Synchronous, proper error handling, no Promises
+// ✅ FIXED: Cache invalidation on save + Updates fuel_history cache immediately
 
 import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet } from 'react-native';
@@ -38,6 +38,46 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
+  /**
+   * ✅ UPDATE CACHE: Add new entry to the fuel_history cache
+   * This ensures FuelHistoryScreen displays the entry immediately
+   */
+  const updateFuelHistoryCache = (offlineRecord) => {
+    try {
+      const cacheKey = `fuel_history_${effectiveRiderId}`;
+      
+      // Get existing cache
+      const cachedDataStr = LocalStore.get(cacheKey);
+      let items = [];
+      
+      if (cachedDataStr) {
+        try {
+          items = JSON.parse(cachedDataStr);
+          if (!Array.isArray(items)) items = [];
+        } catch (parseErr) {
+          console.warn('⚠️ Cache parse error, starting fresh');
+          items = [];
+        }
+      }
+      
+      // Add new entry to front (most recent first)
+      items.unshift(offlineRecord);
+      
+      // Limit cache to 100 entries (API also limits to 100)
+      items = items.slice(0, 100);
+      
+      // Save updated cache
+      const success = LocalStore.set(cacheKey, JSON.stringify(items));
+      if (success) {
+        console.log(`✅ Updated fuel_history cache with new entry`);
+      } else {
+        console.warn('⚠️ Failed to update fuel_history cache');
+      }
+    } catch (err) {
+      console.error('❌ Error updating cache:', err);
+    }
+  };
+
   const handleSave = async () => {
     try {
       // Validation
@@ -71,6 +111,9 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
       if (!localSaveSuccess) {
         throw new Error('Failed to save to local storage');
       }
+
+      // ✅ UPDATE CACHE IMMEDIATELY (FIX: This was missing)
+      updateFuelHistoryCache(offlineRecord);
 
       // Add to sync queue
       const queueSuccess = await addToSyncQueue({
@@ -109,7 +152,7 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
         // This is OK - data is queued locally
       }
 
-      // Navigate after delay
+      // Navigate after delay to FuelHistory (which will now show the new entry)
       setTimeout(() => {
         navigation.navigate('FuelHistory');
       }, 1000);
