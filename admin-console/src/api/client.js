@@ -37,6 +37,18 @@ const api = axios.create({
   withCredentials: false,
 });
 
+// Add this NEW block (after axios.create, before interceptors):
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('adminToken');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
 // ============================================================================
 // REQUEST INTERCEPTOR - Add debugging for failed requests
 // ============================================================================
@@ -109,13 +121,5 @@ api.interceptors.response.use(
   }
 );
 
-// Add this interceptor (insert before export default api):
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('adminToken');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
 
 export default api;
