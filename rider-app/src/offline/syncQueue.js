@@ -220,3 +220,60 @@ export const getSyncStats = () => {
     };
   }
 };
+
+/**
+ * ✅ ENQUEUE FUNCTION: Main entry point for queuing offline operations
+ * Used by screens like FuelEntryScreen, SendMoneyHomeScreen, etc.
+ * Signature: enqueue(type, data) -> creates record with auto-generated id
+ * 
+ * @param {string} type - Type of record (fuel_entry, compliance_document, etc.)
+ * @param {object} data - Data object to enqueue
+ * @returns {Promise<boolean>} - True if queued successfully
+ */
+export const enqueue = async (type, data) => {
+  try {
+    if (!type || !data) {
+      console.error('enqueue: Missing type or data');
+      return false;
+    }
+
+    // Generate unique ID based on type and timestamp
+    const id = `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Map type to endpoint (if needed by backend)
+    const endpointMap = {
+      'fuel_entry': '/api/fuel-entries',
+      'battery_entry': '/api/battery-entries',
+      'odometer_reading': '/api/odometer-readings',
+      'maintenance_entry': '/api/maintenance-entries',
+      'compliance_document': '/api/compliance-documents',
+      'remittance': '/api/remittances',
+      'trip': '/api/trips',
+    };
+
+    const endpoint = endpointMap[type] || `/api/${type}`;
+
+    const record = {
+      id,
+      type,
+      endpoint,
+      data,
+      timestamp: new Date().toISOString(),
+      retries: 0,
+    };
+
+    // Add to queue
+    const result = await addToSyncQueue(record);
+    
+    if (result) {
+      console.log(`✅ enqueue: Queued ${type} for sync`);
+    } else {
+      console.error(`❌ enqueue: Failed to queue ${type}`);
+    }
+
+    return result;
+  } catch (err) {
+    console.error('enqueue error:', err);
+    return false;
+  }
+};
