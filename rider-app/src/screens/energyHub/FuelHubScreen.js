@@ -154,7 +154,6 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
       <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
       
       <Text style={styles.title}>{title}</Text>
-      <Text style={styles.subtitle}>{subtitle}</Text>
 
       {/* CRITICAL ERROR ONLY - Never show status/offline info */}
       {criticalError && (
@@ -165,23 +164,6 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
           </TouchableOpacity>
         </View>
       )}
-
-      {/* Summary Card - Clean, no clutter */}
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Total Spent</Text>
-            <Text style={styles.summaryValue}>
-              KSh {totalSpent.toLocaleString()}
-            </Text>
-          </View>
-          <View style={styles.summaryDivider} />
-          <View style={styles.summaryItem}>
-            <Text style={styles.summaryLabel}>Entries</Text>
-            <Text style={styles.summaryValue}>{entriesCount}</Text>
-          </View>
-        </View>
-      </View>
 
       {/* Action Buttons - Clean design */}
       <TouchableOpacity 
@@ -203,16 +185,6 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
           {isElectric ? '📊 Battery History →' : '📊 Fuel History →'}
         </Text>
       </TouchableOpacity>
-
-      {/* Info Card - No status, just helpful hints */}
-      <View style={styles.infoCard}>
-        <Text style={styles.infoTitle}>💡 Quick Tips</Text>
-        <Text style={styles.infoText}>
-          {isElectric 
-            ? '• Record each battery charging session\n• Track your battery management expenses\n• Review history to optimize charging'
-            : '• Record fuel purchases immediately\n• Keep track of refueling patterns\n• Monitor fuel costs over time'}
-        </Text>
-      </View>
     </ScrollView>
   );
 }
@@ -231,13 +203,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     paddingHorizontal: 20,
     marginTop: 16
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#5b606c',
-    fontWeight: '500',
-    paddingHorizontal: 20,
-    marginBottom: 24
   },
   
   // CRITICAL ERROR ONLY - No status banners
@@ -265,49 +230,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textDecorationLine: 'underline',
     marginLeft: 12
-  },
-
-  // Clean summary card
-  summaryCard: {
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 16,
-    padding: 20,
-    marginHorizontal: 20,
-    marginBottom: 24,
-    shadowColor: '#000',
-    shadowOpacity: 0.04,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 }
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center'
-  },
-  summaryItem: {
-    flex: 1,
-    alignItems: 'center'
-  },
-  summaryDivider: {
-    width: 1,
-    height: 40,
-    backgroundColor: '#e7e4db',
-    marginHorizontal: 16
-  },
-  summaryLabel: {
-    fontSize: 11,
-    color: '#5b606c',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.04,
-    marginBottom: 8
-  },
-  summaryValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1a1c20'
   },
 
   // Primary action button
@@ -348,28 +270,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#ff7a1a'
-  },
-
-  // Info card - helpful, not status
-  infoCard: {
-    backgroundColor: '#fef9f0',
-    borderWidth: 1.5,
-    borderColor: '#f5e6d3',
-    borderRadius: 14,
-    padding: 16,
-    marginHorizontal: 20,
-    marginBottom: 24
-  },
-  infoTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 10
-  },
-  infoText: {
-    fontSize: 12,
-    color: '#5b606c',
-    fontWeight: '500',
-    lineHeight: 18
   }
 });
