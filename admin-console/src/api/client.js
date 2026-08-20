@@ -34,7 +34,7 @@ const api = axios.create({
   // issued by the backend (see backend/app/auth.py) instead of localStorage -- this just
   // tells the browser to send/accept that cookie on cross-origin requests. No token is
   // ever read or attached by JS here.
-  withCredentials: true,
+  withCredentials: false,
 });
 
 // ============================================================================
@@ -108,5 +108,14 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// Add this interceptor (insert before export default api):
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('adminToken');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 export default api;

@@ -36,6 +36,7 @@ export default function LoginPage() {
       });
       
       // ✅ FIXED: Now backend returns name, role, email
+	  localStorage.setItem('adminToken', response.data.token);  // ← Add this
       console.log('✓ Login successful, setting session...');
       setSession({ 
         id: data.id,

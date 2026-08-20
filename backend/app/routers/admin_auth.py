@@ -60,6 +60,7 @@ def admin_login(payload: LoginRequest, response: Response, db: Session = Depends
     # ✅ Return admin data for frontend session initialization
     return {
         "message": "Login successful",
+        "token": token,
         "id": str(admin.id),
         "name": admin.name,
         "email": admin.email,
