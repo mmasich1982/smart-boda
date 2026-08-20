@@ -1,13 +1,16 @@
 // rider-app/src/screens/serviceHub/MaintenanceEntryScreen.js
-// ✅ FIXED: Service type tiles with conditional fields for dated services
-// ✅ FIXED: Proper service type code mapping (oil_change, not Oil Change)
+// ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, clean UI, immediate feedback
+// Automatic cache update for instant history display
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, Picker, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
+import LocalStore from '../../offline/LocalStore';
+import { addToSyncQueue } from '../../offline/syncQueue';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 
 const SERVICE_TYPES = [
   { code: 'oil_change', display: 'Oil Change', icon: '🛢️', isDated: true },
@@ -26,95 +29,247 @@ export default function MaintenanceEntryScreen({ navigation }) {
   const [selectedOilType, setSelectedOilType] = useState('');
   const [cost, setCost] = useState('');
   const [odometer, setOdometer] = useState('');
-  const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [successMessage, setSuccessMessage] = useState('');
+  
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
   const selectedService = SERVICE_TYPES.find(s => s.code === selectedServiceType);
   const isDatedService = selectedService?.isDated || false;
 
+  // Load rider ID on mount
   useEffect(() => {
-    async function loadRiderId() {
+    const loadRiderId = async () => {
       try {
         const id = await getLocalRiderId();
-        setLocalRiderId(id);
-        setLoading(false);
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ MaintenanceEntry: Loaded rider ID:', id);
+        }
       } catch (err) {
-        console.error('Error loading riderId:', err);
-        setLoading(false);
+        console.error('❌ Error loading rider ID:', err);
       }
-    }
+    };
+    
     loadRiderId();
   }, []);
 
+  // Load oil types (cache locally)
   useEffect(() => {
-    api.get('/fuel-maintenance/oil-types')
-      .then(res => {
-        setOilTypes(res.data?.oil_types || []);
-      })
-      .catch(err => console.error('Failed to load oil types:', err));
-  }, []);
+    const loadOilTypes = async () => {
+      try {
+        // Try cache first
+        const cached = LocalStore.get('oil_types_cache');
+        if (cached) {
+          try {
+            setOilTypes(JSON.parse(cached));
+            console.log('✅ Loaded oil types from cache');
+          } catch (e) {
+            console.warn('Cache parse error, fetching fresh');
+          }
+        }
+
+        // Try to fetch fresh data if online
+        if (isConnected && isInitialized) {
+          try {
+            const response = await api.get('/fuel-maintenance/oil-types');
+            const types = response.data?.oil_types || [];
+            setOilTypes(types);
+            LocalStore.set('oil_types_cache', JSON.stringify(types));
+            console.log('✅ Fetched and cached oil types');
+          } catch (err) {
+            console.warn('⚠️ Failed to fetch oil types:', err.message);
+            // Use cached data if available
+          }
+        }
+      } catch (err) {
+        console.error('❌ Error loading oil types:', err);
+      }
+    };
+
+    loadOilTypes();
+  }, [isConnected, isInitialized]);
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  const handleSave = useCallback(async () => {
-    setError('');
-
-    if (!selectedServiceType) {
-      setError('Select a service type.');
-      return;
-    }
-
-    if (!cost || parseFloat(cost) <= 0) {
-      setError('Enter the service cost, greater than zero.');
-      return;
-    }
-
-    if (!effectiveRiderId) {
-      setError('Rider information not found. Please return to home.');
-      return;
-    }
-
-    if (isDatedService) {
-      if (!odometer || parseFloat(odometer) <= 0) {
-        setError('Enter the odometer reading at time of service.');
-        return;
-      }
-      if (!selectedOilType) {
-        setError('Select an Oil Type — this drives the next service reminder.');
-        return;
-      }
-    }
-
-    const requestBody = {
-      service_type_code: selectedServiceType,
-      cost: parseFloat(cost),
-    };
-
-    if (isDatedService) {
-      requestBody.odometer_reading = parseFloat(odometer);
-      requestBody.oil_type_code = selectedOilType;
-    }
-
-    setSaving(true);
+  /**
+   * ✅ UPDATE CACHE: Add new entry to maintenance_history cache
+   * This ensures MaintenanceHistoryScreen displays the entry immediately
+   */
+  const updateMaintenanceHistoryCache = (offlineRecord) => {
     try {
-      await api.post(`/fuel-maintenance/maintenance-entry?rider_id=${effectiveRiderId}`, requestBody);
-
-      // ✅ Auto-redirect to history
-      navigation.navigate('MaintenanceHistory');
+      const cacheKey = `maintenance_history_${effectiveRiderId}`;
+      
+      // Get existing cache
+      const cachedDataStr = LocalStore.get(cacheKey);
+      let items = [];
+      
+      if (cachedDataStr) {
+        try {
+          items = JSON.parse(cachedDataStr);
+          if (!Array.isArray(items)) items = [];
+        } catch (parseErr) {
+          console.warn('⚠️ Cache parse error, starting fresh');
+          items = [];
+        }
+      }
+      
+      // Add new entry to front (most recent first)
+      items.unshift(offlineRecord);
+      
+      // Limit cache to 100 entries (API also limits to 50)
+      items = items.slice(0, 100);
+      
+      // Save updated cache
+      const success = LocalStore.set(cacheKey, JSON.stringify(items));
+      if (success) {
+        console.log(`✅ Updated maintenance_history cache with new entry`);
+      }
     } catch (err) {
-      console.error('Save error:', err);
-      setError(err.response?.data?.detail || err.response?.data?.message || 'Failed to save entry. Please try again.');
+      console.error('❌ Error updating cache:', err);
+    }
+  };
+
+  const handleSave = async () => {
+    try {
+      // Validation
+      if (!selectedServiceType) {
+        showCriticalError('Select a service type', 'validation');
+        return;
+      }
+
+      if (!cost || parseFloat(cost) <= 0) {
+        showCriticalError('Please enter a valid cost amount', 'validation');
+        return;
+      }
+
+      if (isDatedService) {
+        if (!odometer || parseFloat(odometer) <= 0) {
+          showCriticalError('Enter the odometer reading at time of service', 'validation');
+          return;
+        }
+        if (!selectedOilType) {
+          showCriticalError('Select an Oil Type', 'validation');
+          return;
+        }
+      }
+
+      if (!effectiveRiderId) {
+        showCriticalError('Rider ID not available. Please restart the app.', 'auth');
+        console.error('❌ No effective rider ID');
+        return;
+      }
+
+      setSaving(true);
+      clearCriticalError();
+      setSuccessMessage('');
+
+      const payload = {
+        service_type_code: selectedServiceType,
+        cost: parseFloat(cost),
+        created_at: new Date().toISOString(),
+      };
+
+      if (isDatedService) {
+        payload.odometer_reading = parseFloat(odometer);
+        payload.oil_type_code = selectedOilType;
+      }
+
+      const recordId = `maintenance_${effectiveRiderId}_${Date.now()}`;
+      const offlineRecord = { 
+        ...payload, 
+        id: recordId, 
+        rider_id: effectiveRiderId,
+        service_type: selectedServiceType,
+        oil_type: oilTypes.find(o => o.code === selectedOilType)?.name || null
+      };
+
+      console.log('💾 Saving entry:', { recordId, riderId: effectiveRiderId, cost });
+
+      // ALWAYS save locally first
+      const localSaveSuccess = LocalStore.set(
+        `maintenance_entry_${recordId}`, 
+        JSON.stringify(offlineRecord)
+      );
+      
+      if (!localSaveSuccess) {
+        showCriticalError('Failed to save locally. Storage may be full.', 'storage');
+        setSaving(false);
+        return;
+      }
+
+      // Update cache immediately for instant UI feedback
+      updateMaintenanceHistoryCache(offlineRecord);
+
+      // Add to sync queue for background sync
+      const queueSuccess = await addToSyncQueue({
+        id: recordId,
+        type: 'maintenance_entry',
+        endpoint: `/fuel-maintenance/maintenance-entry?rider_id=${effectiveRiderId}`,
+        data: payload,
+        timestamp: new Date(),
+      });
+
+      if (!queueSuccess) {
+        console.warn('⚠️ Failed to add to queue, but local save succeeded');
+      }
+
+      // Try to sync immediately only if online
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Attempting to sync to API...');
+          const response = await api.post(
+            `/fuel-maintenance/maintenance-entry?rider_id=${effectiveRiderId}`,
+            payload
+          );
+
+          if (response.status === 200 || response.status === 201) {
+            console.log('✅ Synced successfully to API');
+            // Success - show brief confirmation
+            setSuccessMessage(`Service cost recorded!`);
+            
+            // Navigate after brief success message
+            setTimeout(() => {
+              navigation.navigate('MaintenanceHistory');
+            }, 800);
+            return;
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API sync failed (will retry later):', {
+            status: apiErr.response?.status,
+            message: apiErr.message,
+          });
+          // API failed but data is saved and queued - that's okay
+        }
+      }
+
+      // Either offline or API sync failed - but data is safely stored
+      // Show success and navigate
+      setSuccessMessage(`Service cost saved. Syncing...`);
+      
+      setTimeout(() => {
+        navigation.navigate('MaintenanceHistory');
+      }, 800);
+
+    } catch (err) {
+      console.error('❌ Save error:', err);
+      showCriticalError(
+        err.response?.data?.detail || 'Failed to save entry. Please try again.',
+        'save_error'
+      );
     } finally {
       setSaving(false);
     }
-  }, [selectedServiceType, cost, odometer, selectedOilType, isDatedService, effectiveRiderId, navigation]);
+  };
 
-  if (loading) {
+  if (!effectiveRiderId || !isInitialized) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#ff7a1a" />
-      </View>
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label="← Back" />
+        <Text style={styles.title}>Record Service Cost</Text>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+      </ScrollView>
     );
   }
 
@@ -123,13 +278,22 @@ export default function MaintenanceEntryScreen({ navigation }) {
       <BackLink onPress={() => navigation.goBack()} label="← Back" />
       <Text style={styles.title}>Record Service Cost</Text>
 
-      {error && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>{error}</Text>
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>{criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.dismissText}>Dismiss</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* Service Type Tiles - Grid layout */}
+      {successMessage && !saving && (
+        <View style={styles.successBanner}>
+          <Text style={styles.successBannerText}>✅ {successMessage}</Text>
+        </View>
+      )}
+
+      {/* Service Type Tiles */}
       <Text style={styles.label}>Service Type <Text style={styles.required}>*</Text></Text>
       <View style={styles.tileGrid}>
         {SERVICE_TYPES.map((serviceType) => (
@@ -138,7 +302,7 @@ export default function MaintenanceEntryScreen({ navigation }) {
             style={[styles.tile, selectedServiceType === serviceType.code && styles.tileSelected]}
             onPress={() => {
               setSelectedServiceType(serviceType.code);
-              setError('');
+              clearCriticalError();
               // Reset dated fields when switching service type
               if (!serviceType.isDated) {
                 setOdometer('');
@@ -190,17 +354,7 @@ export default function MaintenanceEntryScreen({ navigation }) {
               onChangeText={setOdometer}
               editable={!saving}
             />
-            <Text style={styles.hint}>ℹ️ Enter today's reading. Next service odometer will be auto-calculated.</Text>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.labelSecondary}>Next Service Due <Text style={styles.hint}>(auto-calculated)</Text></Text>
-            <Text style={styles.hint}>
-              Enter the odometer reading and pick an Oil Type to calculate this.
-            </Text>
-            <Text style={[styles.hint, { marginTop: 6, fontStyle: 'italic' }]}>
-              This is a reminder only, based on mileage — we'll alert you as you get closer, but it never stops you from changing the oil earlier.
-            </Text>
+            <Text style={styles.hint}>Enter today's reading. Next service odometer will be auto-calculated.</Text>
           </View>
         </>
       )}
@@ -214,9 +368,13 @@ export default function MaintenanceEntryScreen({ navigation }) {
           placeholderTextColor="#b0a89d"
           keyboardType="decimal-pad"
           value={cost}
-          onChangeText={setCost}
+          onChangeText={(val) => {
+            setCost(val);
+            clearCriticalError();
+          }}
           editable={!saving}
         />
+        <Text style={styles.hint}>Enter amount in KSh</Text>
       </View>
 
       <TouchableOpacity
@@ -227,23 +385,88 @@ export default function MaintenanceEntryScreen({ navigation }) {
         ]}
         onPress={handleSave}
         disabled={saving || !selectedServiceType || !cost || (isDatedService && (!odometer || !selectedOilType))}
+        activeOpacity={0.8}
       >
-        <Text style={styles.primaryBtnText}>{saving ? 'Saving...' : 'Record Service Cost →'}</Text>
+        <View style={styles.btnContent}>
+          {saving && (
+            <ActivityIndicator 
+              size="small" 
+              color="#fff" 
+              style={styles.btnSpinner}
+            />
+          )}
+          <Text style={styles.primaryBtnText}>
+            {saving ? 'Saving...' : `Record Service Cost →`}
+          </Text>
+        </View>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#f6f4ef' },
-  title: { fontFamily: 'SpaceGrotesk-Bold', fontSize: 22, fontWeight: '700', color: '#1a1c20', marginBottom: 20 },
+  container: { 
+    flex: 1, 
+    padding: 20, 
+    backgroundColor: '#f6f4ef' 
+  },
+  title: { 
+    fontFamily: 'SpaceGrotesk-Bold', 
+    fontSize: 22, 
+    fontWeight: '700', 
+    color: '#1a1c20', 
+    marginBottom: 20 
+  },
+  
+  criticalErrorBanner: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1.5,
+    borderColor: '#f6cac7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  criticalErrorText: {
+    fontSize: 12,
+    color: '#a5312c',
+    fontWeight: '600',
+    flex: 1
+  },
+  dismissText: {
+    fontSize: 11,
+    color: '#a5312c',
+    fontWeight: '700',
+    marginLeft: 12
+  },
 
-  errorBanner: { backgroundColor: '#fdecea', borderWidth: 1.5, borderColor: '#f6cac7', borderRadius: 14, padding: 12, marginBottom: 14 },
-  errorBannerText: { fontSize: 11.5, color: '#a5312c', fontWeight: '600' },
+  successBanner: {
+    backgroundColor: '#e8f5e9',
+    borderWidth: 1.5,
+    borderColor: '#a5d6a7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16
+  },
+  successBannerText: {
+    fontSize: 12,
+    color: '#2e7d32',
+    fontWeight: '600'
+  },
 
-  label: { fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.04, color: '#5b606c', marginBottom: 12 },
-  labelSecondary: { fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.04, color: '#5b606c', marginBottom: 6 },
-  required: { color: '#e5650a' },
+  label: { 
+    fontSize: 11.5, 
+    fontWeight: '700', 
+    textTransform: 'uppercase', 
+    letterSpacing: 0.04, 
+    color: '#5b606c', 
+    marginBottom: 12 
+  },
+  required: { 
+    color: '#e5650a' 
+  },
 
   // Tile Grid Layout
   tileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 24 },
@@ -265,13 +488,56 @@ const styles = StyleSheet.create({
   tileLbl: { fontSize: 12, fontWeight: '600', color: '#5b606c', textAlign: 'center' },
   tileLblSelected: { color: '#ff7a1a' },
 
-  field: { marginBottom: 16 },
-  input: { width: '100%', padding: 13, borderRadius: 12, borderWidth: 1.5, borderColor: '#e7e4db', fontSize: 15, backgroundColor: '#fff', color: '#1a1c20' },
+  field: { 
+    marginBottom: 16 
+  },
+  input: { 
+    width: '100%', 
+    padding: 13, 
+    borderRadius: 12, 
+    borderWidth: 1.5, 
+    borderColor: '#e7e4db', 
+    fontSize: 15, 
+    backgroundColor: '#fff', 
+    color: '#1a1c20',
+    marginBottom: 8
+  },
   pickerContainer: { borderWidth: 1.5, borderColor: '#e7e4db', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' },
   picker: { height: 50, color: '#1a1c20' },
-  hint: { fontSize: 11.5, color: '#5b606c', lineHeight: 18, marginTop: 6 },
+  hint: { 
+    fontSize: 11.5, 
+    color: '#5b606c', 
+    fontWeight: '500' 
+  },
 
-  primaryBtn: { backgroundColor: '#ff7a1a', borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginBottom: 10, shadowColor: '#ff7a1a', shadowOpacity: 0.55, shadowRadius: 16, shadowOffset: { width: 0, height: 6 } },
-  primaryBtnDisabled: { backgroundColor: '#e9dccc', shadowOpacity: 0 },
-  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  primaryBtn: { 
+    backgroundColor: '#ff7a1a', 
+    borderRadius: 14, 
+    paddingVertical: 16, 
+    alignItems: 'center', 
+    marginBottom: 16,
+    shadowColor: '#ff7a1a', 
+    shadowOpacity: 0.35, 
+    shadowRadius: 12, 
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6
+  },
+  primaryBtnDisabled: { 
+    backgroundColor: '#e9dccc', 
+    shadowOpacity: 0 
+  },
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  btnSpinner: {
+    marginRight: 10
+  },
+  primaryBtnText: { 
+    color: '#fff', 
+    fontSize: 16, 
+    fontWeight: '700',
+    letterSpacing: 0.02
+  }
 });

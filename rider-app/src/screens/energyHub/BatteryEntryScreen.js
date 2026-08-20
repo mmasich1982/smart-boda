@@ -1,340 +1,378 @@
 // rider-app/src/screens/energyHub/BatteryEntryScreen.js
-// ✅ Offline-First Pattern 2: Record Data Entry
-// ✅ Principle 1: LocalStore First - Cache swap partners
-// ✅ Principle 2: Offline Repositories - Uses sync queue
-// ✅ Principle 3: getLocalRiderId Always
-// ✅ Principle 4: API with Fallback - Try fetch, fallback to cache
-// ✅ Principle 5: Sync Queue - Queue battery entries for offline sync
+// ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, clean UI, immediate feedback
+// Automatic cache update for instant history display
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, Picker, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
 import LocalStore from '../../offline/LocalStore';
 import { addToSyncQueue } from '../../offline/syncQueue';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 
-export default function BatteryEntryScreen({ navigation }) {
+export default function BatteryEntryScreen({ bikeProfile, navigation }) {
   const { state } = useRider();
   const [localRiderId, setLocalRiderId] = useState(null);
-  const [mode, setMode] = useState('swap');
-  const [swapPartners, setSwapPartners] = useState([]);
-  const [selectedPartner, setSelectedPartner] = useState('');
-  const [swapCost, setSwapCost] = useState('');
-  const [chargingCost, setChargingCost] = useState('');
-  const [odometer, setOdometer] = useState('');
-  const [error, setError] = useState('');
+  const [totalCost, setTotalCost] = useState('');
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [isOffline, setIsOffline] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
-  // ✅ Principle 3: Get rider ID from offline database
+  const isBattery = bikeProfile?.fuelType === 'electric' || bikeProfile?.type === 'electric';
+  const title = isBattery ? 'Record Battery Cost' : 'Record Charging Cost';
+
+  // Load rider ID on mount
   useEffect(() => {
-    async function loadRiderId() {
+    const loadRiderId = async () => {
       try {
         const id = await getLocalRiderId();
-        setLocalRiderId(id);
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ BatteryEntry: Loaded rider ID:', id);
+        }
       } catch (err) {
-        console.error('Error loading riderId:', err);
+        console.error('❌ Error loading rider ID:', err);
       }
-    }
+    };
+    
     loadRiderId();
-  }, []);
-
-  // ✅ Pattern 1: Load Data - Principle 4: API with Fallback
-  // Load swap partners from API with cache fallback
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadSwapPartners() {
-      try {
-        setLoading(true);
-        // Try to fetch from API
-        const response = await api.get('/fuel-maintenance/swap-partners');
-        const partners = response.data?.swap_partners || [];
-
-        if (isMounted) {
-          setSwapPartners(partners);
-          // ✅ Principle 1: Cache in LocalStore for offline use
-          LocalStore.set('swap_partners_cache', JSON.stringify(partners));
-          setIsOffline(false);
-          setError('');
-        }
-      } catch (err) {
-        console.error('Failed to load swap partners:', err);
-        
-        // ✅ Principle 4: Fallback to cache on network error
-        if (err.response?.status === 0 || err.message.includes('Network')) {
-          try {
-            const cached = LocalStore.get('swap_partners_cache');
-            if (cached && isMounted) {
-              setSwapPartners(JSON.parse(cached));
-              setIsOffline(true);
-            }
-          } catch (e) {
-            console.error('Cache load failed:', e);
-          }
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    }
-
-    loadSwapPartners();
-    return () => { isMounted = false; };
   }, []);
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  const handlePartnerChange = useCallback((partnerId) => {
-    setSelectedPartner(partnerId);
-    const partner = swapPartners.find(p => p.id === partnerId);
-    if (partner && partner.default_fee) {
-      setSwapCost(partner.default_fee.toString());
-    } else {
-      setSwapCost('');
-    }
-  }, [swapPartners]);
-
-  // ✅ Pattern 2: Record Data Entry - Principle 5: Sync Queue
-  const handleSave = useCallback(async () => {
-    setError('');
-
-    if (!odometer || parseFloat(odometer) <= 0) {
-      setError('Please enter the current odometer reading.');
-      return;
-    }
-
-    if (!effectiveRiderId) {
-      setError('Rider information not found. Please return to home.');
-      return;
-    }
-
-    if (mode === 'swap') {
-      if (!selectedPartner) {
-        setError('Select a Swap Network.');
-        return;
-      }
-      if (!swapCost || parseFloat(swapCost) <= 0) {
-        setError('Please enter the swap cost.');
-        return;
-      }
-    } else {
-      if (!chargingCost || parseFloat(chargingCost) <= 0) {
-        setError('Please enter the charging cost.');
-        return;
-      }
-    }
-
-    const requestBody = {
-      mode: mode,
-      cost: parseFloat(mode === 'swap' ? swapCost : chargingCost),
-      odometer_reading: parseFloat(odometer),
-      created_at: new Date().toISOString(),
-    };
-
-    if (mode === 'swap') {
-      requestBody.swap_partner_id = selectedPartner;
-    }
-
-    setSaving(true);
+  /**
+   * ✅ UPDATE CACHE: Add new entry to battery_history cache
+   * This ensures BatteryHistoryScreen displays the entry immediately
+   */
+  const updateBatteryHistoryCache = (offlineRecord) => {
     try {
-      // ✅ Principle 1 & 2: Save to offline database first
-      const recordId = `battery_${effectiveRiderId}_${Date.now()}`;
-      const offlineRecord = { ...requestBody, id: recordId, rider_id: effectiveRiderId };
+      const cacheKey = `battery_history_${effectiveRiderId}`;
       
-      // Store locally
-      LocalStore.set(`battery_entry_${recordId}`, JSON.stringify(offlineRecord));
+      // Get existing cache
+      const cachedDataStr = LocalStore.get(cacheKey);
+      let items = [];
+      
+      if (cachedDataStr) {
+        try {
+          items = JSON.parse(cachedDataStr);
+          if (!Array.isArray(items)) items = [];
+        } catch (parseErr) {
+          console.warn('⚠️ Cache parse error, starting fresh');
+          items = [];
+        }
+      }
+      
+      // Add new entry to front (most recent first)
+      items.unshift(offlineRecord);
+      
+      // Limit cache to 100 entries (API also limits to 100)
+      items = items.slice(0, 100);
+      
+      // Save updated cache
+      const success = LocalStore.set(cacheKey, JSON.stringify(items));
+      if (success) {
+        console.log(`✅ Updated battery_history cache with new entry`);
+      }
+    } catch (err) {
+      console.error('❌ Error updating cache:', err);
+    }
+  };
 
-      // ✅ Principle 5: Add to sync queue for later sync
-      await addToSyncQueue({
+  const handleSave = async () => {
+    try {
+      // Validation
+      if (!totalCost || parseFloat(totalCost) <= 0) {
+        showCriticalError('Please enter a valid cost amount', 'validation');
+        return;
+      }
+
+      if (!effectiveRiderId) {
+        showCriticalError('Rider ID not available. Please restart the app.', 'auth');
+        console.error('❌ No effective rider ID');
+        return;
+      }
+
+      setSaving(true);
+      clearCriticalError();
+      setSuccessMessage('');
+
+      const payload = {
+        mode: 'charging',
+        cost: parseFloat(totalCost),
+        created_at: new Date().toISOString(),
+      };
+
+      const recordId = `battery_${effectiveRiderId}_${Date.now()}`;
+      const offlineRecord = { ...payload, id: recordId, rider_id: effectiveRiderId };
+
+      console.log('💾 Saving entry:', { recordId, riderId: effectiveRiderId, cost: totalCost });
+
+      // ALWAYS save locally first
+      const localSaveSuccess = LocalStore.set(
+        `battery_entry_${recordId}`, 
+        JSON.stringify(offlineRecord)
+      );
+      
+      if (!localSaveSuccess) {
+        showCriticalError('Failed to save locally. Storage may be full.', 'storage');
+        setSaving(false);
+        return;
+      }
+
+      // Update cache immediately for instant UI feedback
+      updateBatteryHistoryCache(offlineRecord);
+
+      // Add to sync queue for background sync
+      const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'battery_entry',
         endpoint: `/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`,
-        data: requestBody,
+        data: payload,
         timestamp: new Date(),
       });
 
-      // Try to sync immediately (Principle 4: API with Fallback)
-      try {
-        await api.post(`/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`, requestBody);
-        
-        // ✅ Record as expense in financial tracking
-        const expenseType = mode === 'swap' ? 'Battery Swap' : 'Battery Charging';
-        await api.post(`/financial/expense?rider_id=${effectiveRiderId}`, {
-          expense_type: expenseType,
-          amount: parseFloat(mode === 'swap' ? swapCost : chargingCost),
-          description: expenseType,
-        }).catch(err => console.warn('Expense tracking failed:', err));
-
-        setIsOffline(false);
-        setError('');
-        // ✅ Auto-redirect to history
-        navigation.navigate('BatteryHistory');
-      } catch (apiErr) {
-        // Network error - data already saved offline and queued
-        console.warn('API sync failed, using offline queue:', apiErr);
-        setIsOffline(true);
-        // Still navigate to history - data will sync when online
-        setTimeout(() => {
-          navigation.navigate('BatteryHistory');
-        }, 1500);
+      if (!queueSuccess) {
+        console.warn('⚠️ Failed to add to queue, but local save succeeded');
       }
+
+      // Try to sync immediately only if online
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Attempting to sync to API...');
+          const response = await api.post(
+            `/fuel-maintenance/fuel-entry?rider_id=${effectiveRiderId}`,
+            payload
+          );
+
+          if (response.status === 200 || response.status === 201) {
+            console.log('✅ Synced successfully to API');
+            // Success - show brief confirmation
+            setSuccessMessage(`Battery cost recorded!`);
+            
+            // Navigate after brief success message
+            setTimeout(() => {
+              navigation.navigate('BatteryHistory');
+            }, 800);
+            return;
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API sync failed (will retry later):', {
+            status: apiErr.response?.status,
+            message: apiErr.message,
+          });
+          // API failed but data is saved and queued - that's okay
+        }
+      }
+
+      // Either offline or API sync failed - but data is safely stored
+      // Show success and navigate
+      setSuccessMessage(`Battery cost saved. Syncing...`);
+      
+      setTimeout(() => {
+        navigation.navigate('BatteryHistory');
+      }, 800);
+
     } catch (err) {
-      console.error('Save error:', err);
-      setError(err.response?.data?.message || 'Failed to save entry. Please try again.');
+      console.error('❌ Save error:', err);
+      showCriticalError(
+        err.response?.data?.detail || 'Failed to save entry. Please try again.',
+        'save_error'
+      );
     } finally {
       setSaving(false);
     }
-  }, [mode, odometer, swapCost, chargingCost, selectedPartner, effectiveRiderId, navigation]);
+  };
 
-  if (loading) {
+  if (!effectiveRiderId || !isInitialized) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#ff7a1a" />
-      </View>
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label="← Back" />
+        <Text style={styles.title}>{title}</Text>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+      </ScrollView>
     );
   }
 
   return (
     <ScrollView style={styles.container}>
       <BackLink onPress={() => navigation.goBack()} label="← Back" />
-      <Text style={styles.title}>Record Battery Cost</Text>
+      <Text style={styles.title}>{title}</Text>
 
-      {/* ✅ Pattern 4: Display Offline Indicator */}
-      {isOffline && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>📶 Working Offline · Will sync when connected</Text>
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>{criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.dismissText}>Dismiss</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      <View style={styles.tabs}>
-        <TouchableOpacity
-          style={[styles.tab, mode === 'swap' && styles.tabActive]}
-          onPress={() => { setMode('swap'); setError(''); }}
-          disabled={saving}
-        >
-          <Text style={[styles.tabText, mode === 'swap' && styles.tabTextActive]}>🔋 Battery Swap</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.tab, mode === 'charging' && styles.tabActive]}
-          onPress={() => { setMode('charging'); setError(''); }}
-          disabled={saving}
-        >
-          <Text style={[styles.tabText, mode === 'charging' && styles.tabTextActive]}>🔌 Charging</Text>
-        </TouchableOpacity>
-      </View>
-
-      {error && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>{error}</Text>
-        </View>
-      )}
-
-      {mode === 'swap' && (
-        <>
-          <View style={styles.field}>
-            <Text style={styles.label}>Swap Network / Partner <Text style={styles.required}>*</Text></Text>
-            <View style={styles.pickerContainer}>
-              <Picker
-                selectedValue={selectedPartner}
-                onValueChange={handlePartnerChange}
-                style={styles.picker}
-                enabled={!saving}
-              >
-                <Picker.Item label="Select..." value="" />
-                {swapPartners.map((p) => (
-                  <Picker.Item 
-                    key={p.id}
-                    label={p.default_fee ? `${p.name} (KSh ${p.default_fee})` : p.name}
-                    value={p.id}
-                  />
-                ))}
-              </Picker>
-            </View>
-          </View>
-
-          <View style={styles.field}>
-            <Text style={styles.label}>Swap Cost <Text style={styles.required}>*</Text></Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Cost in KSh"
-              placeholderTextColor="#b0a89d"
-              keyboardType="decimal-pad"
-              value={swapCost}
-              onChangeText={setSwapCost}
-              editable={!saving}
-            />
-          </View>
-        </>
-      )}
-
-      {mode === 'charging' && (
-        <View style={styles.field}>
-          <Text style={styles.label}>Charging Cost <Text style={styles.required}>*</Text></Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Cost in KSh"
-            placeholderTextColor="#b0a89d"
-            keyboardType="decimal-pad"
-            value={chargingCost}
-            onChangeText={setChargingCost}
-            editable={!saving}
-          />
+      {successMessage && !saving && (
+        <View style={styles.successBanner}>
+          <Text style={styles.successBannerText}>✅ {successMessage}</Text>
         </View>
       )}
 
       <View style={styles.field}>
-        <Text style={styles.label}>Current Odometer Reading <Text style={styles.required}>*</Text></Text>
+        <Text style={styles.label}>
+          Total Cost <Text style={styles.required}>*</Text>
+        </Text>
         <TextInput
           style={styles.input}
-          placeholder="e.g. 12500"
+          placeholder="e.g. 200"
           placeholderTextColor="#b0a89d"
-          keyboardType="number-pad"
-          value={odometer}
-          onChangeText={setOdometer}
+          keyboardType="decimal-pad"
+          value={totalCost}
+          onChangeText={(val) => {
+            setTotalCost(val);
+            clearCriticalError();
+          }}
           editable={!saving}
         />
-        <Text style={styles.hint}>We'll alert you 5 km before your battery is expected to run out.</Text>
+        <Text style={styles.hint}>Enter amount in KSh</Text>
       </View>
 
       <TouchableOpacity
         style={[
-          styles.primaryBtn, 
-          (saving || !odometer || (mode === 'swap' ? !swapCost : !chargingCost)) && styles.primaryBtnDisabled
+          styles.primaryBtn,
+          (saving || !totalCost) && styles.primaryBtnDisabled
         ]}
         onPress={handleSave}
-        disabled={saving || !odometer || (mode === 'swap' ? !swapCost : !chargingCost)}
+        disabled={saving || !totalCost}
+        activeOpacity={0.8}
       >
-        <Text style={styles.primaryBtnText}>{saving ? 'Saving...' : 'Record Battery Cost →'}</Text>
+        <View style={styles.btnContent}>
+          {saving && (
+            <ActivityIndicator 
+              size="small" 
+              color="#fff" 
+              style={styles.btnSpinner}
+            />
+          )}
+          <Text style={styles.primaryBtnText}>
+            {saving ? 'Saving...' : `Record Battery Cost →`}
+          </Text>
+        </View>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#f6f4ef' },
-  title: { fontFamily: 'SpaceGrotesk-Bold', fontSize: 22, fontWeight: '700', color: '#1a1c20', marginBottom: 20 },
-  offlineBanner: { backgroundColor: '#fff9e6', borderWidth: 1.5, borderColor: '#ffe6b3', borderRadius: 14, padding: 12, marginBottom: 14 },
-  offlineBannerText: { fontSize: 11.5, color: '#b88900', fontWeight: '600' },
-  tabs: { flexDirection: 'row', gap: 6, backgroundColor: '#eee', borderRadius: 12, padding: 4, marginBottom: 16 },
-  tab: { flex: 1, paddingVertical: 9, paddingHorizontal: 6, borderRadius: 9, alignItems: 'center' },
-  tabActive: { backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
-  tabText: { fontSize: 12, fontWeight: '700', color: '#5b606c' },
-  tabTextActive: { color: '#1a1c20' },
-  errorBanner: { backgroundColor: '#fdecea', borderWidth: 1.5, borderColor: '#f6cac7', borderRadius: 14, padding: 12, marginBottom: 14 },
-  errorBannerText: { fontSize: 11.5, color: '#a5312c', fontWeight: '600' },
-  field: { marginBottom: 16 },
-  label: { fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.04, color: '#5b606c', marginBottom: 7 },
-  required: { color: '#e5650a' },
-  input: { width: '100%', padding: 13, borderRadius: 12, borderWidth: 1.5, borderColor: '#e7e4db', fontSize: 15, backgroundColor: '#fff', color: '#1a1c20' },
-  pickerContainer: { borderWidth: 1.5, borderColor: '#e7e4db', borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff' },
-  picker: { height: 50, color: '#1a1c20' },
-  hint: { fontSize: 11.5, color: '#5b606c', lineHeight: 18, marginTop: 6 },
-  primaryBtn: { backgroundColor: '#ff7a1a', borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginBottom: 10, shadowColor: '#ff7a1a', shadowOpacity: 0.55, shadowRadius: 16, shadowOffset: { width: 0, height: 6 } },
-  primaryBtnDisabled: { backgroundColor: '#e9dccc', shadowOpacity: 0 },
-  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  container: { 
+    flex: 1, 
+    padding: 20, 
+    backgroundColor: '#f6f4ef' 
+  },
+  title: { 
+    fontFamily: 'SpaceGrotesk-Bold', 
+    fontSize: 22, 
+    fontWeight: '700', 
+    color: '#1a1c20', 
+    marginBottom: 20 
+  },
+  
+  criticalErrorBanner: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1.5,
+    borderColor: '#f6cac7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  criticalErrorText: {
+    fontSize: 12,
+    color: '#a5312c',
+    fontWeight: '600',
+    flex: 1
+  },
+  dismissText: {
+    fontSize: 11,
+    color: '#a5312c',
+    fontWeight: '700',
+    marginLeft: 12
+  },
+
+  successBanner: {
+    backgroundColor: '#e8f5e9',
+    borderWidth: 1.5,
+    borderColor: '#a5d6a7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16
+  },
+  successBannerText: {
+    fontSize: 12,
+    color: '#2e7d32',
+    fontWeight: '600'
+  },
+
+  field: { 
+    marginBottom: 24 
+  },
+  label: { 
+    fontSize: 11.5, 
+    fontWeight: '700', 
+    textTransform: 'uppercase', 
+    letterSpacing: 0.04, 
+    color: '#5b606c', 
+    marginBottom: 8 
+  },
+  required: { 
+    color: '#e5650a' 
+  },
+  input: { 
+    width: '100%', 
+    padding: 14, 
+    borderRadius: 12, 
+    borderWidth: 1.5, 
+    borderColor: '#e7e4db', 
+    fontSize: 16, 
+    backgroundColor: '#fff', 
+    color: '#1a1c20',
+    marginBottom: 8
+  },
+  hint: { 
+    fontSize: 11.5, 
+    color: '#5b606c', 
+    fontWeight: '500' 
+  },
+
+  primaryBtn: { 
+    backgroundColor: '#ff7a1a', 
+    borderRadius: 14, 
+    paddingVertical: 16, 
+    alignItems: 'center', 
+    marginBottom: 16,
+    shadowColor: '#ff7a1a', 
+    shadowOpacity: 0.35, 
+    shadowRadius: 12, 
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6
+  },
+  primaryBtnDisabled: { 
+    backgroundColor: '#e9dccc', 
+    shadowOpacity: 0 
+  },
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  btnSpinner: {
+    marginRight: 10
+  },
+  primaryBtnText: { 
+    color: '#fff', 
+    fontSize: 16, 
+    fontWeight: '700',
+    letterSpacing: 0.02
+  }
 });

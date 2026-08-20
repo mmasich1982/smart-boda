@@ -1,76 +1,81 @@
 // rider-app/src/screens/energyHub/ChargeBatteryHubScreen.js
-// ✅ Offline-First Pattern 1: Load Data
-// ✅ Principle 1: LocalStore First - Cache hub data
-// ✅ Principle 3: getLocalRiderId Always
-// ✅ Principle 4: API with Fallback (if needed in future)
+// ✅ SEAMLESS ONLINE/OFFLINE: Clean UI without status banners
+// Manages connectivity in background silently
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
-import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
+import api from '../../api/client';
 import { getLocalRiderId } from '../../offline/db';
 import LocalStore from '../../offline/LocalStore';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 
-export default function ChargeBatteryHubScreen({ navigation }) {
+export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
   const { state } = useRider();
   const [localRiderId, setLocalRiderId] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [isOffline, setIsOffline] = useState(false);
+  
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
-  // ✅ Principle 3: Get rider ID from offline database
+  const isBattery = bikeProfile?.fuelType === 'electric' || bikeProfile?.type === 'electric';
+  const title = isBattery ? 'Battery Management Hub' : 'Charge Battery Hub';
+  const recordLabel = isBattery ? 'Record Battery Cost →' : 'Record Charging Cost →';
+  const historyLabel = isBattery ? 'Battery History →' : 'Charge History →';
+
+  // Load rider ID
   useEffect(() => {
-    async function loadRiderId() {
+    const loadRiderId = async () => {
       try {
         const id = await getLocalRiderId();
-        setLocalRiderId(id);
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ BatteryHub: Loaded rider ID:', id);
+        }
       } catch (err) {
-        console.error('Error loading riderId:', err);
+        console.error('❌ Error loading rider ID:', err);
       }
-    }
+    };
     loadRiderId();
   }, []);
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  // ✅ Pattern 1: Load Data - Initialize hub
+  // Initialize hub with minimal logic
   useEffect(() => {
-    let isMounted = true;
+    if (!effectiveRiderId || !isInitialized) return;
 
-    if (!effectiveRiderId) {
-      setLoading(false);
-      return;
-    }
-
-    async function initializeHub() {
+    const initializeHub = async () => {
       try {
         setLoading(true);
         
-        // Cache hub state for offline use
-        LocalStore.set(`battery_hub_${effectiveRiderId}`, JSON.stringify({
-          initialized: true,
-          timestamp: new Date().toISOString(),
-        }));
+        // Cache hub initialization state for offline use
+        LocalStore.set(
+          `battery_hub_${effectiveRiderId}`,
+          JSON.stringify({
+            initialized: true,
+            timestamp: new Date().toISOString(),
+          })
+        );
         
-        setIsOffline(false);
+        console.log('✅ Battery hub initialized');
       } catch (err) {
-        console.error('Hub initialization error:', err);
+        console.error('❌ Hub initialization error:', err);
+        showCriticalError('Failed to initialize hub. Please try again.', 'init');
       } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
-    }
+    };
 
     initializeHub();
-    return () => { isMounted = false; };
-  }, [effectiveRiderId]);
+  }, [effectiveRiderId, isInitialized]);
 
-  if (loading) {
+  if (!isInitialized) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-        <Text style={styles.title}>Charge Battery</Text>
+        <Text style={styles.title}>{title}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
@@ -79,49 +84,129 @@ export default function ChargeBatteryHubScreen({ navigation }) {
   return (
     <ScrollView style={styles.container}>
       <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-      <Text style={styles.title}>Charge Battery</Text>
+      
+      <Text style={styles.title}>{title}</Text>
 
-      {/* ✅ Pattern 4: Display Offline Indicator if needed */}
-      {isOffline && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>📶 Working Offline</Text>
+      {/* CRITICAL ERROR ONLY - Never show status/offline info */}
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.criticalErrorDismiss}>Dismiss</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* Entry Button */}
-      <TouchableOpacity
-        style={styles.primaryBtn}
-        onPress={() => navigation.navigate('BatteryEntry')}
+      {/* Action Buttons - Clean design */}
+      <TouchableOpacity 
+        style={styles.primaryButton}
+        onPress={() => {
+          clearCriticalError();
+          navigation.navigate('BatteryEntry', { bikeProfile });
+        }}
+        activeOpacity={0.8}
       >
-        <Text style={styles.primaryBtnText}>🔋 Enter Battery Charging Cost →</Text>
+        <Text style={styles.primaryButtonText}>
+          🔋 {recordLabel}
+        </Text>
       </TouchableOpacity>
 
-      {/* History Link */}
-      <View style={styles.settingsList}>
-        <TouchableOpacity
-          style={styles.settingsItem}
-          onPress={() => navigation.navigate('BatteryHistory')}
-        >
-          <Text style={styles.settingsItemText}>📜 Charge Battery Cost History</Text>
-          <Text style={styles.arrow}>›</Text>
-        </TouchableOpacity>
-      </View>
+      <TouchableOpacity 
+        style={styles.secondaryButton}
+        onPress={() => {
+          clearCriticalError();
+          navigation.navigate('BatteryHistory', { bikeProfile });
+        }}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.secondaryButtonText}>
+          📊 {historyLabel}
+        </Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#f6f4ef' },
-  title: { fontFamily: 'SpaceGrotesk-Bold', fontSize: 24, fontWeight: '700', color: '#1a1c20', marginBottom: 20 },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#f6f4ef', 
+    padding: 0 
+  },
+  title: { 
+    fontFamily: 'SpaceGrotesk-Bold', 
+    fontSize: 28, 
+    fontWeight: '700', 
+    color: '#1a1c20', 
+    marginBottom: 8,
+    paddingHorizontal: 20,
+    marginTop: 16
+  },
+  
+  // CRITICAL ERROR ONLY - No status banners
+  criticalErrorBanner: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1.5,
+    borderColor: '#f6cac7',
+    borderRadius: 14,
+    padding: 14,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  criticalErrorText: {
+    fontSize: 12,
+    color: '#a5312c',
+    fontWeight: '600',
+    flex: 1
+  },
+  criticalErrorDismiss: {
+    fontSize: 11,
+    color: '#a5312c',
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+    marginLeft: 12
+  },
 
-  offlineBanner: { backgroundColor: '#fff9e6', borderWidth: 1.5, borderColor: '#ffe6b3', borderRadius: 14, padding: 12, marginBottom: 16 },
-  offlineBannerText: { fontSize: 11.5, color: '#b88900', fontWeight: '600' },
+  // Primary action button
+  primaryButton: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    marginHorizontal: 20,
+    marginBottom: 12,
+    alignItems: 'center',
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6
+  },
+  primaryButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: 0.02
+  },
 
-  primaryBtn: { backgroundColor: '#ff7a1a', borderRadius: 14, paddingVertical: 15, alignItems: 'center', marginBottom: 16, shadowColor: '#ff7a1a', shadowOpacity: 0.55, shadowRadius: 16, shadowOffset: { width: 0, height: 6 } },
-  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-
-  settingsList: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e7e4db', borderRadius: 12, overflow: 'hidden' },
-  settingsItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#f0ede7' },
-  settingsItemText: { fontSize: 14, fontWeight: '600', color: '#1a1c20' },
-  arrow: { fontSize: 16, color: '#5b606c', fontWeight: '700' },
+  // Secondary action button
+  secondaryButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    marginHorizontal: 20,
+    marginBottom: 24,
+    alignItems: 'center'
+  },
+  secondaryButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ff7a1a'
+  }
 });

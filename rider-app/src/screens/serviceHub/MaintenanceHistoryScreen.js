@@ -1,5 +1,6 @@
 // rider-app/src/screens/serviceHub/MaintenanceHistoryScreen.js
-// ✅ Redesigned to match fuel history with period tabs
+// ✅ SEAMLESS ONLINE/OFFLINE: Clean UI, no status banners
+// Silently manages sync in background, only shows critical errors
 
 const SERVICE_TYPE_ICONS = {
   'oil_change': '🛢️',
@@ -23,30 +24,40 @@ const PAGE_SIZE = 10;
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
+import LocalStore from '../../offline/LocalStore';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 
 export default function MaintenanceHistoryScreen({ navigation }) {
   const { state } = useRider();
   const [localRiderId, setLocalRiderId] = useState(null);
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [page, setPage] = useState(1);
   const [period, setPeriod] = useState('thisMonth');
   const [allEntries, setAllEntries] = useState([]);
 
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
+
+  // Load rider ID on mount
   useEffect(() => {
-    async function loadRiderId() {
+    const loadRiderId = async () => {
       try {
         const id = await getLocalRiderId();
-        setLocalRiderId(id);
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ MaintenanceHistory: Loaded rider ID:', id);
+        }
       } catch (err) {
-        console.error('Error loading riderId:', err);
+        console.error('❌ Error loading rider ID:', err);
       }
-    }
+    };
+    
     loadRiderId();
   }, []);
 
@@ -72,49 +83,171 @@ export default function MaintenanceHistoryScreen({ navigation }) {
     }
   }, []);
 
+  /**
+   * Reconstruct history from individual entries
+   * Fallback when cache is missing
+   */
+  const reconstructHistoryFromIndividualEntries = useCallback(() => {
+    try {
+      const entries = [];
+      const allKeys = LocalStore.listKeys('maintenance_entry_');
+      
+      for (const key of allKeys) {
+        try {
+          const value = LocalStore.get(key);
+          if (value) {
+            const entry = JSON.parse(value);
+            if (entry && entry.rider_id === effectiveRiderId) {
+              entries.push(entry);
+            }
+          }
+        } catch (parseErr) {
+          // Skip malformed entries
+        }
+      }
+      
+      // Sort by created_at (newest first)
+      entries.sort((a, b) => 
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      
+      return entries;
+    } catch (err) {
+      console.error('❌ Error reconstructing entries:', err);
+      return [];
+    }
+  }, [effectiveRiderId]);
+
+  // Fetch history with smart caching
   useEffect(() => {
     let isMounted = true;
 
-    if (!effectiveRiderId) {
-      setLoading(false);
+    if (!effectiveRiderId || !isInitialized) {
       return;
     }
 
-    async function fetchAllEntries() {
+    async function fetchHistory() {
       try {
         setLoading(true);
-        const response = await api.get('/fuel-maintenance/maintenance-entry/history', {
-          params: {
-            rider_id: effectiveRiderId,
-            page: 1,
-            limit: 50, // FIXED: Backend maximum is 50
+        clearCriticalError();
+
+        const cacheKey = `maintenance_history_${effectiveRiderId}`;
+
+        // Try cache first
+        console.log('📦 Checking cache...');
+        const cachedDataStr = LocalStore.get(cacheKey);
+        if (cachedDataStr) {
+          try {
+            const items = JSON.parse(cachedDataStr);
+            if (Array.isArray(items) && items.length > 0) {
+              if (isMounted) {
+                setAllEntries(items);
+                setPage(1);
+                console.log(`✅ Loaded ${items.length} items from cache`);
+              }
+            } else {
+              // Cache is empty, reconstruct from entries
+              const reconstructed = reconstructHistoryFromIndividualEntries();
+              if (isMounted && reconstructed.length > 0) {
+                setAllEntries(reconstructed);
+                setPage(1);
+              }
+            }
+          } catch (parseErr) {
+            const reconstructed = reconstructHistoryFromIndividualEntries();
+            if (isMounted && reconstructed.length > 0) {
+              setAllEntries(reconstructed);
+              setPage(1);
+            }
           }
-        });
+        } else {
+          // No cache, reconstruct from individual entries
+          const reconstructed = reconstructHistoryFromIndividualEntries();
+          if (isMounted && reconstructed.length > 0) {
+            setAllEntries(reconstructed);
+            setPage(1);
+          }
+        }
+
+        // Try to sync fresh data if online
+        if (isConnected) {
+          console.log('📡 Syncing with API...');
+          try {
+            const response = await api.get('/fuel-maintenance/maintenance-entry/history', {
+              params: {
+                rider_id: effectiveRiderId,
+                page: 1,
+                limit: 100,
+              }
+            });
+
+            if (isMounted) {
+              const items = (response.data?.entries || [])
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+              setAllEntries(items);
+              
+              // Cache it for next time
+              LocalStore.set(cacheKey, JSON.stringify(items));
+              console.log(`✅ Synced ${items.length} entries and cached`);
+            }
+          } catch (apiErr) {
+            console.warn('⚠️ API sync failed (using cached data):', apiErr.message);
+            // Already have cached/reconstructed data - that's fine
+          }
+        }
 
         if (isMounted) {
-          const items = (response.data?.entries || []).sort((a, b) => 
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          );
-          setAllEntries(items);
-          setError('');
-          setPage(1);
+          setLoading(false);
         }
       } catch (err) {
+        console.error('❌ Fetch error:', err);
         if (isMounted) {
-          console.error('Fetch error:', err);
-          setError('Failed to load history');
-        }
-      } finally {
-        if (isMounted) {
+          showCriticalError('Failed to load history. Please try again.', 'data_load');
           setLoading(false);
         }
       }
     }
 
-    fetchAllEntries();
-    return () => { isMounted = false; };
-  }, [effectiveRiderId]);
+    fetchHistory();
 
+    return () => {
+      isMounted = false;
+    };
+  }, [effectiveRiderId, isInitialized, isConnected, reconstructHistoryFromIndividualEntries]);
+
+  /**
+   * Refresh on screen focus
+   * Catches any new entries added from MaintenanceEntryScreen
+   */
+  useFocusEffect(
+    useCallback(() => {
+      if (!effectiveRiderId || !isInitialized) return;
+
+      try {
+        // Check if cache has been updated
+        const cacheKey = `maintenance_history_${effectiveRiderId}`;
+        const cachedDataStr = LocalStore.get(cacheKey);
+        
+        if (cachedDataStr) {
+          const items = JSON.parse(cachedDataStr);
+          if (Array.isArray(items) && items.length > 0) {
+            setAllEntries(items);
+          }
+        } else {
+          // Reconstruct from individual entries if cache is missing
+          const reconstructed = reconstructHistoryFromIndividualEntries();
+          if (reconstructed.length > 0) {
+            setAllEntries(reconstructed);
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ Error in focus effect:', err);
+      }
+    }, [effectiveRiderId, isInitialized, reconstructHistoryFromIndividualEntries])
+  );
+
+  // Filter by period
   useEffect(() => {
     const { start, end } = getPeriodRange(period);
     const filtered = allEntries.filter(e => {
@@ -129,7 +262,7 @@ export default function MaintenanceHistoryScreen({ navigation }) {
   const pageItems = entries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const totalSpent = entries.reduce((sum, e) => sum + (e.cost || 0), 0);
 
-  const formatDate = useCallback((timestamp) => {
+  const formatDate = (timestamp) => {
     const date = new Date(timestamp);
     return date.toLocaleString('en-KE', {
       month: 'short',
@@ -138,155 +271,338 @@ export default function MaintenanceHistoryScreen({ navigation }) {
       hour: '2-digit',
       minute: '2-digit',
     });
-  }, []);
+  };
 
-  if (loading) {
+  if (loading && !allEntries.length && !isInitialized) {
     return (
-      <View style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} label="← Back" />
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
         <Text style={styles.title}>Service Cost History</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
-      </View>
+      </ScrollView>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <ScrollView>
-        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-        <Text style={styles.title}>Service Cost History</Text>
+    <ScrollView style={styles.container}>
+      <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+      <Text style={styles.title}>Service Cost History</Text>
 
-        {/* Period Tabs */}
-        <View style={styles.periodTabs}>
-          {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => (
-            <TouchableOpacity
-              key={p}
-              style={[styles.periodTab, period === p && styles.periodTabActive]}
-              onPress={() => setPeriod(p)}
-            >
-              <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
-                {p === 'thisMonth' ? 'This Month' : p === 'lastMonth' ? 'Last Month' : p === 'last6' ? '6 Months' : 'Since Joining'}
-              </Text>
-            </TouchableOpacity>
-          ))}
+      {/* CRITICAL ERROR ONLY - No offline/status messages */}
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>{criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.dismissText}>Dismiss</Text>
+          </TouchableOpacity>
         </View>
+      )}
 
-        {error && (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorBannerText}>{error}</Text>
-          </View>
-        )}
+      {/* Period Tabs - Clean navigation */}
+      <View style={styles.periodTabs}>
+        {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => (
+          <TouchableOpacity
+            key={p}
+            style={[styles.periodTab, period === p && styles.periodTabActive]}
+            onPress={() => setPeriod(p)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
+              {p === 'thisMonth' ? 'This Month' : p === 'lastMonth' ? 'Last Month' : p === 'last6' ? '6 Months' : 'All Time'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
-        {/* Summary Card */}
-        <View style={styles.card}>
-          <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Total Spent</Text>
-            <Text style={styles.kvValue}>KSh {totalSpent.toLocaleString()}</Text>
+      {/* Summary Stats - Clean card */}
+      <View style={styles.summaryCard}>
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCol}>
+            <Text style={styles.summaryLabel}>Total Spent</Text>
+            <Text style={styles.summaryValue}>KSh {totalSpent.toLocaleString()}</Text>
           </View>
-          <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Entries Logged</Text>
-            <Text style={styles.kvValue}>{entries.length}</Text>
+          <View style={styles.summarySpacer} />
+          <View style={styles.summaryCol}>
+            <Text style={styles.summaryLabel}>Entries</Text>
+            <Text style={styles.summaryValue}>{entries.length}</Text>
           </View>
         </View>
+      </View>
 
-        {/* Entries Card */}
-        <View style={styles.card}>
-          {pageItems.length > 0 ? (
-            pageItems.map((entry, idx) => (
-              <View key={idx} style={styles.tripRow}>
-                <View style={styles.tripRowLeft}>
-                  <Text style={styles.tripRowMode}>
+      {/* Entries List */}
+      <View style={styles.entriesCard}>
+        {pageItems.length > 0 ? (
+          pageItems.map((entry, idx) => (
+            <View key={idx}>
+              <View style={styles.entryRow}>
+                <View style={styles.entryLeft}>
+                  <Text style={styles.entryMode}>
                     {SERVICE_TYPE_ICONS[entry.service_type] || '🔧'} {SERVICE_TYPE_NAMES[entry.service_type] || entry.service_type}
                     {entry.oil_type ? ` · ${entry.oil_type}` : ''}
                   </Text>
-                  <Text style={styles.tripRowTime}>
+                  <Text style={styles.entryTime}>
                     {formatDate(entry.created_at)}
                     {entry.odometer_reading ? ` · ${entry.odometer_reading.toLocaleString()} km` : ''}
                   </Text>
                 </View>
-                <View style={styles.tripRowRight}>
-                  <Text style={styles.tripRowAmount}>KSh {entry.cost.toLocaleString()}</Text>
+                <View style={styles.entryRight}>
+                  <Text style={styles.entryAmount}>KSh {entry.cost.toLocaleString()}</Text>
                 </View>
               </View>
-            ))
-          ) : (
-            <Text style={styles.emptyHint}>No entries for this period.</Text>
-          )}
-        </View>
-
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <View style={styles.paginationContainer}>
-            <Text style={styles.paginationMeta}>
-              Showing {pageItems.length ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, entries.length)} of {entries.length}
-            </Text>
-            <View style={styles.pagination}>
-              <TouchableOpacity
-                style={[styles.pageBtn, page === 1 && styles.pageBtnDisabled]}
-                onPress={() => setPage(Math.max(1, page - 1))}
-                disabled={page === 1}
-              >
-                <Text style={styles.pageBtnText}>‹</Text>
-              </TouchableOpacity>
-
-              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                <TouchableOpacity
-                  key={p}
-                  style={[styles.pageBtn, p === page && styles.pageBtnActive]}
-                  onPress={() => setPage(p)}
-                >
-                  <Text style={[styles.pageBtnText, p === page && styles.pageBtnTextActive]}>{p}</Text>
-                </TouchableOpacity>
-              ))}
-
-              <TouchableOpacity
-                style={[styles.pageBtn, page === totalPages && styles.pageBtnDisabled]}
-                onPress={() => setPage(Math.min(totalPages, page + 1))}
-                disabled={page === totalPages}
-              >
-                <Text style={styles.pageBtnText}>›</Text>
-              </TouchableOpacity>
+              {idx < pageItems.length - 1 && <View style={styles.entryDivider} />}
             </View>
-          </View>
+          ))
+        ) : (
+          <Text style={styles.emptyMessage}>No entries for this period</Text>
         )}
-      </ScrollView>
-    </View>
+      </View>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <View style={styles.paginationContainer}>
+          <Text style={styles.paginationInfo}>
+            Showing {pageItems.length ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, entries.length)} of {entries.length}
+          </Text>
+          <View style={styles.paginationControls}>
+            <TouchableOpacity
+              style={[styles.pageBtn, page === 1 && styles.pageBtnDisabled]}
+              onPress={() => setPage(Math.max(1, page - 1))}
+              disabled={page === 1}
+            >
+              <Text style={styles.pageBtnText}>‹</Text>
+            </TouchableOpacity>
+
+            {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => i + 1).map((p) => (
+              <TouchableOpacity
+                key={p}
+                style={[styles.pageBtn, p === page && styles.pageBtnActive]}
+                onPress={() => setPage(p)}
+              >
+                <Text style={[styles.pageBtnText, p === page && styles.pageBtnTextActive]}>
+                  {p}
+                </Text>
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity
+              style={[styles.pageBtn, page === totalPages && styles.pageBtnDisabled]}
+              onPress={() => setPage(Math.min(totalPages, page + 1))}
+              disabled={page === totalPages}
+            >
+              <Text style={styles.pageBtnText}>›</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f6f4ef' },
-  title: { fontFamily: 'SpaceGrotesk-Bold', fontSize: 24, fontWeight: '700', color: '#1a1c20', marginBottom: 16, paddingHorizontal: 20, marginTop: 16 },
+  container: {
+    flex: 1,
+    backgroundColor: '#f6f4ef',
+    padding: 0
+  },
+  title: {
+    fontFamily: 'SpaceGrotesk-Bold',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 20,
+    paddingHorizontal: 20,
+    marginTop: 16
+  },
 
-  periodTabs: { flexDirection: 'row', gap: 8, marginHorizontal: 20, marginBottom: 16 },
-  periodTab: { flex: 1, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 12, borderWidth: 1.5, borderColor: '#e7e4db', backgroundColor: '#fff', alignItems: 'center' },
-  periodTabActive: { backgroundColor: '#ff7a1a', borderColor: '#ff7a1a' },
-  periodTabText: { fontSize: 11, fontWeight: '600', color: '#5b606c' },
-  periodTabTextActive: { color: '#fff' },
+  // CRITICAL ERROR ONLY
+  criticalErrorBanner: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1.5,
+    borderColor: '#f6cac7',
+    borderRadius: 14,
+    padding: 12,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  criticalErrorText: {
+    fontSize: 12,
+    color: '#a5312c',
+    fontWeight: '600',
+    flex: 1
+  },
+  dismissText: {
+    fontSize: 11,
+    color: '#a5312c',
+    fontWeight: '700',
+    marginLeft: 12
+  },
 
-  errorBanner: { backgroundColor: '#fdecea', borderWidth: 1.5, borderColor: '#f6cac7', borderRadius: 14, padding: 12, marginHorizontal: 20, marginBottom: 14 },
-  errorBannerText: { fontSize: 11.5, color: '#a5312c', fontWeight: '600' },
+  // Period tabs
+  periodTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginHorizontal: 20,
+    marginBottom: 16
+  },
+  periodTab: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    backgroundColor: '#fff',
+    alignItems: 'center'
+  },
+  periodTabActive: {
+    backgroundColor: '#ff7a1a',
+    borderColor: '#ff7a1a'
+  },
+  periodTabText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#5b606c'
+  },
+  periodTabTextActive: {
+    color: '#fff'
+  },
 
-  card: { backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e7e4db', borderRadius: 16, padding: 16, marginHorizontal: 20, marginBottom: 12 },
-  kvRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10 },
-  kvLabel: { fontSize: 12, color: '#5b606c', fontWeight: '500' },
-  kvValue: { fontSize: 14, fontWeight: '700', color: '#1a1c20' },
+  // Summary card
+  summaryCard: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 14,
+    padding: 16,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 }
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between'
+  },
+  summaryCol: {
+    flex: 1
+  },
+  summarySpacer: {
+    width: 1,
+    backgroundColor: '#e7e4db',
+    marginHorizontal: 16
+  },
+  summaryLabel: {
+    fontSize: 11,
+    color: '#5b606c',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.04,
+    marginBottom: 6
+  },
+  summaryValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1a1c20'
+  },
 
-  tripRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f0ede7' },
-  tripRowLeft: { flex: 1 },
-  tripRowMode: { fontSize: 13, fontWeight: '600', color: '#1a1c20', marginBottom: 4 },
-  tripRowTime: { fontSize: 11, color: '#5b606c', fontWeight: '500' },
-  tripRowRight: { justifyContent: 'center' },
-  tripRowAmount: { fontSize: 13, fontWeight: '700', color: '#1a1c20', textAlign: 'right' },
+  // Entries list
+  entriesCard: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 14,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    overflow: 'hidden'
+  },
+  entryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    alignItems: 'center'
+  },
+  entryLeft: {
+    flex: 1
+  },
+  entryMode: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1a1c20',
+    marginBottom: 4
+  },
+  entryTime: {
+    fontSize: 11,
+    color: '#5b606c',
+    fontWeight: '500'
+  },
+  entryRight: {
+    alignItems: 'flex-end'
+  },
+  entryAmount: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1a1c20'
+  },
+  entryDivider: {
+    height: 1,
+    backgroundColor: '#f0ede7',
+    marginHorizontal: 16
+  },
+  emptyMessage: {
+    fontSize: 13,
+    color: '#5b606c',
+    fontWeight: '500',
+    paddingVertical: 16,
+    textAlign: 'center'
+  },
 
-  emptyHint: { fontSize: 12, color: '#5b606c', fontWeight: '500', paddingVertical: 12, textAlign: 'center' },
-
-  paginationContainer: { marginHorizontal: 20, marginBottom: 20 },
-  paginationMeta: { fontSize: 11, color: '#5b606c', fontWeight: '500', marginBottom: 8, textAlign: 'center' },
-  pagination: { flexDirection: 'row', justifyContent: 'center', gap: 4 },
-  pageBtn: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1.5, borderColor: '#e7e4db', backgroundColor: '#fff' },
-  pageBtnActive: { backgroundColor: '#ff7a1a', borderColor: '#ff7a1a' },
-  pageBtnDisabled: { backgroundColor: '#f0ede7', borderColor: '#e7e4db' },
-  pageBtnText: { fontSize: 11, fontWeight: '600', color: '#5b606c' },
-  pageBtnTextActive: { color: '#fff' },
+  // Pagination
+  paginationContainer: {
+    marginHorizontal: 20,
+    marginBottom: 24
+  },
+  paginationInfo: {
+    fontSize: 11,
+    color: '#5b606c',
+    fontWeight: '500',
+    marginBottom: 10,
+    textAlign: 'center'
+  },
+  paginationControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 4
+  },
+  pageBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    backgroundColor: '#fff',
+    minWidth: 36,
+    alignItems: 'center'
+  },
+  pageBtnActive: {
+    backgroundColor: '#ff7a1a',
+    borderColor: '#ff7a1a'
+  },
+  pageBtnDisabled: {
+    backgroundColor: '#f0ede7',
+    borderColor: '#e7e4db'
+  },
+  pageBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#5b606c'
+  },
+  pageBtnTextActive: {
+    color: '#fff'
+  }
 });
