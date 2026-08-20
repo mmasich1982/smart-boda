@@ -1,274 +1,261 @@
 // rider-app/src/screens/energyHub/FuelHubScreen.js
-// ✅ SEAMLESS ONLINE/OFFLINE: Clean UI without status banners
-// Manages connectivity in background silently
+// ✅ Offline-First Pattern 1: Load Data
+// ✅ Principle 1: LocalStore First - Cache hub data
+// ✅ Principle 3: getLocalRiderId Always
+// ✅ Principle 4: API with Fallback - Try API, fallback to cache
+// ✅ Principle 5: Sync Queue - Display sync status
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
-import { useRider } from '../../rider/RiderContext';
 import api from '../../api/client';
+import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
 import LocalStore from '../../offline/LocalStore';
-import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import { hoursSinceLastSync } from '../../offline/syncQueue';
 
 export default function FuelHubScreen({ bikeProfile, navigation }) {
   const { state } = useRider();
   const [localRiderId, setLocalRiderId] = useState(null);
-  const [totalSpent, setTotalSpent] = useState(0);
-  const [entriesCount, setEntriesCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  
-  const { isConnected, isInitialized } = useNetworkStatus();
-  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
+  const [odometer, setOdometer] = useState(null);
+  const [batteryRange, setBatteryRange] = useState(null);
+  const [error, setError] = useState('');
+  const [isOffline, setIsOffline] = useState(false);
+  const [hoursSinceSync, setHoursSinceSync] = useState(0);
 
   const isElectric = bikeProfile?.fuelType === 'electric';
-  const title = isElectric ? 'Battery Management Hub' : 'Fuel Management Hub';
-  const subtitle = isElectric ? 'Track your battery charging costs' : 'Track your fuel purchase costs';
-  const recordLabel = isElectric ? 'Record Battery Cost →' : 'Record Fuel Cost →';
-  const historyLabel = isElectric ? 'Battery History →' : 'Fuel History →';
+  const title = isElectric ? 'Charge Battery' : 'Fuel Motorcycle';
+  const mainLabel = isElectric ? '🔋 Record Battery Cost' : '⛽ Record Fuel Cost';
+  const historyLabel = isElectric ? 'Battery Cost History' : 'Fuel Cost History';
 
-  // Load rider ID
+  // ✅ Principle 3: Load rider ID from offline database on mount
   useEffect(() => {
-    const loadRiderId = async () => {
+    async function loadRiderId() {
       try {
         const id = await getLocalRiderId();
-        if (id) {
-          setLocalRiderId(id);
-          console.log('✅ FuelHub: Loaded rider ID:', id);
-        }
+        setLocalRiderId(id);
       } catch (err) {
-        console.error('❌ Error loading rider ID:', err);
+        console.error('Error loading riderId:', err);
       }
-    };
+    }
     loadRiderId();
   }, []);
 
+  // ✅ Principle 5: Check sync status
+  useEffect(() => {
+    const hours = hoursSinceLastSync();
+    setHoursSinceSync(hours);
+  }, []);
+
+  // ✅ Use local storage as primary, fallback to context
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  // Load summary data
+  // ✅ Pattern 1: Load Data - Principle 4: API with Fallback
+  // Fetch odometer and battery range with cache fallback
   useEffect(() => {
-    if (!effectiveRiderId) return;
+    let isMounted = true;
 
-    const loadSummary = async () => {
+    if (!effectiveRiderId) {
+      setLoading(false);
+      return;
+    }
+
+    async function fetchData() {
       try {
         setLoading(true);
+        const params = { rider_id: effectiveRiderId, bike_id: bikeProfile?.id };
 
-        // Try API first
-        if (isConnected && isInitialized) {
+        // Try to fetch from API
+        const odometerPromise = api.get('/fuel-maintenance/odometer', { params });
+        const batteryPromise = isElectric ? api.get('/fuel-maintenance/battery-range', { params }) : Promise.resolve(null);
+
+        const [odometerRes, batteryRes] = await Promise.all([odometerPromise, batteryPromise]);
+
+        if (isMounted) {
+          setOdometer(odometerRes.data?.odometer || 0);
+          
+          if (isElectric && batteryRes) {
+            setBatteryRange(batteryRes.data?.remaining_km || null);
+          }
+
+          // ✅ Principle 1: Cache the hub data for offline use
+          LocalStore.set(`fuel_hub_${effectiveRiderId}`, JSON.stringify({
+            odometer: odometerRes.data?.odometer || 0,
+            batteryRange: batteryRes?.data?.remaining_km || null,
+            timestamp: new Date().toISOString(),
+          }));
+
+          setError('');
+          setIsOffline(false);
+        }
+      } catch (err) {
+        console.error('Fetch error:', err);
+
+        // ✅ Principle 4: Fallback to cache on network error
+        if (err.response?.status === 0 || err.message.includes('Network')) {
           try {
-            const response = await api.get('/fuel-maintenance/fuel-entry/summary', {
-              params: { rider_id: effectiveRiderId }
-            });
-
-            const data = response.data || {};
-            setTotalSpent(data.total_cost || 0);
-            setEntriesCount(data.total_entries || 0);
-            
-            // Cache the summary
-            LocalStore.set(
-              `fuel_summary_${effectiveRiderId}`,
-              JSON.stringify({ totalCost: data.total_cost || 0, totalEntries: data.total_entries || 0 })
-            );
-            console.log('✅ Loaded summary from API');
-          } catch (apiErr) {
-            // API failed - use cache
-            loadSummaryFromCache();
-          }
-        } else {
-          // Offline - use cache
-          loadSummaryFromCache();
-        }
-      } catch (err) {
-        console.error('❌ Error loading summary:', err);
-        showCriticalError('Unable to load summary. Please try again.', 'data_load');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    const loadSummaryFromCache = () => {
-      try {
-        const cached = LocalStore.get(`fuel_summary_${effectiveRiderId}`);
-        if (cached) {
-          const data = JSON.parse(cached);
-          setTotalSpent(data.totalCost || 0);
-          setEntriesCount(data.totalEntries || 0);
-          console.log('✅ Loaded summary from cache');
-        } else {
-          // Reconstruct from individual entries
-          const allKeys = LocalStore.listKeys('fuel_entry_');
-          const entries = [];
-          let totalCost = 0;
-          
-          for (const key of allKeys) {
-            try {
-              const value = LocalStore.get(key);
-              if (value) {
-                const entry = JSON.parse(value);
-                if (entry && entry.rider_id === effectiveRiderId) {
-                  entries.push(entry);
-                  totalCost += entry.cost || 0;
-                }
+            const cached = LocalStore.get(`fuel_hub_${effectiveRiderId}`);
+            if (cached && isMounted) {
+              const data = JSON.parse(cached);
+              setOdometer(data.odometer);
+              if (isElectric) {
+                setBatteryRange(data.batteryRange);
               }
-            } catch (e) {
-              // Skip malformed entries
+              setError('');
+              setIsOffline(true);
             }
+          } catch (e) {
+            console.error('Cache load failed:', e);
+            setError('Failed to load hub data');
           }
-          
-          setTotalSpent(totalCost);
-          setEntriesCount(entries.length);
-          console.log(`✅ Reconstructed summary from ${entries.length} entries`);
+        } else {
+          setError('Failed to load hub data');
         }
-      } catch (err) {
-        console.warn('⚠️ Failed to load cached summary:', err);
-        setTotalSpent(0);
-        setEntriesCount(0);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
-    };
+    }
 
-    loadSummary();
-  }, [effectiveRiderId, isConnected, isInitialized]);
+    fetchData();
+    return () => { isMounted = false; };
+  }, [effectiveRiderId, bikeProfile?.id, isElectric]);
 
-  const handleRecordFuelCost = () => {
-    clearCriticalError();
-    navigation.navigate('FuelEntry', { bikeProfile });
-  };
+  const handleFuelEntry = useCallback(() => {
+    if (isElectric) {
+      navigation.navigate('BatteryEntry');
+    } else {
+      navigation.navigate('FuelEntry');
+    }
+  }, [isElectric, navigation]);
 
-  const handleViewHistory = () => {
-    clearCriticalError();
-    navigation.navigate('FuelHistory', { bikeProfile });
-  };
+  const handleHistory = useCallback(() => {
+    navigation.navigate('FuelHistory');
+  }, [navigation]);
 
-  if (!isInitialized) {
+  if (loading) {
     return (
-      <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-        <Text style={styles.title}>{title}</Text>
+      <View style={styles.container}>
+        <View>
+          <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+        </View>
+        <View>
+          <Text style={styles.title}>{title}</Text>
+        </View>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
-      </ScrollView>
+      </View>
     );
   }
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-      
-      <Text style={styles.title}>{title}</Text>
+      <View>
+        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+      </View>
+      <View>
+        <Text style={styles.title}>{title}</Text>
+      </View>
 
-      {/* CRITICAL ERROR ONLY - Never show status/offline info */}
-      {criticalError && (
-        <View style={styles.criticalErrorBanner}>
-          <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
-          <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.criticalErrorDismiss}>Dismiss</Text>
-          </TouchableOpacity>
+      {/* ✅ Pattern 4: Display Offline Indicator */}
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineBannerText}>📶 Offline · Last synced {hoursSinceSync}h ago</Text>
         </View>
       )}
 
-      {/* Action Buttons - Clean design */}
-      <TouchableOpacity 
-        style={styles.primaryButton}
-        onPress={handleRecordFuelCost}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.primaryButtonText}>
-          {isElectric ? '🔌 Record Battery Cost →' : '⛽ Record Fuel Cost →'}
-        </Text>
+      {error && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorBannerText}>⚠️ {error}</Text>
+        </View>
+      )}
+
+      {/* Odometer Card for Electric Bikes */}
+      {isElectric && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>🛣️ Odometer</Text>
+          <Text style={styles.odometerValue}>
+            {odometer !== null ? `${odometer.toLocaleString()} km` : '—'}
+          </Text>
+          {batteryRange !== null && (
+            <Text style={[styles.hint, batteryRange <= 5 && styles.hintWarning]}>
+              {batteryRange <= 5 ? '🔋 ' : ''}About {Math.max(0, Math.round(batteryRange))} km left before your battery is expected to run out.
+            </Text>
+          )}
+        </View>
+      )}
+
+      {/* Main CTA Button */}
+      <TouchableOpacity style={styles.primaryBtn} onPress={handleFuelEntry}>
+        <Text style={styles.primaryBtnText}>{mainLabel} →</Text>
       </TouchableOpacity>
 
-      <TouchableOpacity 
-        style={styles.secondaryButton}
-        onPress={handleViewHistory}
-        activeOpacity={0.8}
-      >
-        <Text style={styles.secondaryButtonText}>
-          {isElectric ? '📊 Battery History →' : '📊 Fuel History →'}
-        </Text>
+      {/* History Link */}
+      <TouchableOpacity style={styles.listItem} onPress={handleHistory}>
+        <Text style={styles.listItemText}>📜 {historyLabel}</Text>
+        <Text style={styles.arrow}>›</Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#f6f4ef', 
-    padding: 0 
-  },
-  title: { 
-    fontFamily: 'SpaceGrotesk-Bold', 
-    fontSize: 28, 
-    fontWeight: '700', 
-    color: '#1a1c20', 
-    marginBottom: 8,
-    paddingHorizontal: 20,
-    marginTop: 16
-  },
-  
-  // CRITICAL ERROR ONLY - No status banners
-  criticalErrorBanner: {
+  container: { flex: 1, padding: 20, backgroundColor: '#f6f4ef' },
+  title: { fontFamily: 'SpaceGrotesk-Bold', fontSize: 24, fontWeight: '700', color: '#1a1c20', marginBottom: 20 },
+
+  offlineBanner: { backgroundColor: '#fff9e6', borderWidth: 1.5, borderColor: '#ffe6b3', borderRadius: 14, padding: 12, marginBottom: 16 },
+  offlineBannerText: { fontSize: 11.5, color: '#b88900', fontWeight: '600' },
+
+  errorBanner: {
     backgroundColor: '#fdecea',
     borderWidth: 1.5,
     borderColor: '#f6cac7',
     borderRadius: 14,
-    padding: 14,
-    marginHorizontal: 20,
+    padding: 12,
     marginBottom: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
   },
-  criticalErrorText: {
-    fontSize: 12,
-    color: '#a5312c',
-    fontWeight: '600',
-    flex: 1
-  },
-  criticalErrorDismiss: {
-    fontSize: 11,
-    color: '#a5312c',
-    fontWeight: '700',
-    textDecorationLine: 'underline',
-    marginLeft: 12
-  },
+  errorBannerText: { fontSize: 11.5, color: '#a5312c', fontWeight: '600' },
 
-  // Primary action button
-  primaryButton: {
-    backgroundColor: '#ff7a1a',
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    marginHorizontal: 20,
-    marginBottom: 12,
-    alignItems: 'center',
-    shadowColor: '#ff7a1a',
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6
-  },
-  primaryButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#fff',
-    letterSpacing: 0.02
-  },
-
-  // Secondary action button
-  secondaryButton: {
+  card: {
     backgroundColor: '#fff',
     borderWidth: 1.5,
-    borderColor: '#ff7a1a',
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    marginHorizontal: 20,
-    marginBottom: 24,
-    alignItems: 'center'
+    borderColor: '#e7e4db',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
   },
-  secondaryButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#ff7a1a'
-  }
+  cardTitle: { fontSize: 12, fontWeight: '700', color: '#5b606c', textTransform: 'uppercase', letterSpacing: 0.03, marginBottom: 8 },
+  odometerValue: { fontSize: 20, fontWeight: '800', color: '#1a1c20', marginBottom: 10 },
+  hint: { fontSize: 12, color: '#5b606c', lineHeight: 18 },
+  hintWarning: { color: '#e0453f', fontWeight: '600' },
+
+  primaryBtn: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 15,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.55,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+  listItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 12,
+    marginBottom: 12,
+  },
+  listItemText: { fontSize: 14, fontWeight: '600', color: '#1a1c20' },
+  arrow: { fontSize: 16, color: '#5b606c', fontWeight: '700' },
 });
