@@ -446,4 +446,13 @@ const LocalStore = {
   },
 };
 
+/**
+ * ✅ GET LOCAL STORE: Returns LocalStore instance for backward compatibility
+ * Used by tripsRepository.js and other modules
+ * @returns {Promise<object>} - Returns LocalStore object
+ */
+export async function getLocalStore() {
+  return LocalStore;
+}
+
 export default LocalStore;
