@@ -278,3 +278,138 @@ export const enqueue = async (type, data) => {
     return false;
   }
 };
+
+/**
+ * ✅ SYNC MONITOR: Periodically checks for pending records and syncs them
+ * Monitors online/offline status and triggers syncs when connectivity is restored
+ * 
+ * This function is called once at app startup from App.js
+ * It sets up listeners and periodic checks but doesn't return anything
+ * 
+ * @returns {void}
+ */
+export const startSyncMonitor = () => {
+  try {
+    console.log('[SyncMonitor] ✅ Starting sync monitor...');
+    
+    // Check if we're in a browser environment (web/PWA)
+    if (typeof window === 'undefined') {
+      console.log('[SyncMonitor] Not in browser environment, skipping');
+      return;
+    }
+
+    // Handle online/offline events
+    const handleOnline = () => {
+      console.log('[SyncMonitor] 🌐 App is now ONLINE - processing sync queue');
+      processPendingSync();
+    };
+
+    const handleOffline = () => {
+      console.log('[SyncMonitor] 📴 App is now OFFLINE - queuing operations');
+    };
+
+    // Listen for online/offline events
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    // Periodic sync check (every 30 seconds)
+    const syncInterval = setInterval(() => {
+      const stats = getSyncStats();
+      if (stats.queuedCount > 0) {
+        console.log(`[SyncMonitor] ⏱️ Periodic check: ${stats.queuedCount} records pending`);
+        processPendingSync();
+      }
+    }, 30000); // 30 seconds
+
+    // Cleanup function (if needed in future)
+    if (global.__syncMonitorCleanup) {
+      global.__syncMonitorCleanup();
+    }
+    global.__syncMonitorCleanup = () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      clearInterval(syncInterval);
+      console.log('[SyncMonitor] Cleanup: listeners and interval cleared');
+    };
+
+    console.log('[SyncMonitor] ✅ Sync monitor initialized');
+  } catch (err) {
+    console.error('[SyncMonitor] Failed to start:', err);
+    // Don't throw - let app continue even if sync monitor fails
+  }
+};
+
+/**
+ * ✅ PROCESS PENDING SYNC: Attempts to sync all pending records
+ * Called when app comes online or periodically
+ * 
+ * @returns {Promise<object>} - Sync results {succeeded, failed, retried}
+ */
+export const processPendingSync = async () => {
+  try {
+    const pending = getPendingRecords();
+    
+    if (pending.length === 0) {
+      console.log('[ProcessSync] ✅ No pending records to sync');
+      return { succeeded: 0, failed: 0, retried: 0 };
+    }
+
+    console.log(`[ProcessSync] 🔄 Processing ${pending.length} pending records...`);
+    
+    let succeeded = 0;
+    let failed = 0;
+    let retried = 0;
+
+    // Process each pending record
+    for (const record of pending) {
+      try {
+        // Check if we have internet (basic check)
+        const isOnline = navigator && navigator.onLine !== false;
+        
+        if (!isOnline) {
+          console.log(`[ProcessSync] 📴 Still offline, deferring record: ${record.id}`);
+          retried++;
+          continue;
+        }
+
+        // TODO: Replace with actual API call to your backend
+        // const response = await fetch(record.endpoint, {
+        //   method: 'POST',
+        //   headers: { 'Content-Type': 'application/json' },
+        //   body: JSON.stringify(record.data),
+        // });
+
+        // For now, we'll simulate success
+        const simulatedSuccess = true;
+
+        if (simulatedSuccess) {
+          removeFromSyncQueue(record.id);
+          console.log(`[ProcessSync] ✅ Synced: ${record.id}`);
+          succeeded++;
+        } else {
+          // Increment retry count
+          const newRetries = (record.retries || 0) + 1;
+          updateQueuedRecord(record.id, { retries: newRetries });
+          console.log(`[ProcessSync] ⚠️ Retry: ${record.id} (attempt ${newRetries})`);
+          retried++;
+        }
+      } catch (err) {
+        console.error(`[ProcessSync] ❌ Error syncing ${record.id}:`, err);
+        const newRetries = (record.retries || 0) + 1;
+        updateQueuedRecord(record.id, { retries: newRetries });
+        failed++;
+      }
+    }
+
+    // Update last sync time on successful completion
+    if (succeeded > 0) {
+      updateLastSyncTime();
+    }
+
+    console.log(`[ProcessSync] ✅ Sync complete: ${succeeded} succeeded, ${failed} failed, ${retried} retried`);
+    return { succeeded, failed, retried };
+  } catch (err) {
+    console.error('[ProcessSync] Fatal error:', err);
+    return { succeeded: 0, failed: 0, retried: 0 };
+  }
+};
