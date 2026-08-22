@@ -1,18 +1,23 @@
 // rider-app/src/screens/energyHub/FuelHubScreen.js
 // ✅ SEAMLESS ONLINE/OFFLINE: Clean UI without status banners
-// Manages connectivity in background silently
+// ✅ MULTILINGUAL: Uses i18n for all UI text
+// ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+// ✅ NETWORK AWARE: Real-time connectivity detection
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
 import { useRider } from '../../rider/RiderContext';
+import { useTranslation } from '../../i18n/LocalizationProvider';
 import api from '../../api/client';
 import { getLocalRiderId } from '../../offline/db';
-import LocalStore from '../../offline/LocalStore';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import colors from '../../theme/colors';
 
 export default function FuelHubScreen({ bikeProfile, navigation }) {
   const { state } = useRider();
+  const { t } = useTranslation();
   const [localRiderId, setLocalRiderId] = useState(null);
   const [totalSpent, setTotalSpent] = useState(0);
   const [entriesCount, setEntriesCount] = useState(0);
@@ -22,12 +27,12 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
   const isElectric = bikeProfile?.fuelType === 'electric';
-  const title = isElectric ? 'Battery Management Hub' : 'Fuel Management Hub';
-  const subtitle = isElectric ? 'Track your battery charging costs' : 'Track your fuel purchase costs';
-  const recordLabel = isElectric ? 'Record Battery Cost →' : 'Record Fuel Cost →';
-  const historyLabel = isElectric ? 'Battery History →' : 'Fuel History →';
+  const title = isElectric ? (t('batteryManagement_hub') || 'Battery Management Hub') : (t('fuelManagement_hub') || 'Fuel Management Hub');
+  const subtitle = isElectric ? (t('trackBatteryCharging') || 'Track your battery charging costs') : (t('trackFuelPurchases') || 'Track your fuel purchase costs');
+  const recordLabel = isElectric ? (t('recordBatteryCostButton') || 'Record Battery Cost →') : (t('recordFuelCostButton') || 'Record Fuel Cost →');
+  const historyLabel = isElectric ? (t('batteryHistory') || 'Battery History →') : (t('fuelHistory') || 'Fuel History →');
 
-  // Load rider ID
+  // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
     const loadRiderId = async () => {
       try {
@@ -45,7 +50,7 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  // Load summary data
+  // ✅ LOAD SUMMARY DATA
   useEffect(() => {
     if (!effectiveRiderId) return;
 
@@ -64,60 +69,53 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
             setTotalSpent(data.total_cost || 0);
             setEntriesCount(data.total_entries || 0);
             
-            // Cache the summary
-            LocalStore.set(
+            // Cache the summary using IndexedDB
+            await indexedDbAdapter.kvSet(
               `fuel_summary_${effectiveRiderId}`,
               JSON.stringify({ totalCost: data.total_cost || 0, totalEntries: data.total_entries || 0 })
             );
             console.log('✅ Loaded summary from API');
           } catch (apiErr) {
             // API failed - use cache
-            loadSummaryFromCache();
+            await loadSummaryFromCache();
           }
         } else {
           // Offline - use cache
-          loadSummaryFromCache();
+          await loadSummaryFromCache();
         }
       } catch (err) {
         console.error('❌ Error loading summary:', err);
-        showCriticalError('Unable to load summary. Please try again.', 'data_load');
+        showCriticalError(
+          t('error_loadSummaryFailed') || 'Unable to load summary. Please try again.',
+          'data_load'
+        );
       } finally {
         setLoading(false);
       }
     };
 
-    const loadSummaryFromCache = () => {
+    const loadSummaryFromCache = async () => {
       try {
-        const cached = LocalStore.get(`fuel_summary_${effectiveRiderId}`);
+        const cached = await indexedDbAdapter.kvGet(`fuel_summary_${effectiveRiderId}`);
         if (cached) {
-          const data = JSON.parse(cached);
+          const data = typeof cached === 'string' ? JSON.parse(cached) : cached;
           setTotalSpent(data.totalCost || 0);
           setEntriesCount(data.totalEntries || 0);
           console.log('✅ Loaded summary from cache');
         } else {
-          // Reconstruct from individual entries
-          const allKeys = LocalStore.listKeys('fuel_entry_');
-          const entries = [];
-          let totalCost = 0;
+          // Reconstruct from individual entries using IndexedDB
+          const rows = await indexedDbAdapter.queryRows('local_trip', (row) => {
+            return row.type === 'fuel_entry' && row.rider_id === effectiveRiderId;
+          });
           
-          for (const key of allKeys) {
-            try {
-              const value = LocalStore.get(key);
-              if (value) {
-                const entry = JSON.parse(value);
-                if (entry && entry.rider_id === effectiveRiderId) {
-                  entries.push(entry);
-                  totalCost += entry.cost || 0;
-                }
-              }
-            } catch (e) {
-              // Skip malformed entries
-            }
+          let totalCost = 0;
+          for (const entry of rows) {
+            totalCost += entry.cost || 0;
           }
           
           setTotalSpent(totalCost);
-          setEntriesCount(entries.length);
-          console.log(`✅ Reconstructed summary from ${entries.length} entries`);
+          setEntriesCount(rows.length);
+          console.log(`✅ Reconstructed summary from ${rows.length} entries`);
         }
       } catch (err) {
         console.warn('⚠️ Failed to load cached summary:', err);
@@ -127,22 +125,22 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
     };
 
     loadSummary();
-  }, [effectiveRiderId, isConnected, isInitialized]);
+  }, [effectiveRiderId, isConnected, isInitialized, t]);
 
-  const handleRecordFuelCost = () => {
+  const handleRecordFuelCost = useCallback(() => {
     clearCriticalError();
     navigation.navigate('FuelEntry', { bikeProfile });
-  };
+  }, [navigation, bikeProfile, clearCriticalError]);
 
-  const handleViewHistory = () => {
+  const handleViewHistory = useCallback(() => {
     clearCriticalError();
     navigation.navigate('FuelHistory', { bikeProfile });
-  };
+  }, [navigation, bikeProfile, clearCriticalError]);
 
   if (!isInitialized) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+        <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
         <Text style={styles.title}>{title}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
@@ -151,7 +149,7 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+      <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
       
       <Text style={styles.title}>{title}</Text>
 
@@ -160,7 +158,7 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.criticalErrorDismiss}>Dismiss</Text>
+            <Text style={styles.criticalErrorDismiss}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -172,7 +170,7 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
         activeOpacity={0.8}
       >
         <Text style={styles.primaryButtonText}>
-          {isElectric ? '🔌 Record Battery Cost →' : '⛽ Record Fuel Cost →'}
+          {isElectric ? '🔌 ' + (t('recordBatteryCostButton') || 'Record Battery Cost →') : '⛽ ' + (t('recordFuelCostButton') || 'Record Fuel Cost →')}
         </Text>
       </TouchableOpacity>
 
@@ -182,7 +180,7 @@ export default function FuelHubScreen({ bikeProfile, navigation }) {
         activeOpacity={0.8}
       >
         <Text style={styles.secondaryButtonText}>
-          {isElectric ? '📊 Battery History →' : '📊 Fuel History →'}
+          {isElectric ? '📊 ' + (t('batteryHistory') || 'Battery History →') : '📊 ' + (t('fuelHistory') || 'Fuel History →')}
         </Text>
       </TouchableOpacity>
     </ScrollView>

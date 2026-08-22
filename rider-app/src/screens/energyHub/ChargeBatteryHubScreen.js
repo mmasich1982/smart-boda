@@ -1,18 +1,23 @@
 // rider-app/src/screens/energyHub/ChargeBatteryHubScreen.js
 // ✅ SEAMLESS ONLINE/OFFLINE: Clean UI without status banners
-// Manages connectivity in background silently
+// ✅ MULTILINGUAL: Uses i18n for all UI text
+// ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+// ✅ NETWORK AWARE: Real-time connectivity detection
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
 import { useRider } from '../../rider/RiderContext';
+import { useTranslation } from '../../i18n/LocalizationProvider';
 import api from '../../api/client';
 import { getLocalRiderId } from '../../offline/db';
-import LocalStore from '../../offline/LocalStore';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import colors from '../../theme/colors';
 
 export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
   const { state } = useRider();
+  const { t } = useTranslation();
   const [localRiderId, setLocalRiderId] = useState(null);
   const [loading, setLoading] = useState(true);
   
@@ -20,11 +25,11 @@ export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
   const isBattery = bikeProfile?.fuelType === 'electric' || bikeProfile?.type === 'electric';
-  const title = isBattery ? 'Battery Management Hub' : 'Charge Battery Hub';
-  const recordLabel = isBattery ? 'Record Battery Cost →' : 'Record Charging Cost →';
-  const historyLabel = isBattery ? 'Battery History →' : 'Charge History →';
+  const title = isBattery ? (t('batteryManagement_hub') || 'Battery Management Hub') : (t('batteryManagement_chargeHub') || 'Charge Battery Hub');
+  const recordLabel = isBattery ? (t('recordBatteryCostButton') || 'Record Battery Cost →') : (t('recordChargingCostButton') || 'Record Charging Cost →');
+  const historyLabel = isBattery ? (t('batteryHistory') || 'Battery History →') : (t('chargeHistory') || 'Charge History →');
 
-  // Load rider ID
+  // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
     const loadRiderId = async () => {
       try {
@@ -42,7 +47,7 @@ export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  // Initialize hub with minimal logic
+  // ✅ INITIALIZE HUB WITH INDEXEDDB
   useEffect(() => {
     if (!effectiveRiderId || !isInitialized) return;
 
@@ -50,8 +55,8 @@ export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
       try {
         setLoading(true);
         
-        // Cache hub initialization state for offline use
-        LocalStore.set(
+        // Cache hub initialization state for offline use using IndexedDB
+        await indexedDbAdapter.kvSet(
           `battery_hub_${effectiveRiderId}`,
           JSON.stringify({
             initialized: true,
@@ -62,19 +67,32 @@ export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
         console.log('✅ Battery hub initialized');
       } catch (err) {
         console.error('❌ Hub initialization error:', err);
-        showCriticalError('Failed to initialize hub. Please try again.', 'init');
+        showCriticalError(
+          t('error_hubInitFailed') || 'Failed to initialize hub. Please try again.',
+          'init'
+        );
       } finally {
         setLoading(false);
       }
     };
 
     initializeHub();
-  }, [effectiveRiderId, isInitialized]);
+  }, [effectiveRiderId, isInitialized, t]);
+
+  const handleRecordBatteryCost = useCallback(() => {
+    clearCriticalError();
+    navigation.navigate('BatteryEntry', { bikeProfile });
+  }, [navigation, bikeProfile, clearCriticalError]);
+
+  const handleViewHistory = useCallback(() => {
+    clearCriticalError();
+    navigation.navigate('BatteryHistory', { bikeProfile });
+  }, [navigation, bikeProfile, clearCriticalError]);
 
   if (!isInitialized) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+        <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
         <Text style={styles.title}>{title}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
@@ -83,7 +101,7 @@ export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+      <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
       
       <Text style={styles.title}>{title}</Text>
 
@@ -92,7 +110,7 @@ export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.criticalErrorDismiss}>Dismiss</Text>
+            <Text style={styles.criticalErrorDismiss}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -100,10 +118,7 @@ export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
       {/* Action Buttons - Clean design */}
       <TouchableOpacity 
         style={styles.primaryButton}
-        onPress={() => {
-          clearCriticalError();
-          navigation.navigate('BatteryEntry', { bikeProfile });
-        }}
+        onPress={handleRecordBatteryCost}
         activeOpacity={0.8}
       >
         <Text style={styles.primaryButtonText}>
@@ -113,10 +128,7 @@ export default function ChargeBatteryHubScreen({ bikeProfile, navigation }) {
 
       <TouchableOpacity 
         style={styles.secondaryButton}
-        onPress={() => {
-          clearCriticalError();
-          navigation.navigate('BatteryHistory', { bikeProfile });
-        }}
+        onPress={handleViewHistory}
         activeOpacity={0.8}
       >
         <Text style={styles.secondaryButtonText}>

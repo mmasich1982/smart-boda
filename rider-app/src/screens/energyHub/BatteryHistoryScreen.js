@@ -1,6 +1,8 @@
 // rider-app/src/screens/energyHub/BatteryHistoryScreen.js
 // ✅ SEAMLESS ONLINE/OFFLINE: Clean UI, no status banners
-// Silently manages sync in background, only shows critical errors
+// ✅ MULTILINGUAL: Uses i18n for all UI text
+// ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+// ✅ NETWORK AWARE: Real-time connectivity detection
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
@@ -8,14 +10,17 @@ import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
+import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
-import LocalStore from '../../offline/LocalStore';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import colors from '../../theme/colors';
 
 const PAGE_SIZE = 10;
 
 export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
   const { state } = useRider();
+  const { t } = useTranslation();
   const [localRiderId, setLocalRiderId] = useState(null);
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,9 +32,9 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
   const isBattery = bikeProfile?.fuelType === 'electric' || bikeProfile?.type === 'electric';
-  const title = isBattery ? 'Battery Cost History' : 'Charge History';
+  const title = isBattery ? (t('batteryManagement_history') || 'Battery Cost History') : (t('batteryManagement_chargeHistory') || 'Charge History');
 
-  // Load rider ID on mount
+  // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
     const loadRiderId = async () => {
       try {
@@ -69,41 +74,29 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
   }, []);
 
   /**
-   * Reconstruct history from individual entries
+   * ✅ Reconstruct history from individual entries
    * Fallback when cache is missing
+   * Uses IndexedDB queryRows for efficient lookups
    */
-  const reconstructHistoryFromIndividualEntries = useCallback(() => {
+  const reconstructHistoryFromIndividualEntries = useCallback(async () => {
     try {
-      const entries = [];
-      const allKeys = LocalStore.listKeys('battery_entry_');
-      
-      for (const key of allKeys) {
-        try {
-          const value = LocalStore.get(key);
-          if (value) {
-            const entry = JSON.parse(value);
-            if (entry && entry.rider_id === effectiveRiderId) {
-              entries.push(entry);
-            }
-          }
-        } catch (parseErr) {
-          // Skip malformed entries
-        }
-      }
+      const rows = await indexedDbAdapter.queryRows('local_trip', (row) => {
+        return row.type === 'battery_entry' && row.rider_id === effectiveRiderId;
+      });
       
       // Sort by created_at (newest first)
-      entries.sort((a, b) => 
+      rows.sort((a, b) => 
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
       
-      return entries;
+      return rows;
     } catch (err) {
       console.error('❌ Error reconstructing entries:', err);
       return [];
     }
   }, [effectiveRiderId]);
 
-  // Fetch history with smart caching
+  // ✅ Fetch history with smart caching
   useEffect(() => {
     let isMounted = true;
 
@@ -120,10 +113,10 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
 
         // Try cache first
         console.log('📦 Checking cache...');
-        const cachedDataStr = LocalStore.get(cacheKey);
-        if (cachedDataStr) {
+        const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+        if (cachedData) {
           try {
-            const items = JSON.parse(cachedDataStr);
+            const items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
             if (Array.isArray(items) && items.length > 0) {
               if (isMounted) {
                 setAllEntries(items);
@@ -132,14 +125,14 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
               }
             } else {
               // Cache is empty, reconstruct from entries
-              const reconstructed = reconstructHistoryFromIndividualEntries();
+              const reconstructed = await reconstructHistoryFromIndividualEntries();
               if (isMounted && reconstructed.length > 0) {
                 setAllEntries(reconstructed);
                 setPage(1);
               }
             }
           } catch (parseErr) {
-            const reconstructed = reconstructHistoryFromIndividualEntries();
+            const reconstructed = await reconstructHistoryFromIndividualEntries();
             if (isMounted && reconstructed.length > 0) {
               setAllEntries(reconstructed);
               setPage(1);
@@ -147,7 +140,7 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
           }
         } else {
           // No cache, reconstruct from individual entries
-          const reconstructed = reconstructHistoryFromIndividualEntries();
+          const reconstructed = await reconstructHistoryFromIndividualEntries();
           if (isMounted && reconstructed.length > 0) {
             setAllEntries(reconstructed);
             setPage(1);
@@ -173,8 +166,8 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
 
               setAllEntries(items);
               
-              // Cache it for next time
-              LocalStore.set(cacheKey, JSON.stringify(items));
+              // Cache it for next time using IndexedDB
+              await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(items));
               console.log(`✅ Synced ${items.length} entries and cached`);
             }
           } catch (apiErr) {
@@ -189,7 +182,10 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
       } catch (err) {
         console.error('❌ Fetch error:', err);
         if (isMounted) {
-          showCriticalError('Failed to load history. Please try again.', 'data_load');
+          showCriticalError(
+            t('error_loadHistoryFailed') || 'Failed to load history. Please try again.',
+            'data_load'
+          );
           setLoading(false);
         }
       }
@@ -200,36 +196,40 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
     return () => {
       isMounted = false;
     };
-  }, [effectiveRiderId, isInitialized, isConnected, reconstructHistoryFromIndividualEntries]);
+  }, [effectiveRiderId, isInitialized, isConnected, reconstructHistoryFromIndividualEntries, t]);
 
   /**
-   * Refresh on screen focus
+   * ✅ Refresh on screen focus
    * Catches any new entries added from BatteryEntryScreen
    */
   useFocusEffect(
     useCallback(() => {
       if (!effectiveRiderId || !isInitialized) return;
 
-      try {
-        // Check if cache has been updated
-        const cacheKey = `battery_history_${effectiveRiderId}`;
-        const cachedDataStr = LocalStore.get(cacheKey);
-        
-        if (cachedDataStr) {
-          const items = JSON.parse(cachedDataStr);
-          if (Array.isArray(items) && items.length > 0) {
-            setAllEntries(items);
+      async function refreshCache() {
+        try {
+          // Check if cache has been updated
+          const cacheKey = `battery_history_${effectiveRiderId}`;
+          const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+          
+          if (cachedData) {
+            const items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+            if (Array.isArray(items) && items.length > 0) {
+              setAllEntries(items);
+            }
+          } else {
+            // Reconstruct from individual entries if cache is missing
+            const reconstructed = await reconstructHistoryFromIndividualEntries();
+            if (reconstructed.length > 0) {
+              setAllEntries(reconstructed);
+            }
           }
-        } else {
-          // Reconstruct from individual entries if cache is missing
-          const reconstructed = reconstructHistoryFromIndividualEntries();
-          if (reconstructed.length > 0) {
-            setAllEntries(reconstructed);
-          }
+        } catch (err) {
+          console.warn('⚠️ Error in focus effect:', err);
         }
-      } catch (err) {
-        console.warn('⚠️ Error in focus effect:', err);
       }
+
+      refreshCache();
     }, [effectiveRiderId, isInitialized, reconstructHistoryFromIndividualEntries])
   );
 
@@ -250,9 +250,9 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
 
   const getModeLabel = (mode) => {
     const labels = { 
-      swap: '🔋 Swap', 
-      charging: '🔌 Charging',
-      petrol: '⛽ Fuel'
+      swap: '🔋 ' + (t('swap') || 'Swap'),
+      charging: '🔌 ' + (t('charging') || 'Charging'),
+      petrol: '⛽ ' + (t('fuel') || 'Fuel')
     };
     return labels[mode?.toLowerCase()] || mode;
   };
@@ -271,7 +271,7 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
   if (loading && !allEntries.length && !isInitialized) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+        <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Back'} />
         <Text style={styles.title}>{title}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
@@ -280,45 +280,51 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+      <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Back'} />
       <Text style={styles.title}>{title}</Text>
 
-      {/* CRITICAL ERROR ONLY - No offline/status messages */}
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>{criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.dismissText}>Dismiss</Text>
+            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Period Tabs - Clean navigation */}
+      {/* Period Filter Tabs */}
       <View style={styles.periodTabs}>
-        {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => (
-          <TouchableOpacity
-            key={p}
-            style={[styles.periodTab, period === p && styles.periodTabActive]}
-            onPress={() => setPeriod(p)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
-              {p === 'thisMonth' ? 'This Month' : p === 'lastMonth' ? 'Last Month' : p === 'last6' ? '6 Months' : 'All Time'}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => {
+          const labels = {
+            thisMonth: t('thisMonth') || 'This Month',
+            lastMonth: t('lastMonth') || 'Last Month',
+            last6: t('last6Months') || 'Last 6 Months',
+            sinceJoining: t('sinceJoining') || 'All Time'
+          };
+          return (
+            <TouchableOpacity
+              key={p}
+              style={[styles.periodTab, period === p && styles.periodTabActive]}
+              onPress={() => setPeriod(p)}
+            >
+              <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
+                {labels[p]}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
-      {/* Summary Stats - Clean card */}
+      {/* Summary Card */}
       <View style={styles.summaryCard}>
         <View style={styles.summaryRow}>
           <View style={styles.summaryCol}>
-            <Text style={styles.summaryLabel}>Total Spent</Text>
+            <Text style={styles.summaryLabel}>{t('totalSpent') || 'Total Spent'}</Text>
             <Text style={styles.summaryValue}>KSh {totalSpent.toLocaleString()}</Text>
           </View>
           <View style={styles.summarySpacer} />
           <View style={styles.summaryCol}>
-            <Text style={styles.summaryLabel}>Entries</Text>
+            <Text style={styles.summaryLabel}>{t('entries') || 'Entries'}</Text>
             <Text style={styles.summaryValue}>{entries.length}</Text>
           </View>
         </View>
@@ -344,7 +350,7 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
             </View>
           ))
         ) : (
-          <Text style={styles.emptyMessage}>No entries for this period</Text>
+          <Text style={styles.emptyMessage}>{t('noEntriesForPeriod') || 'No entries for this period'}</Text>
         )}
       </View>
 
@@ -352,7 +358,7 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
       {totalPages > 1 && (
         <View style={styles.paginationContainer}>
           <Text style={styles.paginationInfo}>
-            Showing {pageItems.length ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, entries.length)} of {entries.length}
+            {t('showing') || 'Showing'} {pageItems.length ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, entries.length)} {t('of') || 'of'} {entries.length}
           </Text>
           <View style={styles.paginationControls}>
             <TouchableOpacity
@@ -455,7 +461,7 @@ const styles = StyleSheet.create({
   periodTabText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#5b606c'
+    color: colors.inkSoft || '#5b606c'
   },
   periodTabTextActive: {
     color: '#fff'
@@ -489,7 +495,7 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 11,
-    color: '#5b606c',
+    color: colors.inkSoft || '#5b606c',
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.04,
@@ -529,7 +535,7 @@ const styles = StyleSheet.create({
   },
   entryTime: {
     fontSize: 11,
-    color: '#5b606c',
+    color: colors.inkSoft || '#5b606c',
     fontWeight: '500'
   },
   entryRight: {
@@ -547,7 +553,7 @@ const styles = StyleSheet.create({
   },
   emptyMessage: {
     fontSize: 13,
-    color: '#5b606c',
+    color: colors.inkSoft || '#5b606c',
     fontWeight: '500',
     paddingVertical: 16,
     textAlign: 'center'
@@ -560,7 +566,7 @@ const styles = StyleSheet.create({
   },
   paginationInfo: {
     fontSize: 11,
-    color: '#5b606c',
+    color: colors.inkSoft || '#5b606c',
     fontWeight: '500',
     marginBottom: 10,
     textAlign: 'center'
@@ -591,7 +597,7 @@ const styles = StyleSheet.create({
   pageBtnText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#5b606c'
+    color: colors.inkSoft || '#5b606c'
   },
   pageBtnTextActive: {
     color: '#fff'

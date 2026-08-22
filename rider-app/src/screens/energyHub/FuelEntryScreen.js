@@ -1,19 +1,24 @@
 // rider-app/src/screens/energyHub/FuelEntryScreen.js
 // ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, clean UI, immediate feedback
-// MINIMAL UI: Title + Error + Input + Button ONLY
+// ✅ MULTILINGUAL: Uses i18n for all UI text
+// ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+// ✅ NETWORK AWARE: Real-time connectivity detection
 
 import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
+import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
-import LocalStore from '../../offline/LocalStore';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { addToSyncQueue } from '../../offline/syncQueue';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import colors from '../../theme/colors';
 
 export default function FuelEntryScreen({ bikeProfile, navigation }) {
   const { state } = useRider();
+  const { t } = useTranslation();
   const [localRiderId, setLocalRiderId] = useState(null);
   const [totalCost, setTotalCost] = useState('');
   const [saving, setSaving] = useState(false);
@@ -23,9 +28,9 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
   const isElectric = bikeProfile?.fuelType === 'electric';
-  const title = isElectric ? 'Record Battery Cost' : 'Record Fuel Cost';
+  const title = isElectric ? (t('batteryManagement_recordCost') || 'Record Battery Cost') : (t('fuelManagement_recordCost') || 'Record Fuel Cost');
 
-  // Load rider ID on mount
+  // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
     const loadRiderId = async () => {
       try {
@@ -47,18 +52,19 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
   /**
    * ✅ UPDATE CACHE: Add new entry to fuel_history cache
    * This ensures FuelHistoryScreen displays the entry immediately
+   * Uses IndexedDB for persistent local-first storage
    */
-  const updateFuelHistoryCache = (offlineRecord) => {
+  const updateFuelHistoryCache = async (offlineRecord) => {
     try {
       const cacheKey = `fuel_history_${effectiveRiderId}`;
       
-      // Get existing cache
-      const cachedDataStr = LocalStore.get(cacheKey);
+      // Get existing cache from IndexedDB
+      const cachedData = await indexedDbAdapter.kvGet(cacheKey);
       let items = [];
       
-      if (cachedDataStr) {
+      if (cachedData) {
         try {
-          items = JSON.parse(cachedDataStr);
+          items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
           if (!Array.isArray(items)) items = [];
         } catch (parseErr) {
           console.warn('⚠️ Cache parse error, starting fresh');
@@ -69,14 +75,9 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
       // Add new entry to front (most recent first)
       items.unshift(offlineRecord);
       
-      // Limit cache to 100 entries (API also limits to 100)
-      items = items.slice(0, 100);
-      
-      // Save updated cache
-      const success = LocalStore.set(cacheKey, JSON.stringify(items));
-      if (success) {
-        console.log(`✅ Updated fuel_history cache with new entry`);
-      }
+      // Save updated cache to IndexedDB (no artificial limits - 6-month cycle is the natural boundary)
+      await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(items));
+      console.log(`✅ Updated fuel_history cache with new entry`);
     } catch (err) {
       console.error('❌ Error updating cache:', err);
     }
@@ -86,12 +87,18 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
     try {
       // Validation
       if (!totalCost || parseFloat(totalCost) <= 0) {
-        showCriticalError('Please enter a valid cost amount', 'validation');
+        showCriticalError(
+          t('validationError_enterValidCost') || 'Please enter a valid cost amount greater than zero.',
+          'validation'
+        );
         return;
       }
 
       if (!effectiveRiderId) {
-        showCriticalError('Rider ID not available. Please restart the app.', 'auth');
+        showCriticalError(
+          t('authError_riderIdNotAvailable') || 'Rider ID not available. Please restart the app.',
+          'auth'
+        );
         console.error('❌ No effective rider ID');
         return;
       }
@@ -109,22 +116,16 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
       const recordId = `fuel_${effectiveRiderId}_${Date.now()}`;
       const offlineRecord = { ...payload, id: recordId, rider_id: effectiveRiderId };
 
-      console.log('💾 Saving entry:', { recordId, riderId: effectiveRiderId, cost: totalCost });
+      console.log('💾 Saving fuel entry:', { recordId, riderId: effectiveRiderId, cost: totalCost });
 
-      // ALWAYS save locally first
-      const localSaveSuccess = LocalStore.set(
+      // ALWAYS save locally first using IndexedDB
+      await indexedDbAdapter.kvSet(
         `fuel_entry_${recordId}`, 
         JSON.stringify(offlineRecord)
       );
-      
-      if (!localSaveSuccess) {
-        showCriticalError('Failed to save locally. Storage may be full.', 'storage');
-        setSaving(false);
-        return;
-      }
 
       // Update cache immediately for instant UI feedback
-      updateFuelHistoryCache(offlineRecord);
+      await updateFuelHistoryCache(offlineRecord);
 
       // Add to sync queue for background sync
       const queueSuccess = await addToSyncQueue({
@@ -151,7 +152,10 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
           if (response.status === 200 || response.status === 201) {
             console.log('✅ Synced successfully to API');
             // Success - show brief confirmation
-            setSuccessMessage(`${isElectric ? 'Battery' : 'Fuel'} cost recorded!`);
+            const successMsg = isElectric 
+              ? (t('success_batteryCostRecorded') || 'Battery cost recorded!')
+              : (t('success_fuelCostRecorded') || 'Fuel cost recorded!');
+            setSuccessMessage(successMsg);
             
             // Navigate after brief success message
             setTimeout(() => {
@@ -170,7 +174,10 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
 
       // Either offline or API sync failed - but data is safely stored
       // Show success and navigate
-      setSuccessMessage(`${isElectric ? 'Battery' : 'Fuel'} cost saved. Syncing...`);
+      const syncingMsg = isElectric 
+        ? (t('success_batteryCostSaving') || 'Battery cost saved. Syncing...')
+        : (t('success_fuelCostSaving') || 'Fuel cost saved. Syncing...');
+      setSuccessMessage(syncingMsg);
       
       setTimeout(() => {
         navigation.navigate('FuelHistory');
@@ -179,7 +186,7 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
     } catch (err) {
       console.error('❌ Save error:', err);
       showCriticalError(
-        err.response?.data?.detail || 'Failed to save entry. Please try again.',
+        err.response?.data?.detail || t('error_saveFailed') || 'Failed to save entry. Please try again.',
         'save_error'
       );
     } finally {
@@ -190,7 +197,7 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
   if (!effectiveRiderId || !isInitialized) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} label="← Back" />
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
         <Text style={styles.title}>{title}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
@@ -199,14 +206,14 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.goBack()} label="← Back" />
+      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
       <Text style={styles.title}>{title}</Text>
 
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>{criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.dismissText}>Dismiss</Text>
+            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -219,11 +226,11 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
 
       <View style={styles.field}>
         <Text style={styles.label}>
-          Total Cost <Text style={styles.required}>*</Text>
+          {t('totalCost') || 'Total Cost'} <Text style={styles.required}>*</Text>
         </Text>
         <TextInput
           style={styles.input}
-          placeholder="e.g. 630"
+          placeholder={t('placeholder_amount') || 'e.g. 630'}
           placeholderTextColor="#b0a89d"
           keyboardType="decimal-pad"
           value={totalCost}
@@ -233,7 +240,7 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
           }}
           editable={!saving}
         />
-        <Text style={styles.hint}>Enter amount in KSh</Text>
+        <Text style={styles.hint}>{t('enterAmountInKSh') || 'Enter amount in KSh'}</Text>
       </View>
 
       <TouchableOpacity
@@ -254,7 +261,13 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
             />
           )}
           <Text style={styles.primaryBtnText}>
-            {saving ? 'Saving...' : `Record ${isElectric ? 'Battery' : 'Fuel'} Cost →`}
+            {saving 
+              ? (t('saving') || 'Saving...') 
+              : (isElectric 
+                ? (t('recordBatteryCostButton') || 'Record Battery Cost →')
+                : (t('recordFuelCostButton') || 'Record Fuel Cost →')
+              )
+            }
           </Text>
         </View>
       </TouchableOpacity>
@@ -341,7 +354,7 @@ const styles = StyleSheet.create({
   },
   hint: { 
     fontSize: 11.5, 
-    color: '#5b606c', 
+    color: colors.inkSoft || '#5b606c', 
     fontWeight: '500' 
   },
 
