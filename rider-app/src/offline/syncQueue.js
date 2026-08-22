@@ -1,32 +1,44 @@
 // rider-app/src/offline/syncQueue.js
-// ✅ Offline-First: Sync queue for managing offline operations
-// Fixed: Uses LocalStore.remove() which is aliased to delete()
+// ✅ MIGRATION: Fully migrated to IndexedDB from LocalStore
+// Uses existing indexedDbAdapter for non-blocking, structured queries
 
-import LocalStore from './LocalStore';
+import indexedDbAdapter from './adapters/indexedDbAdapter';
 
-const SYNC_QUEUE_KEY = 'sync_queue';
+const SYNC_QUEUE_STORE = 'sync_queue';
 const LAST_SYNC_TIME_KEY = 'last_sync_time';
 
 /**
- * Get all queued records from localStorage
- * @returns {array} - Array of queued records
+ * Initialize sync queue store if needed
+ * Called on app startup to ensure object store exists
  */
-export const getQueuedRecords = () => {
+async function ensureSyncQueueStore() {
   try {
-    const queuedData = LocalStore.get(SYNC_QUEUE_KEY);
-    if (!queuedData) {
-      return [];
-    }
-    const parsed = JSON.parse(queuedData);
-    return Array.isArray(parsed) ? parsed : [];
+    // Store is already created in indexedDbAdapter, but verify with a test operation
+    const testRecord = await indexedDbAdapter.queryRows(SYNC_QUEUE_STORE);
+    console.log(`✅ Sync queue store ready: ${testRecord ? testRecord.length : 0} records`);
+    return true;
   } catch (err) {
-    console.error('Error reading sync queue:', err);
+    console.error('Failed to initialize sync queue store:', err);
+    return false;
+  }
+}
+
+/**
+ * Get all queued records from IndexedDB
+ * @returns {Promise<array>} - Array of queued records
+ */
+export const getQueuedRecords = async () => {
+  try {
+    const records = await indexedDbAdapter.queryRows(SYNC_QUEUE_STORE);
+    return Array.isArray(records) ? records : [];
+  } catch (err) {
+    console.error('Error reading sync queue from IndexedDB:', err);
     return [];
   }
 };
 
 /**
- * Add record to sync queue
+ * Add record to sync queue (persisted in IndexedDB)
  * @param {object} record - Record to add {id, type, endpoint, data, timestamp}
  * @returns {Promise<boolean>} - True if successful
  */
@@ -37,7 +49,7 @@ export const addToSyncQueue = async (record) => {
       return false;
     }
 
-    const queued = getQueuedRecords();
+    const queued = await getQueuedRecords();
     
     // Check for duplicates
     const isDuplicate = queued.some(r => r.id === record.id);
@@ -55,8 +67,8 @@ export const addToSyncQueue = async (record) => {
       retries: 0,
     };
 
-    queued.push(newRecord);
-    LocalStore.set(SYNC_QUEUE_KEY, JSON.stringify(queued));
+    // Insert into IndexedDB with id as key
+    await indexedDbAdapter.insertRow(SYNC_QUEUE_STORE, newRecord);
     console.log(`✅ Added to sync queue: ${record.id} (${record.type})`);
     return true;
   } catch (err) {
@@ -66,15 +78,13 @@ export const addToSyncQueue = async (record) => {
 };
 
 /**
- * Remove record from sync queue
+ * Remove record from sync queue in IndexedDB
  * @param {string} recordId - ID of record to remove
- * @returns {boolean} - True if successful
+ * @returns {Promise<boolean>} - True if successful
  */
-export const removeFromSyncQueue = (recordId) => {
+export const removeFromSyncQueue = async (recordId) => {
   try {
-    const queued = getQueuedRecords();
-    const filtered = queued.filter(r => r.id !== recordId);
-    LocalStore.set(SYNC_QUEUE_KEY, JSON.stringify(filtered));
+    await indexedDbAdapter.deleteRow(SYNC_QUEUE_STORE, recordId);
     console.log(`✅ Removed from sync queue: ${recordId}`);
     return true;
   } catch (err) {
@@ -86,12 +96,12 @@ export const removeFromSyncQueue = (recordId) => {
 /**
  * Get record from queue by ID
  * @param {string} recordId - ID to retrieve
- * @returns {object|null} - Record or null
+ * @returns {Promise<object|null>} - Record or null
  */
-export const getQueuedRecord = (recordId) => {
+export const getQueuedRecord = async (recordId) => {
   try {
-    const queued = getQueuedRecords();
-    return queued.find(r => r.id === recordId);
+    const queued = await getQueuedRecords();
+    return queued.find(r => r.id === recordId) || null;
   } catch (err) {
     console.error('Error fetching queued record:', err);
     return null;
@@ -102,22 +112,18 @@ export const getQueuedRecord = (recordId) => {
  * Update sync status/retry count for a queued record
  * @param {string} recordId - ID of record to update
  * @param {object} updates - Updates to apply
- * @returns {boolean} - True if successful
+ * @returns {Promise<boolean>} - True if successful
  */
-export const updateQueuedRecord = (recordId, updates) => {
+export const updateQueuedRecord = async (recordId, updates) => {
   try {
-    const queued = getQueuedRecords();
-    const index = queued.findIndex(r => r.id === recordId);
-    
-    if (index === -1) {
+    const updated = await indexedDbAdapter.updateRow(SYNC_QUEUE_STORE, recordId, updates);
+    if (updated) {
+      console.log(`✅ Updated sync queue record: ${recordId}`);
+      return true;
+    } else {
       console.warn(`Record ${recordId} not found in queue`);
       return false;
     }
-
-    queued[index] = { ...queued[index], ...updates };
-    LocalStore.set(SYNC_QUEUE_KEY, JSON.stringify(queued));
-    console.log(`✅ Updated sync queue record: ${recordId}`);
-    return true;
   } catch (err) {
     console.error('Error updating queued record:', err);
     return false;
@@ -127,11 +133,11 @@ export const updateQueuedRecord = (recordId, updates) => {
 /**
  * Get records pending sync (with retry limit)
  * @param {number} maxRetries - Maximum number of retries before giving up
- * @returns {array} - Pending records
+ * @returns {Promise<array>} - Pending records
  */
-export const getPendingRecords = (maxRetries = 3) => {
+export const getPendingRecords = async (maxRetries = 3) => {
   try {
-    const queued = getQueuedRecords();
+    const queued = await getQueuedRecords();
     return queued.filter(r => (r.retries || 0) < maxRetries);
   } catch (err) {
     console.error('Error getting pending records:', err);
@@ -140,13 +146,13 @@ export const getPendingRecords = (maxRetries = 3) => {
 };
 
 /**
- * Update last sync time in localStorage
- * @returns {boolean} - True if successful
+ * Update last sync time in IndexedDB
+ * @returns {Promise<boolean>} - True if successful
  */
-export const updateLastSyncTime = () => {
+export const updateLastSyncTime = async () => {
   try {
     const now = new Date().toISOString();
-    LocalStore.set(LAST_SYNC_TIME_KEY, now);
+    await indexedDbAdapter.kvSet(LAST_SYNC_TIME_KEY, now);
     console.log(`✅ Updated last sync time: ${now}`);
     return true;
   } catch (err) {
@@ -157,11 +163,11 @@ export const updateLastSyncTime = () => {
 
 /**
  * Get hours since last sync
- * @returns {number} - Hours since last sync, 0 if never synced
+ * @returns {Promise<number>} - Hours since last sync, 0 if never synced
  */
-export const hoursSinceLastSync = () => {
+export const hoursSinceLastSync = async () => {
   try {
-    const lastSyncStr = LocalStore.get(LAST_SYNC_TIME_KEY);
+    const lastSyncStr = await indexedDbAdapter.kvGet(LAST_SYNC_TIME_KEY);
     
     if (!lastSyncStr) {
       // If no sync time recorded, app just came online or is new
@@ -179,13 +185,16 @@ export const hoursSinceLastSync = () => {
 };
 
 /**
- * Clear entire sync queue
- * @returns {boolean} - True if successful
+ * Clear entire sync queue in IndexedDB
+ * @returns {Promise<boolean>} - True if successful
  */
-export const clearSyncQueue = () => {
+export const clearSyncQueue = async () => {
   try {
-    // ✅ FIXED: Use LocalStore.remove() which is aliased to delete()
-    LocalStore.remove(SYNC_QUEUE_KEY);
+    const records = await getQueuedRecords();
+    // Delete all records
+    for (const record of records) {
+      await indexedDbAdapter.deleteRow(SYNC_QUEUE_STORE, record.id);
+    }
     console.log('✅ Sync queue cleared');
     return true;
   } catch (err) {
@@ -196,13 +205,13 @@ export const clearSyncQueue = () => {
 
 /**
  * Get sync statistics
- * @returns {object} - {queuedCount, lastSyncTime, hoursSinceSync, isOffline}
+ * @returns {Promise<object>} - {queuedCount, lastSyncTime, hoursSinceSync, isOffline}
  */
-export const getSyncStats = () => {
+export const getSyncStats = async () => {
   try {
-    const queued = getQueuedRecords();
-    const lastSync = LocalStore.get(LAST_SYNC_TIME_KEY);
-    const hoursSince = hoursSinceLastSync();
+    const queued = await getQueuedRecords();
+    const lastSync = await indexedDbAdapter.kvGet(LAST_SYNC_TIME_KEY);
+    const hoursSince = await hoursSinceLastSync();
 
     return {
       queuedCount: queued.length,
@@ -250,6 +259,7 @@ export const enqueue = async (type, data) => {
       'compliance_document': '/api/compliance-documents',
       'remittance': '/api/remittances',
       'trip': '/api/trips',
+      'lipa_later': '/api/lipa-later',
     };
 
     const endpoint = endpointMap[type] || `/api/${type}`;
@@ -286,10 +296,17 @@ export const enqueue = async (type, data) => {
  * This function is called once at app startup from App.js
  * It sets up listeners and periodic checks but doesn't return anything
  * 
- * @returns {void}
+ * @returns {Promise<void>}
  */
-export const startSyncMonitor = () => {
+export const startSyncMonitor = async () => {
   try {
+    // Ensure sync queue store is ready
+    const ready = await ensureSyncQueueStore();
+    if (!ready) {
+      console.error('[SyncMonitor] Failed to initialize sync queue store');
+      return;
+    }
+
     console.log('[SyncMonitor] ✅ Starting sync monitor...');
     
     // Check if we're in a browser environment (web/PWA)
@@ -313,8 +330,8 @@ export const startSyncMonitor = () => {
     window.addEventListener('offline', handleOffline);
 
     // Periodic sync check (every 30 seconds)
-    const syncInterval = setInterval(() => {
-      const stats = getSyncStats();
+    const syncInterval = setInterval(async () => {
+      const stats = await getSyncStats();
       if (stats.queuedCount > 0) {
         console.log(`[SyncMonitor] ⏱️ Periodic check: ${stats.queuedCount} records pending`);
         processPendingSync();
@@ -347,7 +364,7 @@ export const startSyncMonitor = () => {
  */
 export const processPendingSync = async () => {
   try {
-    const pending = getPendingRecords();
+    const pending = await getPendingRecords();
     
     if (pending.length === 0) {
       console.log('[ProcessSync] ✅ No pending records to sync');
@@ -383,27 +400,27 @@ export const processPendingSync = async () => {
         const simulatedSuccess = true;
 
         if (simulatedSuccess) {
-          removeFromSyncQueue(record.id);
+          await removeFromSyncQueue(record.id);
           console.log(`[ProcessSync] ✅ Synced: ${record.id}`);
           succeeded++;
         } else {
           // Increment retry count
           const newRetries = (record.retries || 0) + 1;
-          updateQueuedRecord(record.id, { retries: newRetries });
+          await updateQueuedRecord(record.id, { retries: newRetries });
           console.log(`[ProcessSync] ⚠️ Retry: ${record.id} (attempt ${newRetries})`);
           retried++;
         }
       } catch (err) {
         console.error(`[ProcessSync] ❌ Error syncing ${record.id}:`, err);
         const newRetries = (record.retries || 0) + 1;
-        updateQueuedRecord(record.id, { retries: newRetries });
+        await updateQueuedRecord(record.id, { retries: newRetries });
         failed++;
       }
     }
 
     // Update last sync time on successful completion
     if (succeeded > 0) {
-      updateLastSyncTime();
+      await updateLastSyncTime();
     }
 
     console.log(`[ProcessSync] ✅ Sync complete: ${succeeded} succeeded, ${failed} failed, ${retried} retried`);
