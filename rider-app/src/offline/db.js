@@ -3,7 +3,7 @@
 // All operations are non-blocking and use structured storage
 // Supports 6-month data retention without restrictive caching limits
 
-import indexedDbAdapter from '../../adapters/indexeddb-adapter';
+import indexedDbAdapter from '../adapters/indexeddb-adapter';
 
 // ========== RIDER STATUS & ID ==========
 

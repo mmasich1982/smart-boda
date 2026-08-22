@@ -19,7 +19,7 @@
  * - Supports both 'ts' and 'timestamp' for backward compatibility
  */
 
-import * as db from '../../adapters/indexeddb-adapter';
+import * as db from '../adapters/indexeddb-adapter';
 
 const TRADING_DAY_START_HOUR = 4; // 4 AM local time
 const TRIPS_STORE = 'trips';
