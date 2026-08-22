@@ -1,5 +1,7 @@
 // rider-app/src/components/subscription/SubscriptionBanners.js
 // ✅ REUSABLE COMPONENTS: Trial status and price change banners
+// ✅ INDEXED DB: All data persisted locally with IndexedDB adapter
+// ✅ MULTILINGUAL: Full localization support via i18n
 
 import React, { useState, useEffect, useContext } from 'react';
 import {
@@ -12,7 +14,8 @@ import {
 } from 'react-native';
 import { AppContext } from '../../context/AppContext';
 import api from '../../api/client';
-import LocalStore from '../../offline/LocalStore';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { useTranslation } from '../../i18n/LocalizationProvider';
 
 const { width } = Dimensions.get('window');
 
@@ -22,6 +25,8 @@ const { width } = Dimensions.get('window');
  * SPEC SECTION 9: checkTrialNotifications()
  */
 export const TrialStatusBanner = ({ daysLeft, isTrialUser, onDismiss }) => {
+  const { t } = useTranslation();
+  
   if (!isTrialUser || daysLeft !== 0) {
     return null; // Only show on last day
   }
@@ -31,9 +36,9 @@ export const TrialStatusBanner = ({ daysLeft, isTrialUser, onDismiss }) => {
       <View style={styles.bannerContent}>
         <Text style={styles.trialIcon}>🎉</Text>
         <View style={{ flex: 1 }}>
-          <Text style={styles.trialTitle}>Last Day of Free Trial!</Text>
+          <Text style={styles.trialTitle}>{t('lastDayOfTrial') || 'Last Day of Free Trial!'}</Text>
           <Text style={styles.trialMessage}>
-            Choose Bi-Weekly (KSh 500) or Monthly (KSh 1,000) to continue
+            {t('subscriptionOptionsMessage') || 'Choose Bi-Weekly (KSh 500) or Monthly (KSh 1,000) to continue'}
           </Text>
         </View>
       </View>
@@ -54,6 +59,8 @@ export const TrialStatusBanner = ({ daysLeft, isTrialUser, onDismiss }) => {
  * Shows different messages for trial vs paid users
  */
 export const SubscriptionStatusBanner = ({ daysLeft, isTrialUser, navigation }) => {
+  const { t } = useTranslation();
+  
   if (daysLeft > 2 || daysLeft < 0) {
     return null; // Only show when ≤2 days
   }
@@ -67,15 +74,15 @@ export const SubscriptionStatusBanner = ({ daysLeft, isTrialUser, navigation }) 
     backgroundColor = '#fdecea';
     borderColor = '#ef5350';
     messageText = isTrialUser 
-      ? 'Your free trial ends today. Subscribe now.'
-      : 'Your subscription ends today. Renew now.';
+      ? t('trialEndsToday') || 'Your free trial ends today. Subscribe now.'
+      : t('subscriptionEndsToday') || 'Your subscription ends today. Renew now.';
     urgencyLevel = 'error';
   } else if (daysLeft === 1) {
     backgroundColor = '#fff3e0';
     borderColor = '#ff9800';
     messageText = isTrialUser
-      ? 'Your free trial ends tomorrow. Subscribe now.'
-      : 'Your subscription ends tomorrow. Renew now.';
+      ? t('trialEndsTomorrow') || 'Your free trial ends tomorrow. Subscribe now.'
+      : t('subscriptionEndsTomorrow') || 'Your subscription ends tomorrow. Renew now.';
     urgencyLevel = 'warning';
   }
 
@@ -97,7 +104,7 @@ export const SubscriptionStatusBanner = ({ daysLeft, isTrialUser, navigation }) 
       ]}>
         {messageText}
       </Text>
-      <Text style={styles.statusTap}>Tap to manage →</Text>
+      <Text style={styles.statusTap}>{t('tapToManage') || 'Tap to manage'} →</Text>
     </TouchableOpacity>
   );
 };
@@ -109,7 +116,8 @@ export const SubscriptionStatusBanner = ({ daysLeft, isTrialUser, navigation }) 
  */
 export const PriceChangeBanner = ({ pendingChange, onDismiss }) => {
   const { state } = useContext(AppContext);
-  const { api } = useContext(AppContext);
+  const { api: contextApi } = useContext(AppContext);
+  const { t } = useTranslation();
   const [dismissed, setDismissed] = useState(false);
 
   if (!pendingChange || dismissed) {
@@ -123,10 +131,10 @@ export const PriceChangeBanner = ({ pendingChange, onDismiss }) => {
   const handleViewPriceChange = async () => {
     try {
       // Mark as viewed in backend
-      await api.post('/api/riders/subscription/mark-price-change-viewed');
+      await contextApi.post('/api/riders/subscription/mark-price-change-viewed');
       
-      // Cache it
-      LocalStore.set(
+      // Cache it using IndexedDB
+      await indexedDbAdapter.kvSet(
         `price_change_viewed_${state?.riderId}`,
         JSON.stringify({ viewedAt: new Date().toISOString() })
       );
@@ -146,14 +154,14 @@ export const PriceChangeBanner = ({ pendingChange, onDismiss }) => {
       <View style={styles.priceChangeContent}>
         <Text style={styles.priceChangeIcon}>⚠️</Text>
         <View style={{ flex: 1 }}>
-          <Text style={styles.priceChangeTitle}>Price Change Notice</Text>
+          <Text style={styles.priceChangeTitle}>{t('priceChangeNotice') || 'Price Change Notice'}</Text>
           <Text style={styles.priceChangeDetails}>
-            {pendingChange.biweekly_price && `Bi-Weekly: ${pendingChange.biweekly_price} KSh`}
+            {pendingChange.biweekly_price && `${t('biweekly') || 'Bi-Weekly'}: ${pendingChange.biweekly_price} KSh`}
             {pendingChange.biweekly_price && pendingChange.monthly_price && ' | '}
-            {pendingChange.monthly_price && `Monthly: ${pendingChange.monthly_price} KSh`}
+            {pendingChange.monthly_price && `${t('monthly') || 'Monthly'}: ${pendingChange.monthly_price} KSh`}
           </Text>
           <Text style={styles.priceChangeTime}>
-            Effective in {pendingChange.hours_until} hours
+            {t('effectiveIn') || 'Effective in'} {pendingChange.hours_until} {t('hours') || 'hours'}
           </Text>
         </View>
       </View>
@@ -167,6 +175,7 @@ export const PriceChangeBanner = ({ pendingChange, onDismiss }) => {
  * Shows when account is unlocked after payment
  */
 export const UnlockedNotificationBanner = ({ onDismiss }) => {
+  const { t } = useTranslation();
   const [visible, setVisible] = useState(true);
 
   if (!visible) return null;
@@ -181,9 +190,9 @@ export const UnlockedNotificationBanner = ({ onDismiss }) => {
       <View style={styles.unlockedContent}>
         <Text style={styles.unlockedIcon}>✅</Text>
         <View style={{ flex: 1 }}>
-          <Text style={styles.unlockedTitle}>Account Unlocked!</Text>
+          <Text style={styles.unlockedTitle}>{t('accountUnlocked') || 'Account Unlocked!'}</Text>
           <Text style={styles.unlockedMessage}>
-            Your subscription is active. Enjoy using the app!
+            {t('subscriptionActiveMessage') || 'Your subscription is active. Enjoy using the app!'}
           </Text>
         </View>
       </View>
@@ -199,19 +208,20 @@ export const UnlockedNotificationBanner = ({ onDismiss }) => {
  * Shows after payment is submitted, waiting for admin verification
  */
 export const PaymentPendingBanner = ({ frequency, amount }) => {
-  const frequencyLabel = frequency === 'biweekly' ? 'Bi-Weekly' : 'Monthly';
+  const { t } = useTranslation();
+  const frequencyLabel = frequency === 'biweekly' ? t('biweekly') || 'Bi-Weekly' : t('monthly') || 'Monthly';
 
   return (
     <View style={styles.pendingBanner}>
       <View style={styles.pendingContent}>
         <Text style={styles.pendingIcon}>⏳</Text>
         <View style={{ flex: 1 }}>
-          <Text style={styles.pendingTitle}>Payment Under Review</Text>
+          <Text style={styles.pendingTitle}>{t('paymentUnderReview') || 'Payment Under Review'}</Text>
           <Text style={styles.pendingDetails}>
-            {frequencyLabel} plan (KSh {amount})
+            {frequencyLabel} {t('plan') || 'plan'} (KSh {amount})
           </Text>
           <Text style={styles.pendingMessage}>
-            Our team will verify your M-Pesa payment within a few hours
+            {t('paymentVerificationMessage') || 'Our team will verify your M-Pesa payment within a few hours'}
           </Text>
         </View>
       </View>
@@ -401,11 +411,3 @@ const styles = StyleSheet.create({
     marginLeft: 12
   }
 });
-
-export default {
-  TrialStatusBanner,
-  SubscriptionStatusBanner,
-  PriceChangeBanner,
-  UnlockedNotificationBanner,
-  PaymentPendingBanner
-};

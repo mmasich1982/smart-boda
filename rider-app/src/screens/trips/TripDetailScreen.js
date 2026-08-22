@@ -1,261 +1,429 @@
-// rider-app/src/screens/trips/TripDetailScreen.js
-// ✅ UPDATED: Offline-first with cache-first trip loading
-// ✅ MULTILINGUAL: Uses i18n for all UI text
-// ✅ NETWORK AWARE: Real-time connectivity detection
-// - Loads trip from local storage immediately
-// - No API calls for trip data (data in local repository)
-// - Supports trip editing and void operations via enqueue()
-// - No network errors shown to user
-// - UI/UX design preserved exactly
-
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Alert } from 'react-native';
-import BackLink from '../../components/BackLink';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Switch } from 'react-native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
-import { useNetworkStatus } from '../../hooks/useNetworkStatus';
-import { getTripById, updateTripLocally } from '../../offline/tripsRepository';
-import { enqueue } from '../../offline/syncQueue';
+import { useToast } from '../../components/Toast';
+import BackLink from '../../components/BackLink';
+import DropdownField from '../../components/DropdownField';
+import InlineWarning from '../../components/InlineWarning';
+import PrimaryButton from '../../components/PrimaryButton';
+import { getTripById, saveTripCorrection, voidTrip as voidTripInDb } from '../../offline/tripsRepository';
+import { CORRECTION_WINDOW_HOURS, CORRECTION_REASONS } from '../../constants/tripConstants';
 
-const CORRECTION_WINDOW_HOURS = 3;
-const PAYMENT_METHODS = {
-  Cash: { label: 'Cash', color: '#ff7a1a' },
-  MPesa: { label: 'M-Pesa', color: '#1e9e6f' },
-  LipaLater: { label: 'Lipa Later', color: '#8b5cf6' },
-};
+const PAYMENT_METHODS = [
+  { key: 'Cash', label: 'Cash', emoji: '💵' },
+  { key: 'MPesa', label: 'M-Pesa', emoji: '📱' },
+];
 
 export default function TripDetailScreen({ navigation, route }) {
-  const { tripId } = route.params;
   const { t } = useTranslation();
-  const { isConnected, isInitialized } = useNetworkStatus();
+  const { showToast } = useToast();
+  const { tripId } = route.params || {};
+
   const [trip, setTrip] = useState(null);
+  const [draftAmount, setDraftAmount] = useState('');
+  const [draftMethod, setDraftMethod] = useState('');
+  const [draftReason, setDraftReason] = useState('');
+  const [voidConfirmed, setVoidConfirmed] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  // ✅ CACHE-FIRST: Load trip from local storage
   useEffect(() => {
-    async function loadTrip() {
-      try {
-        setLoading(true);
-        const tripData = await getTripById(tripId);
-        
-        if (!tripData) {
-          setError(t('error_tripNotFound') || 'Trip not found.');
-          return;
-        }
-
-        setTrip(tripData);
-        setError('');
-      } catch (err) {
-        console.error('Error loading trip:', err);
-        setError(t('error_loadTripDetails') || 'Could not load trip details.');
-      } finally {
-        setLoading(false);
-      }
-    }
-
     loadTrip();
-  }, [tripId, t]);
+  }, [tripId]);
+
+  const loadTrip = async () => {
+    try {
+      setLoading(true);
+      const tripData = await getTripById(tripId);
+      if (tripData) {
+        setTrip(tripData);
+        setDraftAmount(tripData.amount.toString());
+        setDraftMethod(tripData.paymentMethod);
+        setDraftReason(tripData.correctionReason || '');
+      } else {
+        showToast('Trip not found', 'error');
+        navigation.goBack();
+      }
+    } catch (err) {
+      console.error('Load trip error:', err);
+      showToast('Error loading trip', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const hoursSinceTrip = () => {
-    const ts = trip?.ts || trip?.timestamp || 0;
+    if (!trip) return 0;
     const now = Date.now();
-    return (now - ts) / (1000 * 60 * 60);
+    return (now - trip.timestamp) / (1000 * 60 * 60);
   };
 
-  const canEdit = hoursSinceTrip() < CORRECTION_WINDOW_HOURS;
-  const remainHours = Math.max(0, CORRECTION_WINDOW_HOURS - hoursSinceTrip());
+  const isEditable = hoursSinceTrip() < CORRECTION_WINDOW_HOURS;
+  const remainingHours = Math.max(0, CORRECTION_WINDOW_HOURS - hoursSinceTrip());
 
-  const handleEdit = () => {
-    if (!canEdit) {
-      Alert.alert(
-        t('error_cannotEdit') || 'Cannot Edit', 
-        t('error_tripLocked', { hours: remainHours.toFixed(1) }) || `This trip is locked and can no longer be edited. (${remainHours.toFixed(1)}h remaining)`
-      );
-      return;
-    }
-    navigation.navigate('EditTrip', { tripId });
-  };
-
-  const handleVoid = () => {
-    if (trip?.status === 'voided') {
-      Alert.alert(
-        t('error_alreadyVoided') || 'Already Voided', 
-        t('error_tripAlreadyVoided') || 'This trip has already been voided.'
-      );
+  const handleSaveCorrection = async () => {
+    if (!draftReason) {
+      showToast('Select a Correction Reason to continue', 'warn');
       return;
     }
 
-    Alert.alert(
-      t('confirmVoid') || 'Void Trip?',
-      t('confirmVoidMessage') || 'This action cannot be undone. The trip will be recorded as voided.',
-      [
-        { text: t('cancel') || 'Cancel', style: 'cancel' },
-        {
-          text: t('void') || 'Void',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // ✅ QUEUE VOID OPERATION
-              await enqueue('trip_void', {
-                tripId,
-                voidedAt: Date.now(),
-                reason: t('voidReason_userInitiated') || 'User initiated void',
-              });
+    const amt = parseFloat(draftAmount);
+    if (!amt || amt <= 0) {
+      showToast('Corrected amount must be greater than zero', 'warn');
+      return;
+    }
 
-              // Update local state
-              setTrip({ ...trip, status: 'voided' });
-              
-              // Navigate back
-              navigation.goBack();
-            } catch (err) {
-              console.error('Error voiding trip:', err);
-              Alert.alert(t('error') || 'Error', t('error_voidFailed') || 'Could not void trip. Please try again.');
-            }
-          },
-        },
-      ]
-    );
+    try {
+      setSaving(true);
+      await saveTripCorrection(tripId, {
+        newAmount: amt,
+        newMethod: draftMethod,
+        reason: draftReason,
+      });
+      showToast(`Trip updated. Today's total updated.`, 'success');
+      navigation.navigate('DailyTradeSummary', { refreshData: true });
+    } catch (err) {
+      console.error('Save correction error:', err);
+      showToast('Error saving correction', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  if (loading) {
+  const handleVoidTrip = async () => {
+    if (!draftReason) {
+      showToast('Select a Correction Reason before voiding', 'warn');
+      return;
+    }
+
+    if (!voidConfirmed) {
+      showToast('Please confirm the Void action — this is a second, deliberate step', 'warn');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      await voidTripInDb(tripId, { reason: draftReason });
+      showToast("Trip removed from today's total. You can view voided trips anytime.", 'success');
+      navigation.navigate('DailyTradeSummary', { refreshData: true });
+    } catch (err) {
+      console.error('Void trip error:', err);
+      showToast('Error voiding trip', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRequestOutOfWindow = async () => {
+    try {
+      setSaving(true);
+      // Backend will handle the submission
+      showToast("Your correction request has been submitted. We'll update you within 72 hours.", 'warn');
+      navigation.navigate('DailyTradeSummary');
+    } catch (err) {
+      console.error('Request error:', err);
+      showToast('Error submitting request', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading || !trip) {
     return (
       <View style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} />
-        <Text style={styles.loading}>{t('loading') || 'Loading...'}</Text>
+        <Text style={styles.loadingText}>Loading...</Text>
       </View>
     );
   }
 
-  if (!trip || error) {
+  if (!isEditable) {
     return (
-      <View style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} />
-        <Text style={styles.title}>{t('tripDetails') || 'Trip Details'}</Text>
-        {error && <Text style={styles.error}>{error}</Text>}
-      </View>
+      <ScrollView style={styles.container}>
+        <BackLink label="Back" onPress={() => navigation.goBack()} />
+        <Text style={styles.screenTitle}>Trip Detail</Text>
+        <Text style={styles.screenSub}>RA-04-B · outside correction window</Text>
+
+        <InlineWarning
+          icon="🔒"
+          message="This trip can no longer be edited directly — its 24-hour correction window has closed."
+          type="error"
+        />
+
+        <View style={styles.card}>
+          <View style={styles.kvRow}>
+            <Text style={styles.kvKey}>Original amount</Text>
+            <Text style={styles.kvValue}>KSh {trip.amount.toLocaleString()}</Text>
+          </View>
+          <View style={styles.kvRow}>
+            <Text style={styles.kvKey}>Method</Text>
+            <Text style={styles.kvValue}>{trip.paymentMethod}</Text>
+          </View>
+          <View style={styles.kvRow}>
+            <Text style={styles.kvKey}>Recorded</Text>
+            <Text style={styles.kvValue}>{new Date(trip.timestamp).toLocaleString()}</Text>
+          </View>
+        </View>
+
+        <PrimaryButton
+          label="Request Correction →"
+          onPress={handleRequestOutOfWindow}
+          disabled={saving}
+        />
+      </ScrollView>
     );
   }
 
-  const method = trip.method || trip.paymentMethod || 'Unknown';
-  const methodInfo = PAYMENT_METHODS[method];
-  const methodLabel = methodInfo?.label || method;
-  const tripTime = new Date(trip.ts || trip.timestamp || 0);
+  const isLipaLaterTrip = trip.paymentMethod === 'LipaLater';
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.goBack()} />
-      <Text style={styles.title}>{t('tripDetails') || 'Trip Details'}</Text>
+      <BackLink label="Back" onPress={() => navigation.goBack()} />
+      <Text style={styles.screenTitle}>Trip Detail</Text>
+      <Text style={styles.screenSub}>
+        RA-04-B · Trip Correction / Void Card · Editable for {remainingHours.toFixed(1)} more hours
+      </Text>
 
-      <View style={[styles.card, trip.status === 'voided' && styles.voidedCard]}>
-        <View style={styles.heroSection}>
-          <Text style={styles.heroAmount}>KSh {(trip.amount || 0).toLocaleString()}</Text>
-          <Text style={styles.heroMethod}>{methodLabel}</Text>
-          {trip.status === 'voided' && (
-            <Text style={styles.voidedLabel}>{t('voided') || 'VOIDED'}</Text>
-          )}
-        </View>
-
-        <View style={styles.infoSection}>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>{t('dateTime') || 'Date & Time'}</Text>
-            <Text style={styles.infoValue}>
-              {tripTime.toLocaleDateString()} {tripTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </Text>
-          </View>
-
-          {trip.lipaLater && (
-            <>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>{t('customerName') || 'Customer Name'}</Text>
-                <Text style={styles.infoValue}>{trip.lipaLater.customerName || 'N/A'}</Text>
-              </View>
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>{t('status') || 'Status'}</Text>
-                <Text style={[styles.infoValue, { color: trip.lipaLater.settled ? '#1e9e6f' : '#ff7a1a' }]}>
-                  {trip.lipaLater.settled ? (t('settled') || 'Settled') : (t('pendingPayment') || 'Pending Payment')}
-                </Text>
-              </View>
-            </>
-          )}
-
-          {trip.note && (
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>{t('notes') || 'Notes'}</Text>
-              <Text style={styles.infoValue}>{trip.note}</Text>
-            </View>
-          )}
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>{t('status') || 'Status'}</Text>
-            <Text style={styles.infoValue}>
-              {trip.syncStatus === 'pending' ? '⏳ ' + (t('queuedForSync') || 'Queued for sync') : '✓ ' + (t('saved') || 'Saved')}
-            </Text>
-          </View>
-
-          {trip.correctionReason && (
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>{t('correctionReason') || 'Correction Reason'}</Text>
-              <Text style={styles.infoValue}>{trip.correctionReason}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {!canEdit && trip.status !== 'voided' && (
-        <View style={styles.lockedBanner}>
-          <Text style={styles.lockedText}>
-            {t('tripLocked') || 'This trip is locked and can no longer be edited.'}
+      <View style={styles.card}>
+        <View style={styles.kvRow}>
+          <Text style={styles.kvKey}>Original amount</Text>
+          <Text style={styles.kvValue}>
+            KSh{' '}
+            {trip.originalAmount !== undefined
+              ? trip.originalAmount.toLocaleString()
+              : trip.amount.toLocaleString()}
           </Text>
         </View>
+        {trip.originalAmount !== undefined && (
+          <View style={styles.kvRow}>
+            <Text style={styles.kvKey}>Current (corrected)</Text>
+            <Text style={styles.kvValue}>KSh {trip.amount.toLocaleString()}</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>Corrected Fare Amount</Text>
+        <TextInput
+          style={styles.textInput}
+          keyboardType="decimal-pad"
+          value={draftAmount}
+          onChangeText={setDraftAmount}
+          placeholder="0"
+        />
+      </View>
+
+      {isLipaLaterTrip && (
+        <InlineWarning
+          icon="🕒"
+          message={`This trip is Lipa Later for ${trip.lipaLaterCustomer || 'this customer'}. To change the method away from Lipa Later, pick Cash or M-Pesa below — the customer record will be removed.`}
+          type="info"
+        />
       )}
 
-      {trip.status !== 'voided' && canEdit && (
-        <TouchableOpacity style={styles.editBtn} onPress={handleEdit}>
-          <Text style={styles.editBtnText}>✏️ {t('editTrip') || 'Edit Trip'}</Text>
+      <Text style={styles.methodLabel}>Corrected Payment Method</Text>
+      <View style={styles.methodGrid}>
+        {PAYMENT_METHODS.map((method) => (
+          <TouchableOpacity
+            key={method.key}
+            style={[styles.methodTile, draftMethod === method.key && styles.methodTileSelected]}
+            onPress={() => setDraftMethod(method.key)}
+          >
+            <Text style={styles.methodEmoji}>{method.emoji}</Text>
+            <Text style={styles.methodLabel}>{method.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <View style={styles.field}>
+        <Text style={styles.fieldLabel}>
+          Correction Reason <Text style={styles.required}>*</Text>
+        </Text>
+        <DropdownField
+          selectedValue={draftReason}
+          onValueChange={setDraftReason}
+          items={CORRECTION_REASONS.map((r) => ({ label: r, value: r }))}
+          placeholder="Select..."
+        />
+      </View>
+
+      <PrimaryButton
+        label="Save Correction →"
+        onPress={handleSaveCorrection}
+        disabled={saving || !draftReason}
+        style={styles.saveButton}
+      />
+
+      <View style={[styles.card, styles.voidCard]}>
+        <Text style={styles.voidTitle}>⚠️ Void This Trip</Text>
+
+        <View style={styles.checkboxRow}>
+          <Switch
+            value={voidConfirmed}
+            onValueChange={setVoidConfirmed}
+            style={styles.switch}
+          />
+          <Text style={styles.checkboxText}>
+            I confirm this trip should be permanently removed from today's total.
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.voidButton, saving && styles.buttonDisabled]}
+          onPress={handleVoidTrip}
+          disabled={saving}
+        >
+          <Text style={styles.voidButtonText}>Void Trip</Text>
         </TouchableOpacity>
-      )}
-
-      {trip.status !== 'voided' && (
-        <TouchableOpacity style={styles.voidBtn} onPress={handleVoid}>
-          <Text style={styles.voidBtnText}>🗑 {t('voidTrip') || 'Void Trip'}</Text>
-        </TouchableOpacity>
-      )}
-
-      <TouchableOpacity style={styles.closeBtn} onPress={() => navigation.goBack()}>
-        <Text style={styles.closeBtnText}>{t('close') || 'Close'}</Text>
-      </TouchableOpacity>
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, backgroundColor: '#f6f4ef' },
-  loading: { fontSize: 14, color: '#5b606c', textAlign: 'center', marginTop: 20 },
-  title: { fontSize: 20, fontWeight: '700', marginVertical: 12, color: '#1a1c20' },
-  error: { fontSize: 13, color: '#e0453f', marginTop: 12, padding: 12, backgroundColor: '#fdecea', borderRadius: 8 },
-
-  card: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#e7e4db', borderRadius: 12, padding: 16, marginBottom: 16 },
-  voidedCard: { opacity: 0.7, backgroundColor: '#fafafa' },
-
-  heroSection: { alignItems: 'center', marginBottom: 20 },
-  heroAmount: { fontSize: 32, fontWeight: '700', color: '#ff7a1a', marginBottom: 6 },
-  heroMethod: { fontSize: 16, fontWeight: '600', color: '#1a1c20', marginBottom: 8 },
-  voidedLabel: { fontSize: 12, fontWeight: '700', color: '#e0453f', backgroundColor: '#fdecea', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4 },
-
-  infoSection: { borderTopWidth: 1, borderTopColor: '#e7e4db', paddingTop: 16 },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
-  infoLabel: { fontSize: 13, fontWeight: '600', color: '#5b606c' },
-  infoValue: { fontSize: 13, fontWeight: '600', color: '#1a1c20', textAlign: 'right', flex: 1, marginLeft: 16 },
-
-  lockedBanner: { backgroundColor: '#fff3cd', borderWidth: 1, borderColor: '#ffc107', borderRadius: 8, padding: 12, marginBottom: 12 },
-  lockedText: { fontSize: 13, color: '#856404', fontWeight: '600' },
-
-  editBtn: { backgroundColor: '#1e9e6f', borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginBottom: 10 },
-  editBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-
-  voidBtn: { backgroundColor: '#e0453f', borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginBottom: 10 },
-  voidBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-
-  closeBtn: { backgroundColor: '#e7e4db', borderRadius: 10, paddingVertical: 14, alignItems: 'center', marginBottom: 20 },
-  closeBtnText: { color: '#1a1c20', fontSize: 15, fontWeight: '700' },
+  container: {
+    flex: 1,
+    backgroundColor: '#f6f4ef',
+    padding: 16,
+  },
+  screenTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 4,
+  },
+  screenSub: {
+    fontSize: 12,
+    color: '#8b5cf6',
+    marginBottom: 16,
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
+  },
+  kvRow: {
+    display: 'flex',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7e4db',
+    borderStyle: 'dashed',
+  },
+  kvRow_last: {
+    borderBottomWidth: 0,
+  },
+  kvKey: {
+    fontSize: 12.5,
+    color: '#5b606c',
+  },
+  kvValue: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#1a1c20',
+  },
+  field: {
+    marginBottom: 16,
+  },
+  fieldLabel: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 8,
+  },
+  required: {
+    color: '#e0453f',
+  },
+  textInput: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 14,
+    color: '#1a1c20',
+  },
+  methodLabel: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.04,
+    color: '#5b606c',
+    marginBottom: 7,
+  },
+  methodGrid: {
+    display: 'flex',
+    flexDirection: 'row',
+    gap: 9,
+    marginBottom: 16,
+  },
+  methodTile: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 13,
+    padding: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  methodTileSelected: {
+    borderColor: '#ff7a1a',
+    backgroundColor: '#fff6ee',
+  },
+  methodEmoji: {
+    fontSize: 20,
+    marginBottom: 6,
+  },
+  saveButton: {
+    marginBottom: 10,
+  },
+  voidCard: {
+    borderColor: '#e0453f',
+    backgroundColor: '#fff9f8',
+  },
+  voidTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#e0453f',
+    marginBottom: 12,
+  },
+  checkboxRow: {
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  switch: {
+    transform: [{ scale: 0.8 }],
+  },
+  checkboxText: {
+    fontSize: 12.5,
+    color: '#1a1c20',
+    flex: 1,
+  },
+  voidButton: {
+    backgroundColor: '#e0453f',
+    borderRadius: 12,
+    padding: 13,
+    alignItems: 'center',
+  },
+  voidButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#5b606c',
+    textAlign: 'center',
+    marginTop: 20,
+  },
 });

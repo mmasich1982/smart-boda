@@ -1,7 +1,10 @@
 // rider-app/src/screens/subscription/ConfirmSubscriptionScreen.js
-// ✅ OFFLINE FIRST - M-Pesa payment with local save then sync
-// Following fuel entry screen pattern exactly
-// ✅ UPDATED: Using enqueue() for consistency across all screens
+// ✅ HYBRID SYNC ARCHITECTURE:
+// - Localization Provider for multilingual support
+// - Network Status hooks for real-time connectivity detection
+// - IndexedDB Adapter for offline-first persistent storage
+// - M-Pesa payment with local save then sync
+// - UI/UX design preserved exactly
 
 import React, { useState, useContext } from 'react';
 import {
@@ -15,13 +18,15 @@ import {
 } from 'react-native';
 import BackLink from '../../components/BackLink';
 import { AppContext } from '../../context/AppContext';
-import LocalStore from '../../offline/LocalStore';
-import { enqueue } from '../../offline/syncQueue';
+import { useTranslation } from '../../i18n/LocalizationProvider';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { addToSyncQueue } from '../../offline/syncQueue';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import api from '../../api/client';
 
 const ConfirmSubscriptionScreen = ({ navigation, route }) => {
   const { state } = useContext(AppContext);
+  const { t } = useTranslation();
   const { frequency, label, days, price, isRenewal } = route.params || {};
   
   const [mpesaCode, setMpesaCode] = useState('');
@@ -33,6 +38,30 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
 
   const riderId = state?.riderId;
 
+  // ✅ UPDATE CACHE: Add subscription status to IndexedDB
+  const updateSubscriptionCache = async (freq, planDays) => {
+    try {
+      const now = new Date();
+      const expiryDate = new Date(now.getTime() + planDays * 24 * 60 * 60 * 1000);
+      
+      const updatedSub = {
+        frequency: freq,
+        has_ever_paid: true,
+        expiry_at: expiryDate.toISOString(),
+        last_payment_at: now.toISOString(),
+        last_payment_amount: price,
+        urgency_banner_shown: false,
+        updated_at: now.toISOString(),
+      };
+
+      const cacheKey = `subscription_status_${riderId}`;
+      await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(updatedSub));
+      console.log('✅ Updated subscription cache in IndexedDB');
+    } catch (err) {
+      console.warn('⚠️ Failed to update subscription cache:', err);
+    }
+  };
+
   // ========================================================================
   // OFFLINE FIRST: Save locally first, then sync
   // ========================================================================
@@ -41,12 +70,18 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
     try {
       // Validation
       if (!mpesaCode || mpesaCode.trim().length < 8) {
-        showCriticalError('Please enter a valid M-Pesa code (at least 8 characters)', 'validation');
+        showCriticalError(
+          t('error_invalidMpesaCode') || 'Please enter a valid M-Pesa code (at least 8 characters)',
+          'validation'
+        );
         return;
       }
 
       if (!riderId) {
-        showCriticalError('Rider ID not available. Please restart the app.', 'auth');
+        showCriticalError(
+          t('error_riderIdNotAvailable') || 'Rider ID not available. Please restart the app.',
+          'auth'
+        );
         return;
       }
 
@@ -62,41 +97,39 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
 
       const recordId = `subscription_${riderId}_${Date.now()}`;
       const offlineRecord = { 
-        ...payload, 
-        id: recordId, 
-        rider_id: riderId,
-        status: 'pending'
-      };
-
-      console.log('💾 Saving subscription payment:', { recordId, riderId, frequency, price });
-
-      // ✅ ALWAYS save locally first
-      const localSaveSuccess = LocalStore.set(
-        `subscription_payment_${recordId}`,
-        JSON.stringify(offlineRecord)
-      );
-
-      if (!localSaveSuccess) {
-        showCriticalError('Failed to save locally. Storage may be full.', 'storage');
-        setSaving(false);
-        return;
-      }
-
-      // Update subscription cache to show new state immediately
-      updateSubscriptionCache(frequency, days);
-
-      // ✅ QUEUE FOR SYNC using enqueue() for consistency
-      const queueSuccess = await enqueue('subscription_payment', {
         id: recordId,
         rider_id: riderId,
         frequency: frequency,
         mpesa_code: mpesaCode.trim().toUpperCase(),
-        price: price,
-        submitted_at: Date.now()
+        status: 'pending',
+        created_at: payload.created_at,
+      };
+
+      console.log('💾 Saving subscription payment:', { recordId, riderId, frequency, price });
+
+      // ✅ ALWAYS save locally first using IndexedDB
+      await indexedDbAdapter.insertRow('subscription_payments', offlineRecord);
+
+      // Update subscription cache to show new state immediately
+      await updateSubscriptionCache(frequency, days);
+
+      // ✅ ADD TO SYNC QUEUE FOR BACKGROUND SYNC
+      const queueSuccess = await addToSyncQueue({
+        id: recordId,
+        type: 'subscription_payment',
+        endpoint: `/api/riders/subscription/subscribe?rider_id=${riderId}`,
+        data: {
+          rider_id: riderId,
+          frequency: frequency,
+          mpesa_code: mpesaCode.trim().toUpperCase(),
+          price: price,
+          submitted_at: Date.now(),
+        },
+        timestamp: new Date(),
       });
 
       if (!queueSuccess) {
-        console.warn('⚠️ Failed to add to queue, but local save succeeded');
+        console.warn('⚠️ Failed to add to sync queue, but local save succeeded');
       }
 
       // Try to sync immediately only if online
@@ -110,7 +143,10 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
 
           if (response.status === 200 || response.status === 201) {
             console.log('✅ Payment synced successfully to API');
-            setSuccessMessage(`${label} subscription confirmed! Awaiting admin verification.`);
+            setSuccessMessage(
+              t('success_subscriptionConfirmed') || 
+              `${label} ${t('subscription') || 'subscription'} confirmed! ${t('awaitingVerification') || 'Awaiting admin verification.'}`
+            );
             
             setTimeout(() => {
               navigation.navigate('Subscription');
@@ -122,11 +158,15 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
             status: apiErr.response?.status,
             message: apiErr.message
           });
+          // Data is saved and queued, continue
         }
       }
 
       // Data is safely stored and queued - show success
-      setSuccessMessage(`${label} subscription saved. Syncing...`);
+      setSuccessMessage(
+        t('success_subscriptionSaving') || 
+        `${label} ${t('subscription') || 'subscription'} saved. Syncing...`
+      );
       
       setTimeout(() => {
         navigation.navigate('Subscription');
@@ -135,7 +175,7 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
     } catch (err) {
       console.error('❌ Payment error:', err);
       showCriticalError(
-        err.response?.data?.detail || 'Failed to save payment. Please try again.',
+        err.response?.data?.detail || t('error_saveFailed') || 'Failed to save payment. Please try again.',
         'save_error'
       );
     } finally {
@@ -143,35 +183,11 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
     }
   };
 
-  const updateSubscriptionCache = (freq, planDays) => {
-    try {
-      const now = new Date();
-      const expiryDate = new Date(now.getTime() + planDays * 24 * 60 * 60 * 1000);
-      
-      const updatedSub = {
-        frequency: freq,
-        has_ever_paid: true,
-        expiry_at: expiryDate.toISOString(),
-        last_payment_at: now.toISOString(),
-        last_payment_amount: price,
-        urgency_banner_shown: false
-      };
-
-      LocalStore.set(
-        `subscription_status_${riderId}`,
-        JSON.stringify(updatedSub)
-      );
-      console.log('✅ Updated subscription cache');
-    } catch (err) {
-      console.warn('⚠️ Failed to update cache:', err);
-    }
-  };
-
   if (!isInitialized) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} label="← Back" />
-        <Text style={styles.title}>Confirm Payment</Text>
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <Text style={styles.title}>{t('confirmPayment') || 'Confirm Payment'}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
@@ -182,14 +198,14 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
       style={styles.container}
       contentContainerStyle={{ paddingBottom: 100 }}
     >
-      <BackLink onPress={() => navigation.goBack()} label="← Back" />
-      <Text style={styles.title}>Confirm Payment</Text>
+      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+      <Text style={styles.title}>{t('confirmPayment') || 'Confirm Payment'}</Text>
 
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>{criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.dismissText}>Dismiss</Text>
+            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -203,30 +219,30 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
       {/* PRICE BREAKDOWN */}
       <View style={styles.breakdownCard}>
         <View style={styles.breakdownRow}>
-          <Text style={styles.breakdownLabel}>Plan</Text>
+          <Text style={styles.breakdownLabel}>{t('plan') || 'Plan'}</Text>
           <Text style={styles.breakdownValue}>{label}</Text>
         </View>
         <View style={styles.breakdownRow}>
-          <Text style={styles.breakdownLabel}>Duration</Text>
-          <Text style={styles.breakdownValue}>{days} days</Text>
+          <Text style={styles.breakdownLabel}>{t('duration') || 'Duration'}</Text>
+          <Text style={styles.breakdownValue}>{days} {t('days') || 'days'}</Text>
         </View>
         <View style={[styles.breakdownRow, styles.breakdownRowHighlight]}>
-          <Text style={styles.breakdownLabelHighlight}>Amount to Pay</Text>
+          <Text style={styles.breakdownLabelHighlight}>{t('amountToPay') || 'Amount to Pay'}</Text>
           <Text style={styles.breakdownValueHighlight}>KSh {price}</Text>
         </View>
       </View>
 
       {/* M-PESA INSTRUCTIONS */}
       <View style={styles.instructionsCard}>
-        <Text style={styles.instructionsTitle}>How to Pay via M-Pesa</Text>
+        <Text style={styles.instructionsTitle}>{t('mpesaInstructions') || 'How to Pay via M-Pesa'}</Text>
         
         <View style={styles.instructionStep}>
           <View style={styles.stepCircle}>
             <Text style={styles.stepNumber}>1</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>Dial or Open M-Pesa</Text>
-            <Text style={styles.stepText}>Use *334# or the M-Pesa app</Text>
+            <Text style={styles.stepTitle}>{t('step1_dialMpesa') || 'Dial or Open M-Pesa'}</Text>
+            <Text style={styles.stepText}>{t('step1_desc') || 'Use *334# or the M-Pesa app'}</Text>
           </View>
         </View>
 
@@ -235,8 +251,8 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
             <Text style={styles.stepNumber}>2</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>Select Send Money</Text>
-            <Text style={styles.stepText}>Choose to send money to another number</Text>
+            <Text style={styles.stepTitle}>{t('step2_selectSend') || 'Select Send Money'}</Text>
+            <Text style={styles.stepText}>{t('step2_desc') || 'Choose to send money to another number'}</Text>
           </View>
         </View>
 
@@ -245,7 +261,7 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
             <Text style={styles.stepNumber}>3</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>Enter Our Number</Text>
+            <Text style={styles.stepTitle}>{t('step3_enterNumber') || 'Enter Our Number'}</Text>
             <Text style={styles.stepText}>0757 334 481</Text>
           </View>
         </View>
@@ -255,8 +271,8 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
             <Text style={styles.stepNumber}>4</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>Enter Amount & PIN</Text>
-            <Text style={styles.stepText}>KSh {price} + Your M-Pesa PIN</Text>
+            <Text style={styles.stepTitle}>{t('step4_enterAmount') || 'Enter Amount & PIN'}</Text>
+            <Text style={styles.stepText}>KSh {price} + {t('yourMpesaPIN') || 'Your M-Pesa PIN'}</Text>
           </View>
         </View>
 
@@ -265,8 +281,8 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
             <Text style={styles.stepNumber}>5</Text>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>Get Confirmation Code</Text>
-            <Text style={styles.stepText}>M-Pesa sends it via SMS</Text>
+            <Text style={styles.stepTitle}>{t('step5_getCode') || 'Get Confirmation Code'}</Text>
+            <Text style={styles.stepText}>{t('step5_desc') || 'M-Pesa sends it via SMS'}</Text>
           </View>
         </View>
       </View>
@@ -274,11 +290,11 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
       {/* M-PESA CODE INPUT */}
       <View style={styles.field}>
         <Text style={styles.label}>
-          M-Pesa Confirmation Code <Text style={styles.required}>*</Text>
+          {t('mpesaCode') || 'M-Pesa Confirmation Code'} <Text style={styles.required}>*</Text>
         </Text>
         <TextInput
           style={styles.input}
-          placeholder="e.g., ABCD1234EF"
+          placeholder={t('placeholder_mpesaCode') || 'e.g., ABCD1234EF'}
           placeholderTextColor="#b0a89d"
           value={mpesaCode}
           onChangeText={(val) => {
@@ -289,14 +305,14 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
           autoCapitalize="characters"
           maxLength={20}
         />
-        <Text style={styles.hint}>Enter the code you received from Safaricom</Text>
+        <Text style={styles.hint}>{t('hint_mpesaCode') || 'Enter the code you received from Safaricom'}</Text>
       </View>
 
       {/* INFO BANNER */}
       <View style={styles.infoBanner}>
         <Text style={styles.infoIcon}>ℹ️</Text>
         <Text style={styles.infoText}>
-          Your payment will be verified by our team within a few hours. You'll receive a notification once confirmed.
+          {t('info_paymentVerification') || 'Your payment will be verified by our team within a few hours. You\'ll receive a notification once confirmed.'}
         </Text>
       </View>
 
@@ -319,7 +335,7 @@ const ConfirmSubscriptionScreen = ({ navigation, route }) => {
             />
           )}
           <Text style={styles.primaryBtnText}>
-            {saving ? 'Submitting...' : `Submit Payment →`}
+            {saving ? (t('submitting') || 'Submitting...') : (t('submitPaymentButton') || 'Submit Payment →')}
           </Text>
         </View>
       </TouchableOpacity>
