@@ -2,7 +2,7 @@
 // ✅ MIGRATION: Fully migrated to IndexedDB from LocalStore
 // Uses existing indexedDbAdapter for non-blocking, structured queries
 
-import * as db from './adapters/indexedDbAdapter';
+//import * as db from './adapters/indexedDbAdapter';
 
 const SYNC_QUEUE_STORE = 'sync_queue';
 const LAST_SYNC_TIME_KEY = 'last_sync_time';
