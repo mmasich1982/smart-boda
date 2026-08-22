@@ -1,5 +1,7 @@
 // rider-app/src/screens/serviceHub/MaintenanceHistoryScreen.js
 // ✅ SEAMLESS ONLINE/OFFLINE: Clean UI, no status banners
+// ✅ INDEXED DB: All data persisted locally with IndexedDB adapter
+// ✅ MULTILINGUAL: Full localization support via i18n
 // Silently manages sync in background, only shows critical errors
 
 const SERVICE_TYPE_ICONS = {
@@ -29,11 +31,13 @@ import BackLink from '../../components/BackLink';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { getLocalRiderId } from '../../offline/db';
-import LocalStore from '../../offline/LocalStore';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import { useTranslation } from '../../i18n/LocalizationProvider';
 
 export default function MaintenanceHistoryScreen({ navigation }) {
   const { state } = useRider();
+  const { t } = useTranslation();
   const [localRiderId, setLocalRiderId] = useState(null);
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -84,27 +88,14 @@ export default function MaintenanceHistoryScreen({ navigation }) {
   }, []);
 
   /**
-   * Reconstruct history from individual entries
+   * Reconstruct history from IndexedDB
    * Fallback when cache is missing
    */
-  const reconstructHistoryFromIndividualEntries = useCallback(() => {
+  const reconstructHistoryFromIndividualEntries = useCallback(async () => {
     try {
-      const entries = [];
-      const allKeys = LocalStore.listKeys('maintenance_entry_');
-      
-      for (const key of allKeys) {
-        try {
-          const value = LocalStore.get(key);
-          if (value) {
-            const entry = JSON.parse(value);
-            if (entry && entry.rider_id === effectiveRiderId) {
-              entries.push(entry);
-            }
-          }
-        } catch (parseErr) {
-          // Skip malformed entries
-        }
-      }
+      const entries = await indexedDbAdapter.queryRows('local_maintenance_entry', 
+        (entry) => entry && entry.rider_id === effectiveRiderId
+      );
       
       // Sort by created_at (newest first)
       entries.sort((a, b) => 
@@ -135,10 +126,10 @@ export default function MaintenanceHistoryScreen({ navigation }) {
 
         // Try cache first
         console.log('📦 Checking cache...');
-        const cachedDataStr = LocalStore.get(cacheKey);
-        if (cachedDataStr) {
+        const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+        if (cachedData) {
           try {
-            const items = JSON.parse(cachedDataStr);
+            const items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
             if (Array.isArray(items) && items.length > 0) {
               if (isMounted) {
                 setAllEntries(items);
@@ -147,14 +138,14 @@ export default function MaintenanceHistoryScreen({ navigation }) {
               }
             } else {
               // Cache is empty, reconstruct from entries
-              const reconstructed = reconstructHistoryFromIndividualEntries();
+              const reconstructed = await reconstructHistoryFromIndividualEntries();
               if (isMounted && reconstructed.length > 0) {
                 setAllEntries(reconstructed);
                 setPage(1);
               }
             }
           } catch (parseErr) {
-            const reconstructed = reconstructHistoryFromIndividualEntries();
+            const reconstructed = await reconstructHistoryFromIndividualEntries();
             if (isMounted && reconstructed.length > 0) {
               setAllEntries(reconstructed);
               setPage(1);
@@ -162,7 +153,7 @@ export default function MaintenanceHistoryScreen({ navigation }) {
           }
         } else {
           // No cache, reconstruct from individual entries
-          const reconstructed = reconstructHistoryFromIndividualEntries();
+          const reconstructed = await reconstructHistoryFromIndividualEntries();
           if (isMounted && reconstructed.length > 0) {
             setAllEntries(reconstructed);
             setPage(1);
@@ -187,8 +178,8 @@ export default function MaintenanceHistoryScreen({ navigation }) {
 
               setAllEntries(items);
               
-              // Cache it for next time
-              LocalStore.set(cacheKey, JSON.stringify(items));
+              // Cache it for next time using IndexedDB
+              await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(items));
               console.log(`✅ Synced ${items.length} entries and cached`);
             }
           } catch (apiErr) {
@@ -203,7 +194,7 @@ export default function MaintenanceHistoryScreen({ navigation }) {
       } catch (err) {
         console.error('❌ Fetch error:', err);
         if (isMounted) {
-          showCriticalError('Failed to load history. Please try again.', 'data_load');
+          showCriticalError(t('error_failedToLoadHistory') || 'Failed to load history. Please try again.', 'data_load');
           setLoading(false);
         }
       }
@@ -224,26 +215,28 @@ export default function MaintenanceHistoryScreen({ navigation }) {
     useCallback(() => {
       if (!effectiveRiderId || !isInitialized) return;
 
-      try {
-        // Check if cache has been updated
-        const cacheKey = `maintenance_history_${effectiveRiderId}`;
-        const cachedDataStr = LocalStore.get(cacheKey);
-        
-        if (cachedDataStr) {
-          const items = JSON.parse(cachedDataStr);
-          if (Array.isArray(items) && items.length > 0) {
-            setAllEntries(items);
+      (async () => {
+        try {
+          // Check if cache has been updated
+          const cacheKey = `maintenance_history_${effectiveRiderId}`;
+          const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+          
+          if (cachedData) {
+            const items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+            if (Array.isArray(items) && items.length > 0) {
+              setAllEntries(items);
+            }
+          } else {
+            // Reconstruct from individual entries if cache is missing
+            const reconstructed = await reconstructHistoryFromIndividualEntries();
+            if (reconstructed.length > 0) {
+              setAllEntries(reconstructed);
+            }
           }
-        } else {
-          // Reconstruct from individual entries if cache is missing
-          const reconstructed = reconstructHistoryFromIndividualEntries();
-          if (reconstructed.length > 0) {
-            setAllEntries(reconstructed);
-          }
+        } catch (err) {
+          console.warn('⚠️ Error in focus effect:', err);
         }
-      } catch (err) {
-        console.warn('⚠️ Error in focus effect:', err);
-      }
+      })();
     }, [effectiveRiderId, isInitialized, reconstructHistoryFromIndividualEntries])
   );
 
@@ -276,8 +269,8 @@ export default function MaintenanceHistoryScreen({ navigation }) {
   if (loading && !allEntries.length && !isInitialized) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-        <Text style={styles.title}>Service Cost History</Text>
+        <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
+        <Text style={styles.title}>{t('serviceHistoryTitle') || 'Service Cost History'}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
@@ -285,15 +278,15 @@ export default function MaintenanceHistoryScreen({ navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-      <Text style={styles.title}>Service Cost History</Text>
+      <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
+      <Text style={styles.title}>{t('serviceHistoryTitle') || 'Service Cost History'}</Text>
 
       {/* CRITICAL ERROR ONLY - No offline/status messages */}
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>{criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.dismissText}>Dismiss</Text>
+            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -308,7 +301,10 @@ export default function MaintenanceHistoryScreen({ navigation }) {
             activeOpacity={0.7}
           >
             <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
-              {p === 'thisMonth' ? 'This Month' : p === 'lastMonth' ? 'Last Month' : p === 'last6' ? '6 Months' : 'All Time'}
+              {p === 'thisMonth' ? t('thisMonth') || 'This Month' : 
+               p === 'lastMonth' ? t('lastMonth') || 'Last Month' : 
+               p === 'last6' ? t('last6Months') || '6 Months' : 
+               t('allTime') || 'All Time'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -318,12 +314,12 @@ export default function MaintenanceHistoryScreen({ navigation }) {
       <View style={styles.summaryCard}>
         <View style={styles.summaryRow}>
           <View style={styles.summaryCol}>
-            <Text style={styles.summaryLabel}>Total Spent</Text>
+            <Text style={styles.summaryLabel}>{t('totalSpent') || 'Total Spent'}</Text>
             <Text style={styles.summaryValue}>KSh {totalSpent.toLocaleString()}</Text>
           </View>
           <View style={styles.summarySpacer} />
           <View style={styles.summaryCol}>
-            <Text style={styles.summaryLabel}>Entries</Text>
+            <Text style={styles.summaryLabel}>{t('entries') || 'Entries'}</Text>
             <Text style={styles.summaryValue}>{entries.length}</Text>
           </View>
         </View>
@@ -353,7 +349,7 @@ export default function MaintenanceHistoryScreen({ navigation }) {
             </View>
           ))
         ) : (
-          <Text style={styles.emptyMessage}>No entries for this period</Text>
+          <Text style={styles.emptyMessage}>{t('noEntriesThisPeriod') || 'No entries for this period'}</Text>
         )}
       </View>
 
@@ -361,7 +357,7 @@ export default function MaintenanceHistoryScreen({ navigation }) {
       {totalPages > 1 && (
         <View style={styles.paginationContainer}>
           <Text style={styles.paginationInfo}>
-            Showing {pageItems.length ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, entries.length)} of {entries.length}
+            {t('showing') || 'Showing'} {pageItems.length ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, entries.length)} {t('of') || 'of'} {entries.length}
           </Text>
           <View style={styles.paginationControls}>
             <TouchableOpacity

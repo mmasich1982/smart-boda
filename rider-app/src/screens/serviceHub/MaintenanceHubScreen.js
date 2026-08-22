@@ -1,5 +1,7 @@
 // rider-app/src/screens/serviceHub/MaintenanceHubScreen.js
 // ✅ SEAMLESS ONLINE/OFFLINE: Clean UI without status banners
+// ✅ INDEXED DB: All data persisted locally with IndexedDB adapter
+// ✅ MULTILINGUAL: Full localization support via i18n
 // Manages connectivity in background silently
 
 import React, { useState, useEffect } from 'react';
@@ -8,11 +10,13 @@ import BackLink from '../../components/BackLink';
 import { useRider } from '../../rider/RiderContext';
 import api from '../../api/client';
 import { getLocalRiderId } from '../../offline/db';
-import LocalStore from '../../offline/LocalStore';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import { useTranslation } from '../../i18n/LocalizationProvider';
 
 export default function MaintenanceHubScreen({ navigation }) {
   const { state } = useRider();
+  const { t } = useTranslation();
   const [localRiderId, setLocalRiderId] = useState(null);
   const [loading, setLoading] = useState(true);
   
@@ -45,8 +49,8 @@ export default function MaintenanceHubScreen({ navigation }) {
       try {
         setLoading(true);
         
-        // Cache hub initialization state for offline use
-        LocalStore.set(
+        // Cache hub initialization state for offline use using IndexedDB
+        await indexedDbAdapter.kvSet(
           `maintenance_hub_${effectiveRiderId}`,
           JSON.stringify({
             initialized: true,
@@ -57,7 +61,7 @@ export default function MaintenanceHubScreen({ navigation }) {
         console.log('✅ Maintenance hub initialized');
       } catch (err) {
         console.error('❌ Hub initialization error:', err);
-        showCriticalError('Failed to initialize hub. Please try again.', 'init');
+        showCriticalError(t('error_hubInitFailed') || 'Failed to initialize hub. Please try again.', 'init');
       } finally {
         setLoading(false);
       }
@@ -69,8 +73,8 @@ export default function MaintenanceHubScreen({ navigation }) {
   if (!isInitialized) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
-        <Text style={styles.title}>Service Motorcycle</Text>
+        <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
+        <Text style={styles.title}>{t('serviceMotorcycle') || 'Service Motorcycle'}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
@@ -78,16 +82,16 @@ export default function MaintenanceHubScreen({ navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
+      <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
       
-      <Text style={styles.title}>Service Motorcycle</Text>
+      <Text style={styles.title}>{t('serviceMotorcycle') || 'Service Motorcycle'}</Text>
 
       {/* CRITICAL ERROR ONLY - Never show status/offline info */}
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.criticalErrorDismiss}>Dismiss</Text>
+            <Text style={styles.criticalErrorDismiss}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -102,7 +106,7 @@ export default function MaintenanceHubScreen({ navigation }) {
         activeOpacity={0.8}
       >
         <Text style={styles.primaryButtonText}>
-          🔧 Record Service Cost →
+          {t('recordServiceCost') || '🔧 Record Service Cost →'}
         </Text>
       </TouchableOpacity>
 
@@ -115,7 +119,7 @@ export default function MaintenanceHubScreen({ navigation }) {
         activeOpacity={0.8}
       >
         <Text style={styles.secondaryButtonText}>
-          📊 Service History →
+          {t('serviceHistory') || '📊 Service History →'}
         </Text>
       </TouchableOpacity>
     </ScrollView>
