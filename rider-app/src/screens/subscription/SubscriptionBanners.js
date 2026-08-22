@@ -12,7 +12,7 @@ import {
   Animated,
   Dimensions
 } from 'react-native';
-import { AppContext } from '../../context/AppContext';
+import { useRider } from '../../rider/RiderContext';
 import api from '../../api/client';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useTranslation } from '../../i18n/LocalizationProvider';
@@ -115,8 +115,7 @@ export const SubscriptionStatusBanner = ({ daysLeft, isTrialUser, navigation }) 
  * SPEC: "Pending price change alert"
  */
 export const PriceChangeBanner = ({ pendingChange, onDismiss }) => {
-  const { state } = useContext(AppContext);
-  const { api: contextApi } = useContext(AppContext);
+  const { api: contextApi } = useRider();
   const { t } = useTranslation();
   const [dismissed, setDismissed] = useState(false);
 

@@ -17,7 +17,7 @@ import {
   ActivityIndicator
 } from 'react-native';
 import BackLink from '../../components/BackLink';
-import { AppContext } from '../../context/AppContext';
+import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { addToSyncQueue } from '../../offline/syncQueue';
@@ -25,7 +25,7 @@ import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus
 import api from '../../api/client';
 
 const ConfirmSubscriptionScreen = ({ navigation, route }) => {
-  const { state } = useContext(AppContext);
+  const { state } = useRider();
   const { t } = useTranslation();
   const { frequency, label, days, price, isRenewal } = route.params || {};
   
