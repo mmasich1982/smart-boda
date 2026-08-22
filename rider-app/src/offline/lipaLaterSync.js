@@ -12,7 +12,7 @@
  * Retry logic for failed syncs
  */
 
-import { getIndexedDBStore } from './IndexedDBStore';
+import * as db from './adapters/indexedDbAdapter';
 
 // ============= State Management =============
 
@@ -27,9 +27,9 @@ class LipaLaterOfflineManager {
    * Initialize the manager with IndexedDB
    */
   async init() {
-    this.db = await getIndexedDBStore();
+    await db.getDB();
     console.log('✅ LipaLaterOfflineManager initialized with IndexedDB');
-    return this.db;
+    return db;
   }
 
   /**
@@ -42,7 +42,7 @@ class LipaLaterOfflineManager {
    * 4. Return success to UI immediately (no network wait)
    */
   async recordPaymentOffline(tripId, paymentData) {
-    if (!this.db) await this.init();
+    if (!this.api) throw new Error('API client not initialized');
 
     const paymentId = `payment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
@@ -62,7 +62,7 @@ class LipaLaterOfflineManager {
 
     try {
       // Step 1: Save to local DB immediately (no network)
-      await this.db.insertRow('lipa_payments', payment);
+      await db.insertRow('lipa_payments', payment);
 
       // Step 2: Update local financial metrics optimistically
       await this.updateFinancialMetricsLocal(tripId, payment);
@@ -103,8 +103,6 @@ class LipaLaterOfflineManager {
    * Step 3: Queue payment for background sync
    */
   async queuePaymentSync(payment) {
-    if (!this.db) await this.init();
-
     const operation = {
       id: `sync_${payment.id}`,
       type: 'LIPA_PAYMENT',
@@ -117,7 +115,7 @@ class LipaLaterOfflineManager {
       status: 'pending'  // pending, in_progress, completed, failed
     };
 
-    await this.db.insertRow('lipa_sync_queue', operation);
+    await db.insertRow('sync_queue', operation);
     console.log(`✅ Queued payment ${payment.id} for sync`);
     return operation;
   }
@@ -127,15 +125,13 @@ class LipaLaterOfflineManager {
    * Called by SyncManager when online
    */
   async syncPendingPayments() {
-    if (!this.db) await this.init();
-
-    const pendingOps = await this.db.queryRows('lipa_sync_queue', op => 
+    const operations = await db.queryRows('sync_queue', op => 
       op.type === 'LIPA_PAYMENT' && op.status === 'pending'
     );
 
-    console.log(`[LipaLaterSync] Found ${pendingOps.length} pending payments to sync`);
+    console.log(`[LipaLaterSync] Found ${operations.length} pending payments to sync`);
 
-    for (const op of pendingOps) {
+    for (const op of operations) {
       await this.syncPaymentToBackend(op);
     }
   }
@@ -145,12 +141,10 @@ class LipaLaterOfflineManager {
    * Handles retry logic for failed attempts
    */
   async syncPaymentToBackend(operation) {
-    if (!this.db) await this.init();
-
     try {
       // Mark as in-progress
       operation.status = 'in_progress';
-      await this.db.updateRow('lipa_sync_queue', operation.id, operation);
+      await db.updateRow('sync_queue', operation.id, operation);
 
       // Call backend endpoint
       const response = await this.api.post(
@@ -165,9 +159,9 @@ class LipaLaterOfflineManager {
       );
 
       // Update payment sync_status to 'synced'
-      const payment = await this.db.queryRows('lipa_payments', p => p.id === operation.paymentId);
-      if (payment && payment.length > 0) {
-        await this.db.updateRow('lipa_payments', operation.paymentId, {
+      const payments = await db.queryRows('lipa_payments', p => p.id === operation.paymentId);
+      if (payments && payments.length > 0) {
+        await db.updateRow('lipa_payments', operation.paymentId, {
           sync_status: 'synced',
           backend_id: response.id,
           backend_response: response
@@ -177,7 +171,7 @@ class LipaLaterOfflineManager {
       // Mark operation as completed
       operation.status = 'completed';
       operation.completedAt = Date.now();
-      await this.db.updateRow('lipa_sync_queue', operation.id, operation);
+      await db.updateRow('sync_queue', operation.id, operation);
 
       console.log(`✓ Payment ${operation.paymentId} synced successfully`);
       return { success: true };
@@ -197,7 +191,7 @@ class LipaLaterOfflineManager {
         operation.nextRetryAt = Date.now() + (Math.pow(2, operation.retryCount) * 5000); // Exponential backoff
       }
 
-      await this.db.updateRow('lipa_sync_queue', operation.id, operation);
+      await db.updateRow('sync_queue', operation.id, operation);
       return { success: false, retry: operation.retryCount < operation.maxRetries };
     }
   }
@@ -207,8 +201,6 @@ class LipaLaterOfflineManager {
    * Shows local values + optimistic updates if offline
    */
   async getTodaysCollections(riderId) {
-    if (!this.db) await this.init();
-
     const today = new Date().toDateString();
     const cacheKey = `lipaLaterCollections_${today}`;
 
@@ -225,7 +217,7 @@ class LipaLaterOfflineManager {
     }
 
     // Offline or backend error: calculate locally
-    const synced = await this.db.queryRows('lipa_payments', p => 
+    const synced = await db.queryRows('lipa_payments', p => 
       p.sync_status === 'synced' && p.payment_date === today
     );
 
@@ -247,9 +239,7 @@ class LipaLaterOfflineManager {
    * Shows "synced" or "pending" indicator
    */
   async getPaymentSyncStatus(paymentId) {
-    if (!this.db) await this.init();
-
-    const payments = await this.db.queryRows('lipa_payments', p => p.id === paymentId);
+    const payments = await db.queryRows('lipa_payments', p => p.id === paymentId);
     if (!payments || payments.length === 0) return null;
 
     const payment = payments[0];
@@ -277,9 +267,7 @@ const PENDING_OPERATIONS = {
 };
 
 async function processSyncQueue(manager) {
-  if (!manager.db) await manager.init();
-
-  const operations = await manager.db.queryRows('lipa_sync_queue');
+  const operations = await db.queryRows('sync_queue');
   
   for (const op of operations) {
     if (op.status === 'completed') continue; // Skip already done
@@ -297,7 +285,7 @@ async function processSyncQueue(manager) {
       if (op.retryCount >= 3) {
         op.status = 'failed';
       }
-      await manager.db.updateRow('lipa_sync_queue', op.id, op);
+      await db.updateRow('sync_queue', op.id, op);
     }
   }
 }
@@ -305,6 +293,12 @@ async function processSyncQueue(manager) {
 // ============= Export =============
 
 export {
+  LipaLaterOfflineManager,
+  PENDING_OPERATIONS,
+  processSyncQueue
+};
+
+export default {
   LipaLaterOfflineManager,
   PENDING_OPERATIONS,
   processSyncQueue
