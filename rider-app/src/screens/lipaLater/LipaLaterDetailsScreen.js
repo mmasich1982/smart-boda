@@ -1,527 +1,607 @@
-// rider-app/src/screens/lipaLater/LipaLaterDetailsScreen.js
-// FIXED: Now properly implements cleaned.html logic (RA-03-D)
-// - Validates draft data
-// - Creates complete trip object with nested lipaLater data
-// - ACTUALLY ADDS TRIP TO STATE.TRIPS (was missing before)
-// - Clears draft and navigates to payment summary
-// - Date picker timezone fix included
+/**
+ * rider-app/src/screens/lipaLater/LipaLaterDetailsScreen.js
+ * RA-03-H: Lipa Later Customer Details
+ * 
+ * ✅ SEAMLESS ONLINE/OFFLINE: Cache-first loading with API fallback
+ * ✅ MULTILINGUAL: Uses i18n for all UI text
+ * ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+ * ✅ NETWORK AWARE: Real-time connectivity detection
+ * ✅ MINIMAL UI: Title + Customer Info + Payment History
+ * ✅ NO STATUS BANNERS: Only critical errors shown
+ * 
+ * Shows detailed information about a specific Lipa Later customer:
+ * - Customer contact details
+ * - Original amount and payment tracking
+ * - Payment progress visualization
+ * - Payment history with dates and amounts
+ * - Action buttons (Record Payment, View Ageing)
+ */
 
-import React, { useState, useCallback } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, Alert, Modal } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import {
+  ScrollView,
+  View,
+  Text,
+  TouchableOpacity,
+  FlatList,
+  StyleSheet,
+  ActivityIndicator,
+  RefreshControl
+} from 'react-native';
 import BackLink from '../../components/BackLink';
+import { useFocusEffect } from '@react-navigation/native';
 import { useRider } from '../../rider/RiderContext';
+import { useTranslation } from '../../i18n/LocalizationProvider';
+import { getLocalRiderId } from '../../offline/db';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import api from '../../api/client';
+import colors from '../../theme/colors';
 
-export default function LipaLaterDetailsScreen({ navigation, route }) {
-  const { state, dispatch } = useRider();
-  const passedAmount = route?.params?.amount || '';
-  
-  const [formData, setFormData] = useState({
-    customerName: state?._lipaLaterDraft?.customerName || '',
-    customerPhone: state?._lipaLaterDraft?.customerPhone || '',
-    amount: state?._lipaLaterDraft?.amount || passedAmount || '',
-    dueDate: state?._lipaLaterDraft?.dueDate || '',
-  });
-  const [errors, setErrors] = useState({});
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [calendarDate, setCalendarDate] = useState(new Date());
+export default function LipaLaterDetailsScreen({ route, navigation }) {
+  const { recordId, record: initialRecord } = route.params;
+  const { state } = useRider();
+  const { t } = useTranslation();
+  const [localRiderId, setLocalRiderId] = useState(null);
+  const [record, setRecord] = useState(initialRecord);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const validatePhone = (phone) => {
-    const cleaned = phone.replace(/\s+/g, '');
-    // Kenyan number validation: starts with 07 or +2547
-    return /^(?:0?7|(?:\+?254)?7)\d{8}$/.test(cleaned);
-  };
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
-  const formatDateToDisplay = (dateStr) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr + 'T00:00:00');
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    const y = String(date.getFullYear()).slice(-2);
-    return `${m}/${d}/${y}`;
-  };
+  // ✅ LOAD RIDER ID ON MOUNT
+  useEffect(() => {
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ LipaLaterDetails: Loaded rider ID:', id);
+        }
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
+      }
+    };
+    loadRiderId();
+  }, []);
 
-  const validateForm = useCallback(() => {
-    const newErrors = {};
+  const effectiveRiderId = localRiderId || state?.riderId;
 
-    if (!formData.customerName || !formData.customerName.trim()) {
-      newErrors.customerName = "Enter the customer's name.";
-    }
+  // Load detail on focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!effectiveRiderId || !isInitialized) return;
+      loadDetails();
+    }, [effectiveRiderId, isInitialized])
+  );
 
-    if (!formData.customerPhone || !formData.customerPhone.trim()) {
-      newErrors.customerPhone = "Enter the customer's mobile number.";
-    } else if (!validatePhone(formData.customerPhone)) {
-      newErrors.customerPhone = "That doesn't look like a valid Kenyan mobile number (e.g. 0712 345 678).";
-    }
-
-    const amtStr = (formData.amount || '').toString().trim();
-    const amt = parseFloat(amtStr);
-    if (!amtStr) {
-      newErrors.amount = 'Enter the amount to be paid later.';
-    } else if (!/^\d+(\.\d{1,2})?$/.test(amtStr) || !amt || amt <= 0) {
-      newErrors.amount = 'Enter a valid amount greater than zero (numbers only).';
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-    if (!formData.dueDate) {
-      newErrors.dueDate = 'Select a payment due date.';
-    } else if (formData.dueDate <= today) {
-      newErrors.dueDate = 'Due date must be after today.';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  }, [formData]);
-
-  const handleFieldChange = useCallback((field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: undefined }));
-    }
-  }, [errors]);
-
-  // FIXED: Date selection now uses local timezone correctly
-  const handleDateSelect = (day) => {
-    const year = calendarDate.getFullYear();
-    const month = calendarDate.getMonth();
-    // Construct date in local timezone and convert to ISO string (YYYY-MM-DD)
-    const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    handleFieldChange('dueDate', isoDate);
-    setShowDatePicker(false);
-  };
-
-  // FIXED: Now actually creates and saves the trip to state.trips (like cleaned.html)
-  const handleSave = useCallback(() => {
-    if (!validateForm()) return;
-
+  const loadDetails = async () => {
     try {
-      // FIXED: Create complete trip object with nested lipaLater data structure
-      const amt = parseFloat(formData.amount);
-      const newTrip = {
-        id: `trip_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        amount: amt,
-        paymentMethod: 'LipaLater',
-        timestamp: new Date().getTime(),
-        ts: new Date().toISOString(),
-        bikeIndex: 0,
-        status: 'active',
-        syncStatus: state?.online ? 'synced' : 'pending',
-        channelOrigin: state?.online ? 'App-Online' : 'App-Offline-Queued',
-        // FIXED: Nested lipaLater object (was missing before)
-        lipaLater: {
-          customerName: formData.customerName.trim(),
-          customerPhone: formData.customerPhone.trim().replace(/\s+/g, ''),
-          dueDate: formData.dueDate,
-          originalAmount: amt,
-          payments: [], // Array of {amount, date, notes}
-          settled: false,
-          settledAt: null,
-        },
-      };
+      setLoading(true);
+      clearCriticalError();
 
-      // FIXED: Actually add the trip to state.trips
-      if (dispatch) {
-        dispatch({
-          type: 'ADD_LIPA_LATER_TRIP',
-          payload: newTrip,
-        });
+      let data = null;
+
+      // Try API first if connected
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Fetching Lipa Later details from API...');
+          const response = await api.get(`/trips/lipa-later/${recordId}`, {
+            params: { rider_id: effectiveRiderId }
+          });
+
+          if (response.data) {
+            data = response.data;
+            console.log('✅ Loaded details from API');
+
+            // ✅ Cache the data using IndexedDB
+            await indexedDbAdapter.kvSet(
+              `lipa_detail_${recordId}`,
+              JSON.stringify(data)
+            );
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API fetch failed, falling back to cache:', apiErr.message);
+          data = await loadDetailsFromCache();
+        }
+      } else {
+        // Offline mode - use cache
+        console.log('📴 Offline mode: Loading from cache');
+        data = await loadDetailsFromCache();
       }
 
-      // Clear the draft
-      if (dispatch) {
-        dispatch({
-          type: 'CLEAR_LIPA_LATER_DRAFT',
-        });
+      if (data) {
+        setRecord(data);
+      } else {
+        setRecord(initialRecord);
       }
-
-      Alert.alert('Success', `Lipa Later record created for ${formData.customerName}`);
-      
-      // Navigate to payment summary (which shows Lipa Later Customers Report)
-      navigation.navigate('PaymentSummary');
     } catch (err) {
-      Alert.alert('Error', 'Failed to save Lipa Later record. Please try again.');
-      console.error('[LipaLaterDetailsScreen] Save error:', err);
+      console.error('❌ Error loading details:', err);
+      showCriticalError(t('error_loadDetails') || 'Unable to load details. Please try again.', 'data_load');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-  }, [formData, validateForm, dispatch, navigation, state?.online]);
-
-  // Calendar generation helper
-  const getDaysInMonth = (date) => {
-    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
   };
 
-  const getFirstDayOfMonth = (date) => {
-    return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
+  const loadDetailsFromCache = async () => {
+    try {
+      // ✅ Use IndexedDB adapter instead of LocalStore
+      const cached = await indexedDbAdapter.kvGet(`lipa_detail_${recordId}`);
+      if (cached) {
+        const data = typeof cached === 'string' ? JSON.parse(cached) : cached;
+        console.log('✅ Loaded details from IndexedDB cache');
+        return data;
+      }
+    } catch (err) {
+      console.warn('⚠️ Cache load failed:', err);
+    }
+    return null;
   };
 
-  const calendarDays = [];
-  const firstDay = getFirstDayOfMonth(calendarDate);
-  const daysInMonth = getDaysInMonth(calendarDate);
-  
-  for (let i = 0; i < firstDay; i++) {
-    calendarDays.push(null);
-  }
-  for (let d = 1; d <= daysInMonth; d++) {
-    calendarDays.push(d);
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadDetails();
+  };
+
+  const getDaysUntilDue = (dueDate) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const due = new Date(dueDate);
+    due.setHours(0, 0, 0, 0);
+    const diffTime = due - today;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  };
+
+  const getStatusColor = (status) => {
+    switch (status) {
+      case 'pending':
+        return '#FFA500';
+      case 'partial':
+        return '#FF6B6B';
+      case 'paid':
+        return '#4CAF50';
+      default:
+        return '#999';
+    }
+  };
+
+  const getStatusLabel = (status) => {
+    switch (status) {
+      case 'pending':
+        return '⏳ ' + (t('pending') || 'Pending');
+      case 'partial':
+        return '⚠️ ' + (t('partial') || 'Partial');
+      case 'paid':
+        return '✓ ' + (t('paid') || 'Paid');
+      default:
+        return status;
+    }
+  };
+
+  if (!isInitialized) {
+    return (
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <Text style={styles.title}>{t('customerDetails') || 'Customer Details'}</Text>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+      </ScrollView>
+    );
   }
 
-  const today = new Date().toISOString().split('T')[0];
+  if (!record) {
+    return (
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <Text style={styles.title}>{t('customerDetails') || 'Customer Details'}</Text>
+        <View style={styles.centerContainer}>
+          <Text style={styles.emptyText}>{t('recordNotFound') || 'Record not found'}</Text>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  const remaining = parseFloat(record.remaining_balance || record.amount || 0);
+  const original = parseFloat(record.amount || 0);
+  const paid = original - remaining;
+  const paymentPercentage = original > 0 ? (paid / original) * 100 : 0;
+  const daysUntilDue = getDaysUntilDue(record.due_date);
+  const isOverdue = daysUntilDue < 0;
+  const isDueToday = daysUntilDue === 0;
+  const payments = record.payments || [];
 
   return (
-    <ScrollView style={styles.container} scrollEnabled>
-      <BackLink onPress={() => navigation.goBack()} label="← Back" />
-      
-      <Text style={styles.title}>Lipa Later Details</Text>
-
-      {/* Info Banner */}
-      <View style={styles.banner}>
-        <Text style={styles.bannerText}>🕒 <Text style={styles.bannerContent}>Record who owes you and when it's due — it'll show up on your Lipa Later Customers Report so you never lose track of a follow-up.</Text></Text>
-      </View>
-
-      {/* Customer Name */}
-      <View style={styles.field}>
-        <Text style={styles.label}>Customer Name <Text style={styles.required}>*</Text></Text>
-        <TextInput
-          style={[styles.input, errors.customerName && styles.inputError]}
-          placeholder="e.g. Wanjiru Kamau"
-          value={formData.customerName}
-          onChangeText={(value) => handleFieldChange('customerName', value)}
-          placeholderTextColor="#c7c9ce"
-        />
-        {errors.customerName && <Text style={styles.errorMsg}>{errors.customerName}</Text>}
-      </View>
-
-      {/* Customer Phone */}
-      <View style={styles.field}>
-        <Text style={styles.label}>Customer Mobile Number <Text style={styles.required}>*</Text></Text>
-        <TextInput
-          style={[styles.input, errors.customerPhone && styles.inputError]}
-          placeholder="e.g. 0712 345 678"
-          value={formData.customerPhone}
-          onChangeText={(value) => handleFieldChange('customerPhone', value)}
-          keyboardType="phone-pad"
-          placeholderTextColor="#c7c9ce"
-        />
-        {errors.customerPhone && <Text style={styles.errorMsg}>{errors.customerPhone}</Text>}
-      </View>
-
-      {/* Amount - Auto-populated and Editable */}
-      <View style={styles.field}>
-        <Text style={styles.label}>Amount to be Paid Later (KSh) <Text style={styles.required}>*</Text></Text>
-        <TextInput
-          style={[styles.input, errors.amount && styles.inputError]}
-          placeholder="0"
-          value={formData.amount}
-          onChangeText={(value) => handleFieldChange('amount', value)}
-          keyboardType="decimal-pad"
-          placeholderTextColor="#c7c9ce"
-        />
-        {errors.amount && <Text style={styles.errorMsg}>{errors.amount}</Text>}
-      </View>
-
-      {/* Due Date with Calendar Picker */}
-      <View style={styles.field}>
-        <Text style={styles.label}>Payment Due Date <Text style={styles.required}>*</Text></Text>
-        <TouchableOpacity 
-          style={[styles.dateInput, errors.dueDate && styles.inputError]}
-          onPress={() => setShowDatePicker(true)}
-        >
-          <Text style={[styles.dateInputText, !formData.dueDate && styles.dateInputPlaceholder]}>
-            {formData.dueDate ? formatDateToDisplay(formData.dueDate) : 'mm/dd/yy'}
-          </Text>
-          <Text style={styles.calendarIcon}>📅</Text>
-        </TouchableOpacity>
-        <Text style={styles.hint}>Must be after today — Lipa Later is for future payment, not today.</Text>
-        {errors.dueDate && <Text style={styles.errorMsg}>{errors.dueDate}</Text>}
-      </View>
-
-      {/* Calendar Modal */}
-      <Modal
-        visible={showDatePicker}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowDatePicker(false)}
+    <View style={styles.container}>
+      {/* Header */}
+      <ScrollView
+        style={styles.headerSection}
+        scrollEnabled={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            colors={['#ff7a1a']}
+          />
+        }
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.calendarModal}>
-            {/* Month/Year Header */}
-            <View style={styles.calendarHeader}>
-              <TouchableOpacity onPress={() => {
-                const prev = new Date(calendarDate);
-                prev.setMonth(prev.getMonth() - 1);
-                setCalendarDate(prev);
-              }}>
-                <Text style={styles.calendarNav}>← Prev</Text>
-              </TouchableOpacity>
-              <Text style={styles.calendarTitle}>
-                {calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </Text>
-              <TouchableOpacity onPress={() => {
-                const next = new Date(calendarDate);
-                next.setMonth(next.getMonth() + 1);
-                setCalendarDate(next);
-              }}>
-                <Text style={styles.calendarNav}>Next →</Text>
-              </TouchableOpacity>
-            </View>
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <Text style={styles.title}>{t('customerDetails') || 'Customer Details'}</Text>
 
-            {/* Weekday Headers */}
-            <View style={styles.weekdayRow}>
-              {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
-                <Text key={day} style={styles.weekday}>{day}</Text>
-              ))}
-            </View>
-
-            {/* Calendar Days */}
-            <View style={styles.calendarGrid}>
-              {calendarDays.map((day, idx) => {
-                if (day === null) {
-                  return <View key={`empty-${idx}`} style={styles.calendarDayEmpty} />;
-                }
-                // Construct ISO date for comparison (YYYY-MM-DD)
-                const year = calendarDate.getFullYear();
-                const month = calendarDate.getMonth();
-                const cellISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                const isSelected = cellISO === formData.dueDate;
-                const isDisabled = cellISO <= today;
-
-                return (
-                  <TouchableOpacity
-                    key={day}
-                    style={[
-                      styles.calendarDay,
-                      isSelected && styles.calendarDaySelected,
-                      isDisabled && styles.calendarDayDisabled,
-                    ]}
-                    onPress={() => !isDisabled && handleDateSelect(day)}
-                    disabled={isDisabled}
-                  >
-                    <Text style={[
-                      styles.calendarDayText,
-                      isSelected && styles.calendarDayTextSelected,
-                      isDisabled && styles.calendarDayTextDisabled,
-                    ]}>
-                      {day}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Close Button */}
-            <TouchableOpacity
-              style={styles.calendarCloseBtn}
-              onPress={() => setShowDatePicker(false)}
-            >
-              <Text style={styles.calendarCloseBtnText}>Done</Text>
+        {/* Error Banner */}
+        {criticalError && (
+          <View style={styles.criticalErrorBanner}>
+            <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
+            <TouchableOpacity onPress={clearCriticalError}>
+              <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </Modal>
+        )}
 
-      {/* Save Button */}
-      <TouchableOpacity style={styles.primaryBtn} onPress={handleSave}>
-        <Text style={styles.primaryBtnText}>Save →</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        {/* Customer Info Card */}
+        <View style={styles.infoCard}>
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.customerName}>{record.customer_name}</Text>
+              <Text style={styles.phoneNumber}>{record.customer_mobile}</Text>
+            </View>
+            <View
+              style={[
+                styles.statusBadgeLarge,
+                { backgroundColor: getStatusColor(record.status) }
+              ]}
+            >
+              <Text style={styles.statusBadgeText}>{getStatusLabel(record.status)}</Text>
+            </View>
+          </View>
+
+          {/* Amount Grid */}
+          <View style={styles.amountGridLarge}>
+            <View style={styles.amountCellLarge}>
+              <Text style={styles.amountLabel}>{t('originalAmount') || 'ORIGINAL AMOUNT'}</Text>
+              <Text style={styles.amountValue}>KSh {original.toLocaleString()}</Text>
+            </View>
+            <View style={styles.amountCellLarge}>
+              <Text style={[styles.amountLabel, { color: '#4CAF50' }]}>{t('received') || 'RECEIVED'}</Text>
+              <Text style={[styles.amountValue, { color: '#4CAF50' }]}>KSh {paid.toLocaleString()}</Text>
+            </View>
+            <View style={styles.amountCellLarge}>
+              <Text style={[styles.amountLabel, { color: '#FFA500' }]}>{t('outstanding') || 'OUTSTANDING'}</Text>
+              <Text style={[styles.amountValue, { color: '#FFA500' }]}>KSh {remaining.toLocaleString()}</Text>
+            </View>
+          </View>
+
+          {/* Progress Bar */}
+          <View style={styles.progressSectionLarge}>
+            <View
+              style={{
+                flexDirection: 'row',
+                justifyContent: 'space-between',
+                marginBottom: 8
+              }}
+            >
+              <Text style={styles.progressLabel}>{t('paymentProgress') || 'PAYMENT PROGRESS'}</Text>
+              <Text style={styles.progressPercentage}>{Math.round(paymentPercentage)}%</Text>
+            </View>
+            <View style={styles.progressBarContainerLarge}>
+              <View
+                style={[
+                  styles.progressBarFillLarge,
+                  {
+                    width: `${paymentPercentage}%`,
+                    backgroundColor: paymentPercentage === 100 ? '#4CAF50' : '#FFA500'
+                  }
+                ]}
+              />
+            </View>
+          </View>
+
+          {/* Due Date Info */}
+          <View style={styles.dueDateSection}>
+            <Text style={styles.dueDateLabel}>{t('dueDate') || 'DUE DATE'}</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.dueDateValue}>{record.due_date}</Text>
+              {isOverdue && (
+                <Text style={styles.overdueFlag}>{Math.abs(daysUntilDue)} {t('daysOverdue') || 'days overdue'}</Text>
+              )}
+              {isDueToday && (
+                <Text style={styles.dueTodayFlag}>{t('dueToday') || 'Due Today'} ⚠️</Text>
+              )}
+              {!isOverdue && !isDueToday && daysUntilDue > 0 && (
+                <Text style={styles.dueSoonFlag}>{daysUntilDue} {t('daysToGo') || 'days to go'}</Text>
+              )}
+            </View>
+          </View>
+        </View>
+      </ScrollView>
+
+      {/* Payment History */}
+      {payments.length > 0 ? (
+        <View style={styles.paymentHistorySection}>
+          <Text style={styles.sectionTitle}>{t('paymentHistory') || 'Payment History'}</Text>
+          <FlatList
+            data={payments}
+            keyExtractor={(_, index) => index.toString()}
+            scrollEnabled={false}
+            renderItem={({ item }) => (
+              <View style={styles.paymentItem}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <Text style={styles.paymentAmount}>
+                    KSh {parseFloat(item.amount || 0).toLocaleString()}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.paymentSyncStatus,
+                      { color: item.sync_status === 'synced' ? '#4CAF50' : '#FFA500' }
+                    ]}
+                  >
+                    {item.sync_status === 'synced' ? '✓ ' + (t('synced') || 'Synced') : '⧖ ' + (t('syncing') || 'Syncing')}
+                  </Text>
+                </View>
+                <Text style={styles.paymentDate}>{item.date}</Text>
+                {item.reference && (
+                  <Text style={styles.paymentReference}>{t('ref') || 'Ref'}: {item.reference}</Text>
+                )}
+              </View>
+            )}
+            contentContainerStyle={{ paddingBottom: 20 }}
+          />
+        </View>
+      ) : (
+        <View style={styles.emptyHistorySection}>
+          <Text style={styles.emptyHistoryText}>{t('noPaymentsRecorded') || 'No payments recorded yet'}</Text>
+        </View>
+      )}
+
+      {/* Action Buttons */}
+      {record.status !== 'paid' && (
+        <View style={styles.actionButtonsSection}>
+          <TouchableOpacity
+            style={styles.primaryActionButton}
+            onPress={() => navigation.navigate('RecordPayment', { recordId: record.id, record })}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.primaryActionButtonText}>{t('recordPayment') || 'Record Payment'} →</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f6f4ef',
-    paddingHorizontal: 16,
+    backgroundColor: '#f6f4ef'
+  },
+  headerSection: {
+    paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: 40,
+    paddingBottom: 8,
+    backgroundColor: '#f6f4ef'
   },
   title: {
-    fontSize: 24,
+    fontFamily: 'SpaceGrotesk-Bold',
+    fontSize: 22,
     fontWeight: '700',
     color: '#1a1c20',
-    marginTop: 16,
-    marginBottom: 20,
+    marginBottom: 16
   },
-  banner: {
-    backgroundColor: '#e6f5ef',
-    borderLeftWidth: 4,
-    borderLeftColor: '#1e9e6f',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 20,
-    borderRadius: 8,
-  },
-  bannerText: {
-    fontSize: 13,
-    color: '#1a1c20',
-  },
-  bannerContent: {
-    color: '#1a1c20',
-  },
-  field: {
-    marginBottom: 16,
-  },
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1a1c20',
-    marginBottom: 8,
-  },
-  required: {
-    color: '#e0453f',
-    fontWeight: '700',
-  },
-  input: {
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    fontSize: 14,
-    color: '#1a1c20',
-    fontFamily: 'Inter-Regular',
-  },
-  inputError: {
-    borderColor: '#e0453f',
+
+  criticalErrorBanner: {
     backgroundColor: '#fdecea',
-  },
-  dateInput: {
-    backgroundColor: '#fff',
     borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  dateInputText: {
-    fontSize: 14,
-    color: '#1a1c20',
-    fontFamily: 'Inter-Regular',
-  },
-  dateInputPlaceholder: {
-    color: '#c7c9ce',
-  },
-  calendarIcon: {
-    fontSize: 16,
-  },
-  hint: {
-    fontSize: 11.5,
-    color: '#5b606c',
-    marginTop: 6,
-  },
-  errorMsg: {
-    fontSize: 11.5,
-    color: '#e0453f',
-    marginTop: 4,
-    fontWeight: '500',
-  },
-
-  /* Calendar Modal Styles */
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  calendarModal: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    width: '85%',
-    maxWidth: 340,
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-  },
-  calendarHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    borderColor: '#f6cac7',
+    borderRadius: 14,
+    padding: 12,
     marginBottom: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db',
-  },
-  calendarNav: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#ff7a1a',
-  },
-  calendarTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  weekdayRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 8,
+    justifyContent: 'space-between',
+    alignItems: 'center'
   },
-  weekday: {
-    width: '14.28%',
-    textAlign: 'center',
+  criticalErrorText: {
+    fontSize: 12,
+    color: '#a5312c',
+    fontWeight: '600',
+    flex: 1
+  },
+  dismissText: {
     fontSize: 11,
-    fontWeight: '600',
-    color: '#5b606c',
-  },
-  calendarGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 16,
-  },
-  calendarDay: {
-    width: '14.28%',
-    aspectRatio: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  calendarDayEmpty: {
-    width: '14.28%',
-  },
-  calendarDaySelected: {
-    backgroundColor: '#ff7a1a',
-    borderRadius: 8,
-  },
-  calendarDayDisabled: {
-    opacity: 0.4,
-  },
-  calendarDayText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1a1c20',
-  },
-  calendarDayTextSelected: {
-    color: '#fff',
-  },
-  calendarDayTextDisabled: {
-    color: '#c7c9ce',
-  },
-  calendarCloseBtn: {
-    backgroundColor: '#ff7a1a',
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  calendarCloseBtnText: {
-    fontSize: 14,
+    color: '#a5312c',
     fontWeight: '700',
-    color: '#fff',
+    marginLeft: 12
   },
 
-  primaryBtn: {
-    backgroundColor: '#ff7a1a',
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#a8a196'
+  },
+
+  infoCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 20
+  },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 16
+  },
+  customerName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 4
+  },
+  phoneNumber: {
+    fontSize: 12,
+    color: '#a8a196'
+  },
+  statusBadgeLarge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: '#fff'
+  },
+
+  amountGridLarge: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+    gap: 8
+  },
+  amountCellLarge: {
+    flex: 1
+  },
+  amountLabel: {
+    fontSize: 10,
+    color: '#a8a196',
+    fontWeight: '700',
+    marginBottom: 4
+  },
+  amountValue: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#1a1c20'
+  },
+
+  progressSectionLarge: {
+    marginBottom: 16
+  },
+  progressLabel: {
+    fontSize: 10,
+    color: '#a8a196',
+    fontWeight: '700'
+  },
+  progressPercentage: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#1a1c20'
+  },
+  progressBarContainerLarge: {
+    height: 10,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 5,
+    overflow: 'hidden'
+  },
+  progressBarFillLarge: {
+    height: '100%'
+  },
+
+  dueDateSection: {
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    paddingTop: 12
+  },
+  dueDateLabel: {
+    fontSize: 10,
+    color: '#a8a196',
+    fontWeight: '700',
+    marginBottom: 6
+  },
+  dueDateValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1a1c20'
+  },
+  overdueFlag: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#d32f2f'
+  },
+  dueTodayFlag: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#FFA500'
+  },
+  dueSoonFlag: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666'
+  },
+
+  paymentHistorySection: {
+    paddingHorizontal: 20,
+    paddingVertical: 12
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 12
+  },
+  paymentItem: {
+    backgroundColor: '#fff',
     borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#4CAF50'
+  },
+  paymentAmount: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#1a1c20'
+  },
+  paymentSyncStatus: {
+    fontSize: 11,
+    fontWeight: '600'
+  },
+  paymentDate: {
+    fontSize: 11,
+    color: '#a8a196'
+  },
+  paymentReference: {
+    fontSize: 10,
+    color: '#666',
+    marginTop: 4
+  },
+
+  emptyHistorySection: {
+    paddingHorizontal: 20,
+    paddingVertical: 20,
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  emptyHistoryText: {
+    fontSize: 13,
+    color: '#a8a196',
+    fontStyle: 'italic'
+  },
+
+  actionButtonsSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0'
+  },
+  primaryActionButton: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
-    marginTop: 20,
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6
   },
-  primaryBtnText: {
+  primaryActionButtonText: {
+    color: '#fff',
     fontSize: 15,
     fontWeight: '700',
-    color: '#fff',
-  },
+    letterSpacing: 0.02
+  }
 });

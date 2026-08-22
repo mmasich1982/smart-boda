@@ -1,374 +1,368 @@
 /**
- * Lipa Later Ageing Report Screen (RA-03-G)
- * CORRECTED & ENHANCED: Full alignment to cleaned.html specification
+ * rider-app/src/screens/lipaLater/LipaLaterAgeingScreen.js
+ * RA-03-G: Lipa Later Ageing Report
  * 
- * Key improvements:
- * - Uses helper functions that follow cleaned.html patterns
- * - Proper date calculation for ageing categories
- * - Accurate outstanding balance calculations
- * - Comprehensive search and pagination
- * - Critical alert banner for overdue accounts
+ * ✅ SEAMLESS ONLINE/OFFLINE: Cache-first loading with API fallback
+ * ✅ MULTILINGUAL: Uses i18n for all UI text
+ * ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+ * ✅ NETWORK AWARE: Real-time connectivity detection
+ * ✅ NO STATUS BANNERS: Only critical errors shown
+ * 
+ * Displays ageing analysis with categorization:
+ * - Upcoming (Due within 7 days)
+ * - Due Today
+ * - Overdue 1-30 days
+ * - Overdue 31-60 days
+ * - Overdue 61-90 days
+ * - Overdue 90+ days
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, TextInput, StyleSheet, FlatList } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import {
+  ScrollView,
+  View,
+  Text,
+  TouchableOpacity,
+  FlatList,
+  StyleSheet,
+  ActivityIndicator,
+  RefreshControl
+} from 'react-native';
 import BackLink from '../../components/BackLink';
+import { useFocusEffect } from '@react-navigation/native';
 import { useRider } from '../../rider/RiderContext';
-import { 
-  getPendingLipaLaterTrips, 
-  getRemainingBalance, 
-  getDaysOverdue, 
-  getAgeingCategory, 
-  getAgeingCategoryLabel, 
-  categorizeByAgeing 
-} from '../../rider/RiderContext';
-
-const RECORDS_PER_PAGE = 5;
-
-/**
- * Ageing categories with proper ordering and styling
- * Follows cleaned.html categories exactly
- */
-const AGEING_CATEGORIES = [
-  { key: 'upcoming', label: '📅 Due Soon', bgColor: 'rgba(30,158,111,.08)', borderColor: 'rgba(30,158,111,.2)' },
-  { key: 'due-today', label: '⚠️ Due Today', bgColor: 'rgba(201,138,18,.12)', borderColor: 'rgba(201,138,18,.3)' },
-  { key: 'overdue-30', label: '🔶 1-30 Days Overdue', bgColor: 'rgba(255,122,26,.10)', borderColor: 'rgba(255,122,26,.2)' },
-  { key: 'overdue-60', label: '🔴 31-60 Days Overdue', bgColor: 'rgba(255,122,26,.15)', borderColor: 'rgba(255,122,26,.3)' },
-  { key: 'overdue-90', label: '🚨 61-90 Days Overdue', bgColor: 'rgba(224,69,63,.15)', borderColor: 'rgba(224,69,63,.3)' },
-  { key: 'overdue-90plus', label: '🛑 90+ Days Overdue', bgColor: 'rgba(224,69,63,.20)', borderColor: 'rgba(224,69,63,.4)' },
-];
+import { useTranslation } from '../../i18n/LocalizationProvider';
+import { getLocalRiderId } from '../../offline/db';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import api from '../../api/client';
+import colors from '../../theme/colors';
 
 export default function LipaLaterAgeingScreen({ navigation }) {
   const { state } = useRider();
-  const [activeTab, setActiveTab] = useState('upcoming');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [currentPages, setCurrentPages] = useState({});
+  const { t } = useTranslation();
+  const [localRiderId, setLocalRiderId] = useState(null);
+  const [ageingData, setAgeingData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [expandedBucket, setExpandedBucket] = useState('all');
 
-  // Get pending trips
-  const pendingTrips = useMemo(() => getPendingLipaLaterTrips(state), [state]);
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
-  // Categorize by ageing
-  const categorized = useMemo(() => categorizeByAgeing(state), [state]);
-
-  // Calculate totals per category
-  const categoryTotals = useMemo(() => {
-    const totals = {};
-    Object.entries(categorized).forEach(([cat, trips]) => {
-      totals[cat] = trips.reduce((s, t) => {
-        try {
-          return s + (getRemainingBalance(t.lipaLater) || 0);
-        } catch (err) {
-          console.error(`Error calculating balance for trip ${t.id}:`, err);
-          return s;
+  // ✅ LOAD RIDER ID ON MOUNT
+  useEffect(() => {
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ LipaLaterAgeing: Loaded rider ID:', id);
         }
-      }, 0);
-    });
-    return totals;
-  }, [categorized]);
-
-  // Calculate grand totals
-  const totalOutstanding = useMemo(
-    () => Object.values(categoryTotals).reduce((s, v) => s + v, 0),
-    [categoryTotals]
-  );
-
-  const pendingCustomersCount = useMemo(() => pendingTrips.length, [pendingTrips]);
-
-  // Critical accounts: 60+ days overdue
-  const criticalCount = useMemo(
-    () => {
-      const count90plus = (categorized['overdue-90plus'] || []).length;
-      const count90 = (categorized['overdue-90'] || []).length;
-      return count90plus + count90;
-    },
-    [categorized]
-  );
-
-  const criticalAmount = useMemo(
-    () => {
-      const amt90plus = categoryTotals['overdue-90plus'] || 0;
-      const amt90 = categoryTotals['overdue-90'] || 0;
-      return amt90plus + amt90;
-    },
-    [categoryTotals]
-  );
-
-  // Filter and paginate for active tab
-  const getActiveTabData = useCallback(() => {
-    let trips = categorized[activeTab] || [];
-
-    // Apply search filter
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      trips = trips.filter(t => {
-        try {
-          const name = (t.lipaLater?.customerName || '').toLowerCase();
-          const phone = (t.lipaLater?.customerPhone || '').toLowerCase();
-          return name.includes(term) || phone.includes(term);
-        } catch (err) {
-          console.error('Error filtering trip:', err);
-          return false;
-        }
-      });
-    }
-
-    // Pagination
-    const page = currentPages[activeTab] || 1;
-    const totalPages = Math.max(1, Math.ceil(trips.length / RECORDS_PER_PAGE));
-    const validPage = Math.max(1, Math.min(page, totalPages));
-    const startIdx = (validPage - 1) * RECORDS_PER_PAGE;
-    const endIdx = Math.min(startIdx + RECORDS_PER_PAGE, trips.length);
-    const records = trips.slice(startIdx, endIdx);
-
-    return {
-      allTrips: categorized[activeTab] || [],
-      filteredTrips: trips,
-      records,
-      totalCount: (categorized[activeTab] || []).length,
-      filteredCount: trips.length,
-      currentPage: validPage,
-      totalPages,
-      startIndex: startIdx,
-      endIndex: endIdx,
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
+      }
     };
-  }, [activeTab, searchTerm, categorized, currentPages]);
-
-  const tabData = getActiveTabData();
-
-  const handlePreviousPage = useCallback(() => {
-    setCurrentPages(prev => ({
-      ...prev,
-      [activeTab]: Math.max(1, (prev[activeTab] || 1) - 1),
-    }));
-  }, [activeTab]);
-
-  const handleNextPage = useCallback(() => {
-    setCurrentPages(prev => ({
-      ...prev,
-      [activeTab]: Math.min(tabData.totalPages, (prev[activeTab] || 1) + 1),
-    }));
-  }, [activeTab, tabData.totalPages]);
-
-  const handleSearchChange = useCallback((text) => {
-    setSearchTerm(text);
-    setCurrentPages(prev => ({ ...prev, [activeTab]: 1 }));
-  }, [activeTab]);
-
-  const handleClearSearch = useCallback(() => {
-    setSearchTerm('');
-    setCurrentPages(prev => ({ ...prev, [activeTab]: 1 }));
-  }, [activeTab]);
-
-  const handleTabChange = useCallback((newTab) => {
-    setActiveTab(newTab);
-    setSearchTerm('');
-    setCurrentPages(prev => ({ ...prev, [newTab]: 1 }));
+    loadRiderId();
   }, []);
 
+  const effectiveRiderId = localRiderId || state?.riderId;
+
+  // Load ageing data on focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!effectiveRiderId || !isInitialized) return;
+      loadAgeingReport();
+    }, [effectiveRiderId, isInitialized])
+  );
+
+  const loadAgeingReport = async () => {
+    try {
+      setLoading(true);
+      clearCriticalError();
+
+      let data = null;
+
+      // Try API first if connected
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Fetching ageing report from API...');
+          const response = await api.get(`/trips/lipa-later/ageing-report/${effectiveRiderId}`);
+
+          if (response.data) {
+            data = response.data;
+            console.log('✅ Loaded ageing report from API');
+
+            // ✅ Cache the data using IndexedDB
+            await indexedDbAdapter.kvSet(
+              `lipa_ageing_${effectiveRiderId}`,
+              JSON.stringify(data)
+            );
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API fetch failed, falling back to cache:', apiErr.message);
+          data = await loadAgeingFromCache();
+        }
+      } else {
+        // Offline mode - use cache
+        console.log('📴 Offline mode: Loading from cache');
+        data = await loadAgeingFromCache();
+      }
+
+      if (data) {
+        setAgeingData(data);
+      } else {
+        setAgeingData(getDefaultAgeingStructure());
+      }
+    } catch (err) {
+      console.error('❌ Error loading ageing report:', err);
+      showCriticalError(t('error_loadAgeingReport') || 'Unable to load ageing report. Please try again.', 'data_load');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const loadAgeingFromCache = async () => {
+    try {
+      // ✅ Use IndexedDB adapter instead of LocalStore
+      const cached = await indexedDbAdapter.kvGet(`lipa_ageing_${effectiveRiderId}`);
+      if (cached) {
+        const data = typeof cached === 'string' ? JSON.parse(cached) : cached;
+        console.log('✅ Loaded ageing report from IndexedDB cache');
+        return data;
+      }
+    } catch (err) {
+      console.warn('⚠️ Cache load failed:', err);
+    }
+    return null;
+  };
+
+  const getDefaultAgeingStructure = () => {
+    return {
+      upcoming: { count: 0, total_amount: 0, records: [] },
+      due_today: { count: 0, total_amount: 0, records: [] },
+      overdue_1_30: { count: 0, total_amount: 0, records: [] },
+      overdue_31_60: { count: 0, total_amount: 0, records: [] },
+      overdue_61_90: { count: 0, total_amount: 0, records: [] },
+      overdue_90_plus: { count: 0, total_amount: 0, records: [] },
+      total_outstanding: 0
+    };
+  };
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadAgeingReport();
+  };
+
+  const toggleBucket = (bucket) => {
+    setExpandedBucket(expandedBucket === bucket ? null : bucket);
+  };
+
+  const renderBucket = (bucketKey, bucketLabel, bucketColor, bucketIcon) => {
+    if (!ageingData || !ageingData[bucketKey]) return null;
+
+    const bucket = ageingData[bucketKey];
+    const isExpanded = expandedBucket === bucketKey;
+
+    if (bucket.count === 0) return null;
+
+    return (
+      <View key={bucketKey} style={styles.bucketContainer}>
+        <TouchableOpacity
+          onPress={() => toggleBucket(bucketKey)}
+          style={[styles.bucketHeader, { borderLeftColor: bucketColor }]}
+          activeOpacity={0.7}
+        >
+          <View style={styles.bucketHeaderLeft}>
+            <Text style={styles.bucketIcon}>{bucketIcon}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.bucketLabel}>{bucketLabel}</Text>
+              <Text style={styles.bucketCount}>
+                {bucket.count} {bucket.count === 1 ? t('customer') || 'customer' : t('customers') || 'customers'}
+              </Text>
+            </View>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={[styles.bucketAmount, { color: bucketColor }]}>
+              KSh {(bucket.total_amount || 0).toLocaleString()}
+            </Text>
+            <Text style={styles.expandIndicator}>{isExpanded ? '▼' : '▶'}</Text>
+          </View>
+        </TouchableOpacity>
+
+        {isExpanded && (
+          <View style={styles.bucketContent}>
+            {bucket.records && bucket.records.length > 0 ? (
+              <FlatList
+                data={bucket.records}
+                scrollEnabled={false}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    onPress={() => {
+                      navigation.navigate('LipaLaterDetails', {
+                        recordId: item.id,
+                        record: item
+                      });
+                    }}
+                    activeOpacity={0.6}
+                  >
+                    <View style={styles.recordItem}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.recordName}>{item.customer_name}</Text>
+                        <Text style={styles.recordPhone}>{item.customer_mobile}</Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={styles.recordAmount}>
+                          KSh {(item.remaining_balance || 0).toLocaleString()}
+                        </Text>
+                        {item.days_overdue && item.days_overdue > 0 && (
+                          <Text style={styles.daysOverdue}>
+                            {item.days_overdue} {t('days') || 'days'}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                )}
+                keyExtractor={(item) => item.id}
+              />
+            ) : (
+              <Text style={styles.nothingInBucketText}>{t('noRecords') || 'No records'}</Text>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  if (!isInitialized) {
+    return (
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <Text style={styles.title}>{t('ageingReport') || 'Ageing Report'}</Text>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+      </ScrollView>
+    );
+  }
+
   return (
-    <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.navigate('LipaLaterCustomers')} label="← Back to Customers" />
+    <ScrollView
+      style={styles.container}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          colors={['#ff7a1a']}
+        />
+      }
+    >
+      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+      <Text style={styles.title}>{t('ageingReport') || 'Ageing Report'}</Text>
 
-      <Text style={styles.title}>Lipa Later Ageing Report</Text>
-      <Text style={styles.subtitle}>Track outstanding payments by age</Text>
-
-      {/* Critical Alert Banner */}
-      {criticalCount > 0 && (
-        <View style={styles.criticalBanner}>
-          <Text style={styles.criticalBannerText}>
-            <Text style={styles.criticalEmoji}>🚨 </Text>
-            <Text style={styles.criticalBannerBold}>
-              {criticalCount} account{criticalCount === 1 ? '' : 's'} critically overdue
-            </Text>
-            <Text> (60+ days) — </Text>
-            <Text style={styles.criticalBannerBold}>
-              KSh {criticalAmount.toLocaleString()}
-            </Text>
-            <Text> at risk. Immediate follow-up recommended.</Text>
-          </Text>
+      {/* Error Banner */}
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* Summary Cards */}
-      <View style={styles.summaryContainer}>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>KSh {totalOutstanding.toLocaleString()}</Text>
-          <Text style={styles.summaryLabel}>Total Outstanding</Text>
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color="#ff7a1a" />
+          <Text style={styles.loadingText}>{t('loadingAgeingReport') || 'Loading ageing report...'}</Text>
         </View>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryValue}>{pendingCustomersCount}</Text>
-          <Text style={styles.summaryLabel}>Pending Customers</Text>
-        </View>
-      </View>
-
-      {/* Tab Navigation */}
-      {pendingTrips.length > 0 && (
+      ) : ageingData ? (
         <>
-          <View style={styles.tabsContainer}>
-            {AGEING_CATEGORIES.map(category => {
-              const count = (categorized[category.key] || []).length;
-              if (count === 0) return null; // Hide empty tabs
-
-              return (
-                <TouchableOpacity
-                  key={category.key}
-                  style={[
-                    styles.tab,
-                    activeTab === category.key && styles.tabActive,
-                  ]}
-                  onPress={() => handleTabChange(category.key)}
-                >
-                  <Text style={[
-                    styles.tabText,
-                    activeTab === category.key && styles.tabTextActive,
-                  ]}>
-                    {category.label.split(' ')[0]} {count}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
+          {/* Summary Card */}
+          <View style={styles.summaryCard}>
+            <Text style={styles.summaryLabel}>{t('totalOutstanding') || 'TOTAL OUTSTANDING'}</Text>
+            <Text style={styles.summaryAmount}>
+              KSh {(ageingData.total_outstanding || 0).toLocaleString()}
+            </Text>
+            <Text style={styles.summarySubtext}>
+              {t('totalOutstandingDescription') || 'Total amount outstanding across all customers'}
+            </Text>
           </View>
 
-          {/* Search Input */}
-          {tabData.totalCount > 0 && (
-            <View style={styles.searchContainer}>
-              <TextInput
-                style={styles.searchInput}
-                placeholder="🔍 Search by name or mobile…"
-                value={searchTerm}
-                onChangeText={handleSearchChange}
-                placeholderTextColor="#c7c9ce"
-              />
-              {searchTerm ? (
-                <TouchableOpacity style={styles.clearButton} onPress={handleClearSearch}>
-                  <Text style={styles.clearButtonText}>Clear</Text>
-                </TouchableOpacity>
-              ) : null}
+          {/* Ageing Buckets */}
+          <View style={styles.bucketsSection}>
+            {renderBucket(
+              'upcoming',
+              t('upcoming') || 'Upcoming',
+              '#2196F3',
+              '📅'
+            )}
+            {renderBucket(
+              'due_today',
+              t('dueToday') || 'Due Today',
+              '#FFA500',
+              '⚠️'
+            )}
+            {renderBucket(
+              'overdue_1_30',
+              t('overdue1to30') || 'Overdue 1-30 Days',
+              '#FF6B6B',
+              '🔴'
+            )}
+            {renderBucket(
+              'overdue_31_60',
+              t('overdue31to60') || 'Overdue 31-60 Days',
+              '#FF4444',
+              '🔴'
+            )}
+            {renderBucket(
+              'overdue_61_90',
+              t('overdue61to90') || 'Overdue 61-90 Days',
+              '#DD0000',
+              '🔴'
+            )}
+            {renderBucket(
+              'overdue_90_plus',
+              t('overdue90plus') || 'Overdue 90+ Days',
+              '#BB0000',
+              '⛔'
+            )}
+          </View>
+
+          {/* Empty State */}
+          {(!ageingData.upcoming?.count &&
+            !ageingData.due_today?.count &&
+            !ageingData.overdue_1_30?.count &&
+            !ageingData.overdue_31_60?.count &&
+            !ageingData.overdue_61_90?.count &&
+            !ageingData.overdue_90_plus?.count) && (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyTitle}>{t('noPendingRecords') || 'No pending records'}</Text>
+              <Text style={styles.emptySubtitle}>
+                {t('allLipaLaterPaidUp') || 'All Lipa Later accounts are paid up. Great job!'}
+              </Text>
             </View>
           )}
 
-          {/* Category Info */}
-          {tabData.totalCount > 0 && (
-            <View style={[
-              styles.categoryBox,
-              { backgroundColor: AGEING_CATEGORIES.find(c => c.key === activeTab)?.bgColor || '#f5f5f5' },
-              { borderColor: AGEING_CATEGORIES.find(c => c.key === activeTab)?.borderColor || '#ddd' }
-            ]}>
-              <View style={styles.categoryHeader}>
-                <Text style={styles.categoryTitle}>
-                  {AGEING_CATEGORIES.find(c => c.key === activeTab)?.label || activeTab}
-                </Text>
-              </View>
+          {/* Action Buttons */}
+          <View style={styles.actionSection}>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => navigation.navigate('LipaLaterCustomers')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.primaryButtonText}>{t('viewAllCustomers') || 'View All Customers →'}</Text>
+            </TouchableOpacity>
 
-              <View style={styles.categoryStats}>
-                <View>
-                  <Text style={styles.statCount}>
-                    {tabData.totalCount} customer{tabData.totalCount === 1 ? '' : 's'}
-                  </Text>
-                </View>
-                <View style={styles.categoryAmount}>
-                  <Text style={styles.statLabel}>Outstanding:</Text>
-                  <Text style={styles.statAmount}>
-                    KSh {(categoryTotals[activeTab] || 0).toLocaleString()}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Records List */}
-              <View style={styles.recordsContainer}>
-                {tabData.records.length > 0 ? (
-                  tabData.records.map((trip, idx) => {
-                    try {
-                      const remaining = getRemainingBalance(trip.lipaLater) || 0;
-                      const daysOverdue = getDaysOverdue(trip.lipaLater.dueDate) || 0;
-                      const daysLabel = daysOverdue < 0 
-                        ? `Due in ${Math.abs(daysOverdue)} day${Math.abs(daysOverdue) === 1 ? '' : 's'}` 
-                        : (daysOverdue === 0 ? 'Due today' : `${daysOverdue} day${daysOverdue === 1 ? '' : 's'} overdue`);
-
-                      return (
-                        <View key={trip.id} style={styles.recordItem}>
-                          <View style={styles.recordNumber}><Text style={styles.recordNumberText}>{tabData.startIndex + idx + 1}</Text></View>
-                          
-                          <View style={styles.recordContent}>
-                            <View>
-                              <Text style={styles.recordName}>{trip.lipaLater?.customerName || 'Unknown'}</Text>
-                              <Text style={styles.recordPhone}>
-                                📞 {trip.lipaLater?.customerPhone || 'N/A'} · {daysLabel}
-                              </Text>
-                            </View>
-
-                            <View style={styles.recordFinancials}>
-                              <View>
-                                <Text style={styles.financialLabel}>Original</Text>
-                                <Text style={styles.financialValue}>
-                                  KSh {(trip.lipaLater?.originalAmount || 0).toLocaleString()}
-                                </Text>
-                              </View>
-                              <View style={styles.financialRight}>
-                                <Text style={styles.financialLabel}>Outstanding</Text>
-                                <Text style={styles.financialValueBold}>
-                                  KSh {remaining.toLocaleString()}
-                                </Text>
-                              </View>
-                            </View>
-                          </View>
-                        </View>
-                      );
-                    } catch (err) {
-                      console.error(`Error rendering record ${idx}:`, err);
-                      return (
-                        <View key={trip.id} style={styles.recordError}>
-                          <Text style={styles.recordErrorText}>Error displaying record</Text>
-                        </View>
-                      );
-                    }
-                  })
-                ) : (
-                  <View style={styles.emptyState}>
-                    <Text style={styles.emptyStateText}>
-                      {searchTerm ? '❌ No records match your search.' : '✅ No records in this category.'}
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              {/* Pagination */}
-              {tabData.totalPages > 1 && (
-                <View style={styles.paginationContainer}>
-                  <Text style={styles.paginationInfo}>
-                    Page {tabData.currentPage} of {tabData.totalPages}
-                  </Text>
-                  <View style={styles.paginationButtons}>
-                    <TouchableOpacity
-                      style={[styles.paginationBtn, tabData.currentPage === 1 && styles.paginationBtnDisabled]}
-                      onPress={handlePreviousPage}
-                      disabled={tabData.currentPage === 1}
-                    >
-                      <Text style={styles.paginationBtnText}>← Prev</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.paginationBtn, tabData.currentPage === tabData.totalPages && styles.paginationBtnDisabled]}
-                      onPress={handleNextPage}
-                      disabled={tabData.currentPage === tabData.totalPages}
-                    >
-                      <Text style={styles.paginationBtnText}>Next →</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            </View>
-          )}
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => navigation.navigate('PaymentSummary')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.secondaryButtonText}>{t('viewSummary') || 'View Summary →'}</Text>
+            </TouchableOpacity>
+          </View>
         </>
-      )}
-
-      {/* No Data State */}
-      {pendingTrips.length === 0 && (
-        <View style={styles.noDataContainer}>
-          <Text style={styles.noDataEmoji}>✅</Text>
-          <Text style={styles.noDataText}>No pending Lipa Later payments</Text>
-          <Text style={styles.noDataSubtext}>All customers fully settled!</Text>
-        </View>
-      )}
+      ) : null}
     </ScrollView>
   );
 }
@@ -377,302 +371,221 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f6f4ef',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 40,
+    paddingHorizontal: 20,
+    paddingTop: 12
   },
   title: {
-    fontSize: 24,
+    fontFamily: 'SpaceGrotesk-Bold',
+    fontSize: 22,
     fontWeight: '700',
     color: '#1a1c20',
-    marginTop: 16,
-    marginBottom: 4,
+    marginBottom: 16
   },
-  subtitle: {
-    fontSize: 13,
-    color: '#5b606c',
+
+  criticalErrorBanner: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1.5,
+    borderColor: '#f6cac7',
+    borderRadius: 14,
+    padding: 12,
     marginBottom: 16,
-  },
-  criticalBanner: {
-    backgroundColor: 'rgba(224,69,63,.15)',
-    borderLeftWidth: 4,
-    borderLeftColor: '#e0453f',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    marginBottom: 20,
-    borderRadius: 8,
-  },
-  criticalBannerText: {
-    fontSize: 13,
-    color: '#5b606c',
-    lineHeight: 19,
-  },
-  criticalEmoji: {
-    fontSize: 16,
-  },
-  criticalBannerBold: {
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  summaryContainer: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 20,
+    justifyContent: 'space-between',
+    alignItems: 'center'
   },
-  summaryCard: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-    borderRadius: 12,
-    padding: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
+  criticalErrorText: {
+    fontSize: 12,
+    color: '#a5312c',
+    fontWeight: '600',
+    flex: 1
   },
-  summaryValue: {
-    fontSize: 20,
+  dismissText: {
+    fontSize: 11,
+    color: '#a5312c',
     fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 4,
+    marginLeft: 12
+  },
+
+  centerContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60
+  },
+  loadingText: {
+    marginTop: 12,
+    color: '#a8a196',
+    fontSize: 14
+  },
+
+  summaryCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 24,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff7a1a'
   },
   summaryLabel: {
-    fontSize: 11,
-    color: '#5b606c',
-    textAlign: 'center',
-  },
-  tabsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    paddingBottom: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db',
-    marginBottom: 16,
-  },
-  tab: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#f5f3f0',
-    borderRadius: 8,
-  },
-  tabActive: {
-    backgroundColor: '#ff7a1a',
-  },
-  tabText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#1a1c20',
-  },
-  tabTextActive: {
-    color: '#fff',
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 16,
-  },
-  searchInput: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    color: '#1a1c20',
-  },
-  clearButton: {
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  clearButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#ff7a1a',
-  },
-  categoryBox: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 20,
-  },
-  categoryHeader: {
-    marginBottom: 12,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,.1)',
-  },
-  categoryTitle: {
-    fontSize: 14,
+    fontSize: 10,
     fontWeight: '700',
-    color: '#1a1c20',
+    textTransform: 'uppercase',
+    color: '#a8a196',
+    marginBottom: 6,
+    letterSpacing: 0.4
   },
-  categoryStats: {
+  summaryAmount: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1a1c20',
+    marginBottom: 4
+  },
+  summarySubtext: {
+    fontSize: 11,
+    color: '#a8a196'
+  },
+
+  bucketsSection: {
+    marginBottom: 24
+  },
+
+  bucketContainer: {
+    marginBottom: 12,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderLeftWidth: 4
+  },
+
+  bucketHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 12,
+    alignItems: 'center',
+    padding: 14
   },
-  statCount: {
+  bucketHeaderLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  bucketIcon: {
+    fontSize: 18,
+    marginRight: 12
+  },
+  bucketLabel: {
     fontSize: 13,
     fontWeight: '700',
     color: '#1a1c20',
+    marginBottom: 2
   },
-  categoryAmount: {
-    alignItems: 'flex-end',
-  },
-  statLabel: {
+  bucketCount: {
     fontSize: 11,
-    color: '#5b606c',
+    color: '#a8a196'
   },
-  statAmount: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1a1c20',
+  bucketAmount: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 4
   },
-  recordsContainer: {
-    gap: 10,
-    marginBottom: 12,
+  expandIndicator: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#a8a196'
   },
+
+  bucketContent: {
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    paddingHorizontal: 14,
+    paddingVertical: 10
+  },
+
   recordItem: {
     flexDirection: 'row',
-    gap: 10,
-    backgroundColor: '#fff',
-    padding: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(0,0,0,.05)',
-  },
-  recordNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#ff7a1a',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recordNumberText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#fff',
-  },
-  recordContent: {
-    flex: 1,
-    gap: 8,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0'
   },
   recordName: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     color: '#1a1c20',
+    marginBottom: 2
   },
   recordPhone: {
-    fontSize: 11,
-    color: '#5b606c',
-  },
-  recordFinancials: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,.05)',
-  },
-  financialLabel: {
     fontSize: 10,
-    color: '#5b606c',
-    marginBottom: 2,
+    color: '#a8a196'
   },
-  financialValue: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  financialRight: {
-    alignItems: 'flex-end',
-  },
-  financialValueBold: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#ff7a1a',
-  },
-  recordError: {
-    padding: 12,
-    backgroundColor: '#fdecea',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  recordErrorText: {
-    fontSize: 12,
-    color: '#b3352f',
-  },
-  emptyState: {
-    paddingVertical: 24,
-    alignItems: 'center',
-  },
-  emptyStateText: {
+  recordAmount: {
     fontSize: 13,
-    color: '#5b606c',
+    fontWeight: 'bold',
+    color: '#1a1c20',
+    marginBottom: 2
+  },
+  daysOverdue: {
+    fontSize: 10,
+    color: '#d32f2f',
+    fontWeight: '600'
+  },
+
+  nothingInBucketText: {
+    fontSize: 12,
+    color: '#a8a196',
     textAlign: 'center',
+    paddingVertical: 10,
+    fontStyle: 'italic'
   },
-  paginationContainer: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,.1)',
-    paddingTop: 10,
+
+  emptyContainer: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60
   },
-  paginationInfo: {
-    fontSize: 11,
-    color: '#5b606c',
-    textAlign: 'center',
-    marginBottom: 10,
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1a1c20',
+    marginBottom: 8
   },
-  paginationButtons: {
-    flexDirection: 'row',
-    gap: 10,
+  emptySubtitle: {
+    fontSize: 13,
+    color: '#a8a196',
+    textAlign: 'center'
   },
-  paginationBtn: {
-    flex: 1,
+
+  actionSection: {
+    marginBottom: 40
+  },
+  primaryButton: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6
+  },
+  primaryButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.02
+  },
+  secondaryButton: {
     backgroundColor: '#fff',
     borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 8,
-    paddingVertical: 10,
-    alignItems: 'center',
+    borderColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center'
   },
-  paginationBtnDisabled: {
-    opacity: 0.5,
-    backgroundColor: '#f0f0f0',
-  },
-  paginationBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
+  secondaryButtonText: {
     color: '#ff7a1a',
-  },
-  noDataContainer: {
-    backgroundColor: '#e6f5ef',
-    borderRadius: 12,
-    padding: 28,
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  noDataEmoji: {
-    fontSize: 36,
-    marginBottom: 8,
-  },
-  noDataText: {
-    fontSize: 16,
-    color: '#1e9e6f',
-    fontWeight: '700',
-    textAlign: 'center',
-    marginBottom: 4,
-  },
-  noDataSubtext: {
-    fontSize: 13,
-    color: '#1e9e6f',
-    textAlign: 'center',
-  },
+    fontSize: 15,
+    fontWeight: '700'
+  }
 });

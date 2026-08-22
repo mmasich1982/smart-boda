@@ -1,268 +1,340 @@
-// rider-app/src/screens/lipaLater/PaymentSummaryScreen.js
-// FIXED: Aligned to cleaned.html (RA-03-E) Lipa Later Customers Report
-// - Search by customer name or mobile number
-// - Pagination with record numbering
-// - Status badges for overdue/due today/upcoming
-// - Payment history display
-// - Full/partial payment tracking
+/**
+ * rider-app/src/screens/lipaLater/PaymentSummaryScreen.js
+ * RA-03-E: Lipa Later Payment Summary Dashboard
+ * 
+ * ✅ SEAMLESS ONLINE/OFFLINE: Cache-first loading with API fallback
+ * ✅ MULTILINGUAL: Uses i18n for all UI text
+ * ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+ * ✅ NETWORK AWARE: Real-time connectivity detection
+ * ✅ MINIMAL UI: Title + Summary Cards + Statistics
+ * ✅ NO STATUS BANNERS: Only critical errors shown
+ * 
+ * Displays payment summary statistics:
+ * - Total customers
+ * - Total outstanding amount
+ * - Collection rate
+ * - Breakdown by status (Pending, Partial, Paid)
+ */
 
-import React, { useState, useMemo, useCallback } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, FlatList } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import {
+  ScrollView,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  RefreshControl
+} from 'react-native';
 import BackLink from '../../components/BackLink';
+import { useFocusEffect } from '@react-navigation/native';
 import { useRider } from '../../rider/RiderContext';
-
-const RECORDS_PER_PAGE = 5;
+import { useTranslation } from '../../i18n/LocalizationProvider';
+import { getLocalRiderId } from '../../offline/db';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import api from '../../api/client';
+import colors from '../../theme/colors';
 
 export default function PaymentSummaryScreen({ navigation }) {
   const { state } = useRider();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
+  const { t } = useTranslation();
+  const [localRiderId, setLocalRiderId] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Helper: Filter by search term
-  const filterBySearch = useCallback((trips, term) => {
-    if (!term || term.trim() === '') return trips;
-    const search = term.toLowerCase().trim();
-    return trips.filter(t => {
-      const name = (t.lipaLater?.customerName || '').toLowerCase();
-      const phone = (t.lipaLater?.customerPhone || '').toLowerCase();
-      return name.includes(search) || phone.includes(search);
-    });
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
+
+  // ✅ LOAD RIDER ID ON MOUNT
+  useEffect(() => {
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ PaymentSummary: Loaded rider ID:', id);
+        }
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
+      }
+    };
+    loadRiderId();
   }, []);
 
-  // Helper: Get remaining balance
-  const getRemainingBalance = useCallback((lipaLater) => {
-    if (!lipaLater || !lipaLater.payments) return lipaLater?.originalAmount || 0;
-    const paid = lipaLater.payments.reduce((sum, p) => sum + (p.amount || 0), 0);
-    return Math.max(0, (lipaLater.originalAmount || 0) - paid);
-  }, []);
+  const effectiveRiderId = localRiderId || state?.riderId;
 
-  // Helper: Get total paid
-  const getTotalPaid = useCallback((lipaLater) => {
-    if (!lipaLater || !lipaLater.payments) return 0;
-    return lipaLater.payments.reduce((sum, p) => sum + (p.amount || 0), 0);
-  }, []);
-
-  // Get pending trips
-  const pendingTrips = useMemo(() => {
-    if (!state?.trips) return [];
-    return state.trips
-      .filter(t => t.paymentMethod === 'LipaLater' && t.lipaLater && !t.lipaLater.settled && t.status === 'active')
-      .slice()
-      .sort((a, b) => (a.lipaLater.dueDate || '').localeCompare(b.lipaLater.dueDate || ''));
-  }, [state?.trips]);
-
-  // Calculate stats
-  const today = new Date().toISOString().split('T')[0];
-  const overdueCount = useMemo(() => 
-    pendingTrips.filter(t => t.lipaLater.dueDate < today).length,
-    [pendingTrips, today]
-  );
-  const dueTodayCount = useMemo(() => 
-    pendingTrips.filter(t => t.lipaLater.dueDate === today).length,
-    [pendingTrips, today]
+  // Load summary on focus
+  useFocusEffect(
+    React.useCallback(() => {
+      if (!effectiveRiderId || !isInitialized) return;
+      loadSummary();
+    }, [effectiveRiderId, isInitialized])
   );
 
-  // Filter and paginate
-  const filteredTrips = useMemo(() => filterBySearch(pendingTrips, searchTerm), [pendingTrips, searchTerm, filterBySearch]);
-  const totalPages = Math.max(1, Math.ceil(filteredTrips.length / RECORDS_PER_PAGE));
-  const validPage = Math.max(1, Math.min(currentPage, totalPages));
-  const startIdx = (validPage - 1) * RECORDS_PER_PAGE;
-  const endIdx = Math.min(startIdx + RECORDS_PER_PAGE, filteredTrips.length);
-  const displayRecords = filteredTrips.slice(startIdx, endIdx);
+  const loadSummary = async () => {
+    try {
+      setLoading(true);
+      clearCriticalError();
 
-  const handleSearch = useCallback((text) => {
-    setSearchTerm(text);
-    setCurrentPage(1);
-  }, []);
+      let data = null;
 
-  const handleClearSearch = useCallback(() => {
-    setSearchTerm('');
-    setCurrentPage(1);
-  }, []);
+      // Try API first if connected
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Fetching payment summary from API...');
+          const response = await api.get('/trips/lipa-later/summary', {
+            params: { rider_id: effectiveRiderId }
+          });
 
-  const handlePrevPage = useCallback(() => {
-    if (validPage > 1) setCurrentPage(validPage - 1);
-  }, [validPage]);
+          if (response.data) {
+            data = response.data;
+            console.log('✅ Loaded summary from API');
 
-  const handleNextPage = useCallback(() => {
-    if (validPage < totalPages) setCurrentPage(validPage + 1);
-  }, [validPage, totalPages]);
+            // ✅ Cache the data using IndexedDB
+            await indexedDbAdapter.kvSet(
+              `lipa_summary_${effectiveRiderId}`,
+              JSON.stringify(data)
+            );
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API fetch failed, falling back to cache:', apiErr.message);
+          data = await loadSummaryFromCache();
+        }
+      } else {
+        // Offline mode - use cache
+        console.log('📴 Offline mode: Loading from cache');
+        data = await loadSummaryFromCache();
+      }
 
-  const handleRecordPayment = useCallback((tripId) => {
-    navigation.navigate('RecordPayment', { tripId });
-  }, [navigation]);
+      if (data) {
+        setSummary(data);
+      } else {
+        // Provide default structure
+        setSummary({
+          total_customers: 0,
+          total_outstanding: 0,
+          total_received: 0,
+          collection_rate: 0,
+          pending_count: 0,
+          partial_count: 0,
+          paid_count: 0
+        });
+      }
+    } catch (err) {
+      console.error('❌ Error loading summary:', err);
+      showCriticalError(t('error_loadSummary') || 'Unable to load summary. Please try again.', 'data_load');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
 
-  const canPrevPage = validPage > 1;
-  const canNextPage = validPage < totalPages;
+  const loadSummaryFromCache = async () => {
+    try {
+      // ✅ Use IndexedDB adapter instead of LocalStore
+      const cached = await indexedDbAdapter.kvGet(`lipa_summary_${effectiveRiderId}`);
+      if (cached) {
+        const data = typeof cached === 'string' ? JSON.parse(cached) : cached;
+        console.log('✅ Loaded summary from IndexedDB cache');
+        return data;
+      }
+    } catch (err) {
+      console.warn('⚠️ Cache load failed:', err);
+    }
+    return null;
+  };
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadSummary();
+  };
+
+  if (!isInitialized) {
+    return (
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <Text style={styles.title}>{t('paymentSummary') || 'Payment Summary'}</Text>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+      </ScrollView>
+    );
+  }
 
   return (
-    <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.goBack()} label="← Home" />
-      
-      <Text style={styles.title}>Lipa Later Customers Report</Text>
-      <Text style={styles.subtitle}>RA-03-E · Lipa Later Customers Report</Text>
-
-      {/* Warning Banner */}
-      {(overdueCount > 0 || dueTodayCount > 0) && (
-        <View style={styles.warningBanner}>
-          <Text style={styles.warningText}>
-            ⚠️ <Text style={styles.warningBold}>{overdueCount} overdue</Text>
-            {dueTodayCount > 0 && <Text>, <Text style={styles.warningBold}>{dueTodayCount} due today</Text></Text>}
-            — highlighted below for quick follow-up.
-          </Text>
-        </View>
-      )}
-
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="🔍 Search by customer name or mobile number…"
-          value={searchTerm}
-          onChangeText={handleSearch}
-          placeholderTextColor="#c7c9ce"
+    <ScrollView
+      style={styles.container}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={handleRefresh}
+          colors={['#ff7a1a']}
         />
-        {searchTerm && (
-          <TouchableOpacity style={styles.clearBtn} onPress={handleClearSearch}>
-            <Text style={styles.clearBtnText}>Clear</Text>
+      }
+    >
+      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+      <Text style={styles.title}>{t('paymentSummary') || 'Payment Summary'}</Text>
+
+      {/* Error Banner */}
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Records List */}
-      <View style={styles.recordsContainer}>
-        {displayRecords.length > 0 ? (
-          displayRecords.map((trip, idx) => {
-            const recordNum = startIdx + idx + 1;
-            const due = trip.lipaLater.dueDate;
-            const isOverdue = due < today;
-            const isDueToday = due === today;
-            const remaining = getRemainingBalance(trip.lipaLater);
-            const totalPaid = getTotalPaid(trip.lipaLater);
-
-            return (
-              <View key={trip.id} style={[
-                styles.recordItem,
-                isOverdue && styles.recordItemOverdue,
-                isDueToday && styles.recordItemDueToday,
-              ]}>
-                <Text style={styles.recordNumber}>{recordNum}</Text>
-                
-                <View style={styles.recordContent}>
-                  {/* Name and Badge */}
-                  <View style={styles.headerRow}>
-                    <Text style={styles.customerName}>{trip.lipaLater.customerName}</Text>
-                    {isOverdue && <Text style={[styles.badge, styles.badgeRed]}>Overdue</Text>}
-                    {isDueToday && !isOverdue && <Text style={[styles.badge, styles.badgeAmber]}>Due Today</Text>}
-                    {!isOverdue && !isDueToday && <Text style={[styles.badge, styles.badgeGrey]}>Upcoming</Text>}
-                  </View>
-
-                  {/* Phone */}
-                  <Text style={styles.phone}>📞 {trip.lipaLater.customerPhone}</Text>
-
-                  {/* Grid: Original Amount, Trip Date, Due Date */}
-                  <View style={styles.gridRow}>
-                    <View style={styles.gridItem}>
-                      <Text style={styles.gridLabel}>Original Amount</Text>
-                      <Text style={styles.gridValue}>KSh {trip.lipaLater.originalAmount.toLocaleString()}</Text>
-                    </View>
-                    <View style={styles.gridItem}>
-                      <Text style={styles.gridLabel}>Trip Date</Text>
-                      <Text style={styles.gridValue}>{new Date(trip.ts).toLocaleDateString()}</Text>
-                    </View>
-                    <View style={styles.gridItem}>
-                      <Text style={styles.gridLabel}>Due Date</Text>
-                      <Text style={styles.gridValue}>{due ? new Date(due).toLocaleDateString() : '—'}</Text>
-                    </View>
-                  </View>
-
-                  {/* Payment Status */}
-                  {totalPaid > 0 && (
-                    <View style={styles.paymentStatus}>
-                      <View style={styles.paymentStatusRow}>
-                        <Text style={styles.paymentStatusLabel}>Paid so far:</Text>
-                        <Text style={styles.paymentStatusValueGreen}>KSh {totalPaid.toLocaleString()}</Text>
-                      </View>
-                      <View style={styles.paymentStatusRow}>
-                        <Text style={styles.paymentStatusLabel}>Still owing:</Text>
-                        <Text style={[styles.paymentStatusValue, { color: remaining > 0 ? '#ff7a1a' : '#1e9e6f' }]}>
-                          KSh {remaining.toLocaleString()}
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-
-                  {/* Payment History */}
-                  {(trip.lipaLater.payments || []).length > 0 && (
-                    <View style={styles.paymentHistory}>
-                      <Text style={styles.paymentHistoryTitle}>Payment History:</Text>
-                      {trip.lipaLater.payments.map((p, pidx) => (
-                        <View key={pidx} style={styles.paymentHistoryRow}>
-                          <Text style={styles.paymentHistoryAmount}>KSh {p.amount.toLocaleString()}</Text>
-                          <Text style={styles.paymentHistoryDate}>{new Date(p.date).toLocaleDateString()}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-
-                  {/* Action Button */}
-                  {!trip.lipaLater.settled ? (
-                    <TouchableOpacity
-                      style={styles.recordPaymentBtn}
-                      onPress={() => handleRecordPayment(trip.id)}
-                    >
-                      <Text style={styles.recordPaymentBtnText}>💳 Record Payment</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <View style={styles.settledBadge}>
-                      <Text style={styles.settledText}>✓ Fully settled</Text>
-                    </View>
-                  )}
-                </View>
-              </View>
-            );
-          })
-        ) : (
-          <View style={styles.noResults}>
-            <Text style={styles.noResultsText}>
-              {searchTerm ? '❌ No customers match your search.' : '✅ No pending Lipa Later payments right now. 🎉'}
-            </Text>
-          </View>
-        )}
-      </View>
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <View style={styles.paginationContainer}>
-          <Text style={styles.paginationInfo}>
-            Showing {displayRecords.length === 0 ? 0 : startIdx + 1}–{endIdx} of {filteredTrips.length} {searchTerm ? 'matching ' : ''}customers (Page {validPage} of {totalPages})
-          </Text>
-          <View style={styles.paginationButtons}>
-            <TouchableOpacity
-              style={[styles.paginationBtn, !canPrevPage && styles.paginationBtnDisabled]}
-              onPress={handlePrevPage}
-              disabled={!canPrevPage}
-            >
-              <Text style={styles.paginationBtnText}>← Previous</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.paginationBtn, !canNextPage && styles.paginationBtnDisabled]}
-              onPress={handleNextPage}
-              disabled={!canNextPage}
-            >
-              <Text style={styles.paginationBtnText}>Next →</Text>
-            </TouchableOpacity>
-          </View>
         </View>
       )}
 
-      {/* Ageing Report Link */}
-      <TouchableOpacity
-        style={styles.ageingLink}
-        onPress={() => navigation.navigate('LipaLaterAgeing')}
-      >
-        <Text style={styles.ageingLinkText}>📊 View Payment Ageing Report</Text>
-      </TouchableOpacity>
+      {loading ? (
+        <View style={styles.centerContainer}>
+          <ActivityIndicator size="large" color="#ff7a1a" />
+          <Text style={styles.loadingText}>{t('loadingSummary') || 'Loading summary...'}</Text>
+        </View>
+      ) : summary ? (
+        <>
+          {/* Key Metrics */}
+          <View style={styles.metricsGrid}>
+            {/* Total Customers */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>{t('customers') || 'CUSTOMERS'}</Text>
+              <Text style={styles.metricValue}>{summary.total_customers || 0}</Text>
+              <Text style={styles.metricSubtext}>{t('totalAccounts') || 'Total accounts'}</Text>
+            </View>
+
+            {/* Total Outstanding */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>{t('outstanding') || 'OUTSTANDING'}</Text>
+              <Text style={[styles.metricValue, { color: '#FFA500' }]}>
+                KSh {(summary.total_outstanding || 0).toLocaleString()}
+              </Text>
+              <Text style={styles.metricSubtext}>{t('amountDue') || 'Amount due'}</Text>
+            </View>
+
+            {/* Total Received */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>{t('received') || 'RECEIVED'}</Text>
+              <Text style={[styles.metricValue, { color: '#4CAF50' }]}>
+                KSh {(summary.total_received || 0).toLocaleString()}
+              </Text>
+              <Text style={styles.metricSubtext}>{t('collectedToday') || 'Collected today'}</Text>
+            </View>
+
+            {/* Collection Rate */}
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>{t('collectionRate') || 'COLLECTION RATE'}</Text>
+              <Text style={styles.metricValue}>
+                {Math.round(summary.collection_rate || 0)}%
+              </Text>
+              <Text style={styles.metricSubtext}>{t('successRate') || 'Success rate'}</Text>
+            </View>
+          </View>
+
+          {/* Status Breakdown */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>{t('statusBreakdown') || 'Status Breakdown'}</Text>
+
+            <View style={styles.statusGrid}>
+              {/* Pending */}
+              <TouchableOpacity
+                onPress={() => navigation.navigate('LipaLaterCustomers', { filter: 'pending' })}
+                style={styles.statusCard}
+                activeOpacity={0.7}
+              >
+                <View style={styles.statusIconContainer}>
+                  <Text style={styles.statusIcon}>⏳</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusCardLabel}>{t('pending') || 'Pending'}</Text>
+                  <Text style={styles.statusCardCount}>{summary.pending_count || 0}</Text>
+                </View>
+                <Text style={styles.statusArrow}>→</Text>
+              </TouchableOpacity>
+
+              {/* Partial */}
+              <TouchableOpacity
+                onPress={() => navigation.navigate('LipaLaterCustomers', { filter: 'partial' })}
+                style={styles.statusCard}
+                activeOpacity={0.7}
+              >
+                <View style={styles.statusIconContainer}>
+                  <Text style={styles.statusIcon}>⚠️</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusCardLabel}>{t('partial') || 'Partial'}</Text>
+                  <Text style={styles.statusCardCount}>{summary.partial_count || 0}</Text>
+                </View>
+                <Text style={styles.statusArrow}>→</Text>
+              </TouchableOpacity>
+
+              {/* Paid */}
+              <TouchableOpacity
+                onPress={() => navigation.navigate('LipaLaterCustomers', { filter: 'paid' })}
+                style={styles.statusCard}
+                activeOpacity={0.7}
+              >
+                <View style={styles.statusIconContainer}>
+                  <Text style={styles.statusIcon}>✓</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusCardLabel}>{t('paid') || 'Paid'}</Text>
+                  <Text style={styles.statusCardCount}>{summary.paid_count || 0}</Text>
+                </View>
+                <Text style={styles.statusArrow}>→</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Collection Progress */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>{t('collectionProgress') || 'Collection Progress'}</Text>
+
+            <View style={styles.progressCard}>
+              <View style={styles.progressHeader}>
+                <Text style={styles.progressLabel}>{t('todaysCollections') || "Today's Collections"}</Text>
+                <Text style={[styles.progressValue, { color: '#4CAF50' }]}>
+                  KSh {(summary.total_received || 0).toLocaleString()}
+                </Text>
+              </View>
+
+              <View style={styles.progressBarContainer}>
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    {
+                      width: `${Math.min(100, ((summary.total_received || 0) / Math.max(1, summary.total_outstanding || 1)) * 100)}%`
+                    }
+                  ]}
+                />
+              </View>
+
+              <View style={styles.progressFooter}>
+                <Text style={styles.progressFooterText}>
+                  {Math.round((summary.total_received || 0) / Math.max(1, summary.total_outstanding || 1) * 100)}% {t('ofOutstandingCollected') || 'of outstanding amount collected'}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Action Buttons */}
+          <View style={styles.actionSection}>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => navigation.navigate('LipaLaterCustomers')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.primaryButtonText}>{t('viewAllCustomers') || 'View All Customers'} →</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => navigation.navigate('LipaLaterAgeing')}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.secondaryButtonText}>{t('viewAgeingReport') || 'View Ageing Report'} →</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : null}
     </ScrollView>
   );
 }
@@ -271,277 +343,202 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f6f4ef',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 40,
+    paddingHorizontal: 20,
+    paddingTop: 12
   },
   title: {
-    fontSize: 24,
+    fontFamily: 'SpaceGrotesk-Bold',
+    fontSize: 22,
     fontWeight: '700',
     color: '#1a1c20',
-    marginTop: 16,
-    marginBottom: 4,
+    marginBottom: 16
   },
-  subtitle: {
-    fontSize: 13,
-    color: '#8b5cf6',
-    marginBottom: 16,
-  },
-  warningBanner: {
-    backgroundColor: '#fdf3df',
-    borderLeftWidth: 4,
-    borderLeftColor: '#c98a12',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 20,
-    borderRadius: 8,
-  },
-  warningText: {
-    fontSize: 13,
-    color: '#1a1c20',
-  },
-  warningBold: {
-    fontWeight: '700',
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 20,
-    gap: 8,
-  },
-  searchInput: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-    color: '#1a1c20',
-  },
-  clearBtn: {
-    backgroundColor: '#f0f0f0',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  clearBtnText: {
-    fontSize: 12,
-    color: '#1a1c20',
-    fontWeight: '600',
-  },
-  recordsContainer: {
-    marginBottom: 20,
-  },
-  recordItem: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-    borderRadius: 12,
-    marginBottom: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    flexDirection: 'row',
-  },
-  recordItemOverdue: {
+
+  criticalErrorBanner: {
     backgroundColor: '#fdecea',
+    borderWidth: 1.5,
     borderColor: '#f6cac7',
-  },
-  recordItemDueToday: {
-    backgroundColor: '#fdf3df',
-    borderColor: '#ffe3c2',
-  },
-  recordNumber: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#5b606c',
-    marginRight: 12,
-    minWidth: 20,
-  },
-  recordContent: {
-    flex: 1,
-  },
-  headerRow: {
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
+    alignItems: 'center'
   },
-  customerName: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  badge: {
-    fontSize: 10,
-    fontWeight: '700',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 999,
-    overflow: 'hidden',
-  },
-  badgeRed: {
-    backgroundColor: '#fdecea',
-    color: '#e0453f',
-  },
-  badgeAmber: {
-    backgroundColor: '#fdf3df',
-    color: '#c98a12',
-  },
-  badgeGrey: {
-    backgroundColor: '#f0f0f0',
-    color: '#5b606c',
-  },
-  phone: {
+  criticalErrorText: {
     fontSize: 12,
-    color: '#5b606c',
-    marginBottom: 8,
-  },
-  gridRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 8,
-  },
-  gridItem: {
-    flex: 1,
-  },
-  gridLabel: {
-    fontSize: 10,
-    color: '#5b606c',
-    marginBottom: 2,
-  },
-  gridValue: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  paymentStatus: {
-    backgroundColor: 'rgba(30,158,111,.08)',
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    borderRadius: 6,
-    marginBottom: 8,
-  },
-  paymentStatusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 3,
-  },
-  paymentStatusLabel: {
-    fontSize: 11,
-    color: '#5b606c',
-  },
-  paymentStatusValue: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  paymentStatusValueGreen: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#1e9e6f',
-  },
-  paymentHistory: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,.1)',
-    paddingTopWidth: 10,
-    marginTop: 10,
-    marginBottom: 8,
-  },
-  paymentHistoryTitle: {
-    fontSize: 11,
+    color: '#a5312c',
     fontWeight: '600',
-    color: '#5b606c',
-    marginBottom: 6,
+    flex: 1
   },
-  paymentHistoryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4,
+  dismissText: {
     fontSize: 11,
-  },
-  paymentHistoryAmount: {
-    fontSize: 11,
-    color: '#1a1c20',
-  },
-  paymentHistoryDate: {
-    fontSize: 11,
-    color: '#5b606c',
-  },
-  recordPaymentBtn: {
-    backgroundColor: '#ff7a1a',
-    borderRadius: 8,
-    paddingVertical: 8,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  recordPaymentBtnText: {
-    fontSize: 12,
+    color: '#a5312c',
     fontWeight: '700',
-    color: '#fff',
+    marginLeft: 12
   },
-  settledBadge: {
-    backgroundColor: 'rgba(30,158,111,.15)',
-    borderRadius: 8,
-    paddingVertical: 8,
+
+  centerContainer: {
+    justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 10,
+    paddingVertical: 60
   },
-  settledText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1e9e6f',
-  },
-  noResults: {
-    paddingVertical: 20,
-    alignItems: 'center',
-  },
-  noResultsText: {
-    fontSize: 14,
-    color: '#5b606c',
-  },
-  paginationContainer: {
-    marginBottom: 20,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e7e4db',
-  },
-  paginationInfo: {
-    fontSize: 11,
-    color: '#5b606c',
-    marginBottom: 10,
-  },
-  paginationButtons: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  paginationBtn: {
-    flex: 1,
-    backgroundColor: '#f0f0f0',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  paginationBtnDisabled: {
-    opacity: 0.5,
-  },
-  paginationBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1a1c20',
-  },
-  ageingLink: {
-    backgroundColor: '#f0f0f0',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
+  loadingText: {
     marginTop: 12,
+    color: '#a8a196',
+    fontSize: 14
   },
-  ageingLinkText: {
-    fontSize: 14,
-    fontWeight: '600',
+
+  metricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 24
+  },
+  metricCard: {
+    flex: 1,
+    minWidth: '48%',
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    borderLeftWidth: 3,
+    borderLeftColor: '#ff7a1a'
+  },
+  metricLabel: {
+    fontSize: 9,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    color: '#a8a196',
+    marginBottom: 6,
+    letterSpacing: 0.4
+  },
+  metricValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
     color: '#1a1c20',
+    marginBottom: 4
   },
+  metricSubtext: {
+    fontSize: 10,
+    color: '#a8a196'
+  },
+
+  section: {
+    marginBottom: 24
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 12
+  },
+
+  statusGrid: {
+    gap: 10
+  },
+  statusCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderLeftWidth: 3,
+    borderLeftColor: '#ff7a1a'
+  },
+  statusIconContainer: {
+    marginRight: 12
+  },
+  statusIcon: {
+    fontSize: 20
+  },
+  statusCardLabel: {
+    fontSize: 12,
+    color: '#a8a196',
+    fontWeight: '600',
+    marginBottom: 2
+  },
+  statusCardCount: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1a1c20'
+  },
+  statusArrow: {
+    fontSize: 16,
+    color: '#ff7a1a',
+    fontWeight: 'bold'
+  },
+
+  progressCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 16
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: '#a8a196',
+    fontWeight: '600'
+  },
+  progressValue: {
+    fontSize: 16,
+    fontWeight: 'bold'
+  },
+  progressBarContainer: {
+    height: 8,
+    backgroundColor: '#e0e0e0',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: 12
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#4CAF50'
+  },
+  progressFooter: {
+    alignItems: 'center'
+  },
+  progressFooterText: {
+    fontSize: 11,
+    color: '#a8a196'
+  },
+
+  actionSection: {
+    marginBottom: 40
+  },
+  primaryButton: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 12,
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6
+  },
+  primaryButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.02
+  },
+  secondaryButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center'
+  },
+  secondaryButtonText: {
+    color: '#ff7a1a',
+    fontSize: 15,
+    fontWeight: '700'
+  }
 });

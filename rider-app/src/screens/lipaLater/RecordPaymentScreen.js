@@ -1,395 +1,540 @@
-// rider-app/src/screens/lipaLater/RecordPaymentScreen.js
 /**
- * Record Lipa Later Payment Screen
- * Allows rider to record full or partial payments for pending Lipa Later customers
- * Aligned to cleaned.html logic
+ * rider-app/src/screens/lipaLater/RecordPaymentScreen.js
+ * RA-03-F: Record Lipa Later Payment
  * 
- * UPDATED: Properly integrates with HomeScreen refresh mechanism
- * When payment is recorded, user returns to LipaLaterCustomers which allows
- * HomeScreen to refresh and immediately show updated income total
+ * ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, immediate local save
+ * ✅ MULTILINGUAL: Uses i18n for all UI text
+ * ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+ * ✅ NETWORK AWARE: Real-time connectivity detection
+ * ✅ MINIMAL UI: Title + Error + Input + Button ONLY
+ * ✅ NO STATUS BANNERS: Only critical errors shown
+ * 
+ * Records full or partial payment against a Lipa Later customer record.
+ * Saves locally immediately, queues for sync, updates financial metrics.
  */
 
-import React, { useState, useCallback } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, TextInput, StyleSheet, Alert } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import {
+  ScrollView,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  Alert
+} from 'react-native';
 import BackLink from '../../components/BackLink';
 import { useRider } from '../../rider/RiderContext';
-import { getRemainingBalance, getTotalPaid } from '../../rider/RiderContext';
+import { useTranslation } from '../../i18n/LocalizationProvider';
+import { getLocalRiderId } from '../../offline/db';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { addToSyncQueue } from '../../offline/syncQueue';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import api from '../../api/client';
+import colors from '../../theme/colors';
 
-export default function RecordPaymentScreen({ navigation, route }) {
-  const { state, dispatch } = useRider();
-  const tripId = route?.params?.tripId;
-  
-  // Find the trip
-  const trip = state?.trips?.find(t => t.id === tripId);
-  
-  if (!trip || !trip.lipaLater) {
+export default function RecordPaymentScreen({ route, navigation }) {
+  const { recordId, record } = route.params;
+  const { state } = useRider();
+  const { t } = useTranslation();
+  const [localRiderId, setLocalRiderId] = useState(null);
+  const [formState, setFormState] = useState({
+    amount: '',
+    paymentDate: getTodayDate(),
+    reference: '',
+    notes: '',
+    saving: false
+  });
+
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
+
+  const remaining = parseFloat(record.remaining_balance || record.amount || 0);
+  const original = parseFloat(record.amount || 0);
+
+  // ✅ LOAD RIDER ID ON MOUNT
+  useEffect(() => {
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ RecordPayment: Loaded rider ID:', id);
+        }
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
+      }
+    };
+    loadRiderId();
+  }, []);
+
+  const effectiveRiderId = localRiderId || state?.riderId;
+
+  const updateCustomerCache = async (paymentData) => {
+    try {
+      const cacheKey = `lipa_customers_${effectiveRiderId}`;
+      
+      // ✅ Use IndexedDB adapter instead of LocalStore
+      const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+      let customers = [];
+
+      if (cachedData) {
+        try {
+          customers = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+          if (!Array.isArray(customers)) customers = [];
+        } catch (parseErr) {
+          console.warn('⚠️ Cache parse error, starting fresh');
+          customers = [];
+        }
+      }
+
+      // Find and update the customer record
+      const recordIndex = customers.findIndex(c => c.id === recordId);
+      if (recordIndex !== -1) {
+        const amount = parseFloat(paymentData.amount_paid);
+        const newRemaining = remaining - amount;
+
+        customers[recordIndex].remaining_balance = Math.max(0, newRemaining);
+        customers[recordIndex].status = newRemaining <= 0 ? 'paid' : 'partial';
+
+        if (!customers[recordIndex].payments) {
+          customers[recordIndex].payments = [];
+        }
+        customers[recordIndex].payments.push({
+          amount: amount,
+          date: paymentData.payment_date,
+          reference: paymentData.reference || '',
+          sync_status: 'pending'
+        });
+
+        // ✅ Save updated cache to IndexedDB
+        await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(customers));
+        console.log('✅ Updated customer cache with payment');
+      }
+    } catch (err) {
+      console.error('❌ Error updating customer cache:', err);
+    }
+  };
+
+  const handleInputChange = (field, value) => {
+    setFormState(prev => ({
+      ...prev,
+      [field]: value
+    }));
+    clearCriticalError();
+  };
+
+  const validatePayment = () => {
+    const amount = parseFloat(formState.amount);
+
+    if (!formState.amount || isNaN(amount) || amount <= 0) {
+      showCriticalError(t('error_validPaymentAmount') || 'Please enter a valid payment amount', 'validation');
+      return false;
+    }
+
+    if (amount > remaining) {
+      showCriticalError(
+        t('error_paymentExceedsBalance', { balance: remaining.toLocaleString() }) || `Payment cannot exceed remaining balance of KSh ${remaining.toLocaleString()}`,
+        'validation'
+      );
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSave = async () => {
+    try {
+      if (!validatePayment()) {
+        return;
+      }
+
+      if (!effectiveRiderId) {
+        showCriticalError(t('authError_riderIdNotAvailable') || 'Rider ID not available. Please restart the app.', 'auth');
+        return;
+      }
+
+      setFormState(prev => ({ ...prev, saving: true }));
+      clearCriticalError();
+
+      const amount = parseFloat(formState.amount);
+      const paymentId = `payment_${effectiveRiderId}_${Date.now()}`;
+
+      const payload = {
+        amount_paid: amount,
+        payment_date: formState.paymentDate,
+        reference: formState.reference || '',
+        notes: formState.notes || '',
+        sync_status: 'pending'
+      };
+
+      const offlinePayment = {
+        ...payload,
+        id: paymentId,
+        rider_id: effectiveRiderId,
+        lipa_later_record_id: recordId,
+        created_at: new Date().toISOString()
+      };
+
+      console.log('💾 Saving payment:', {
+        paymentId,
+        recordId,
+        amount: amount,
+        sync_status: 'pending'
+      });
+
+      // ✅ ALWAYS save locally first using IndexedDB
+      await indexedDbAdapter.kvSet(
+        `lipa_payment_${paymentId}`,
+        JSON.stringify(offlinePayment)
+      );
+      console.log('✅ Payment saved to IndexedDB');
+
+      // Update customer cache immediately for instant UI feedback
+      await updateCustomerCache(payload);
+
+      // Add to sync queue for background sync
+      const queueSuccess = await addToSyncQueue({
+        id: paymentId,
+        type: 'lipa_payment',
+        endpoint: `/trips/lipa-later/${recordId}/payment?rider_id=${effectiveRiderId}`,
+        data: payload,
+        timestamp: new Date()
+      });
+
+      if (!queueSuccess) {
+        console.warn('⚠️ Failed to add to queue, but local save succeeded');
+      }
+
+      // Try to sync immediately only if online
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Attempting to sync payment to API...');
+          const response = await api.post(
+            `/trips/lipa-later/${recordId}/payment?rider_id=${effectiveRiderId}`,
+            payload
+          );
+
+          if (response.status === 200 || response.status === 201) {
+            console.log('✅ Payment synced successfully to API');
+
+            const newRemaining = remaining - amount;
+            const message = newRemaining <= 0
+              ? t('success_accountSettled', { 
+                  name: record.customer_name, 
+                  amount: amount.toLocaleString() 
+                }) || `✓ ${record.customer_name}'s account fully settled — KSh ${amount.toLocaleString()} received, now counted in today's income.`
+              : t('success_partialPayment', { 
+                  amount: amount.toLocaleString(), 
+                  remaining: newRemaining.toLocaleString() 
+                }) || `✓ Recorded KSh ${amount.toLocaleString()} partial payment. KSh ${newRemaining.toLocaleString()} still outstanding.`;
+
+            Alert.alert(t('success') || 'Success', message, [
+              {
+                text: t('ok') || 'OK',
+                onPress: () => {
+                  navigation.navigate('LipaLaterCustomers');
+                }
+              }
+            ]);
+            return;
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API sync failed (will retry later):', {
+            status: apiErr.response?.status,
+            message: apiErr.message
+          });
+        }
+      }
+
+      // Either offline or API sync failed - but data is safely stored
+      const newRemaining = remaining - amount;
+      const message = newRemaining <= 0
+        ? t('success_paymentSavedSyncing') || `✓ Payment saved. Syncing...`
+        : t('success_paymentSyncingBackground') || `✓ Payment saved and syncing in background...`;
+
+      Alert.alert(t('success') || 'Success', message, [
+        {
+          text: t('ok') || 'OK',
+          onPress: () => {
+            navigation.navigate('LipaLaterCustomers');
+          }
+        }
+      ]);
+
+    } catch (err) {
+      console.error('❌ Save error:', err);
+      showCriticalError(
+        err.response?.data?.detail || t('error_saveFailed') || 'Failed to record payment. Please try again.',
+        'save_error'
+      );
+      setFormState(prev => ({ ...prev, saving: false }));
+    }
+  };
+
+  if (!effectiveRiderId || !isInitialized) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>Trip not found</Text>
-      </View>
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <Text style={styles.title}>{t('recordPayment') || 'Record Payment'}</Text>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+      </ScrollView>
     );
   }
 
-  const remaining = getRemainingBalance(trip.lipaLater);
-  const totalPaid = getTotalPaid(trip.lipaLater);
-  
-  const [paymentType, setPaymentType] = useState('full');
-  const [amount, setAmount] = useState(remaining.toString());
-  const [notes, setNotes] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState({});
-
-  // Validate payment
-  const validatePayment = useCallback(() => {
-    const newErrors = {};
-    const amt = parseFloat(amount);
-
-    if (!paymentType) {
-      newErrors.paymentType = 'Select payment type';
-    }
-
-    if (!amount || amt <= 0) {
-      newErrors.amount = 'Enter amount greater than zero';
-    } else if (!/^\d+(\.\d{1,2})?$/.test(amount)) {
-      newErrors.amount = 'Enter valid amount';
-    }
-
-    // CRITICAL: Validate that total payment never exceeds original amount
-    const totalIfPaid = totalPaid + amt;
-    if (totalIfPaid > trip.lipaLater.originalAmount) {
-      newErrors.amount = `Total payment cannot exceed original amount of KSh ${trip.lipaLater.originalAmount.toLocaleString()}`;
-    } else if (paymentType === 'full' && amt < remaining) {
-      newErrors.amount = `Full payment must be at least KSh ${remaining.toLocaleString()} (remaining balance)`;
-    } else if (paymentType === 'partial' && amt >= remaining) {
-      newErrors.amount = `Partial payment must be less than KSh ${remaining.toLocaleString()} (remaining). Choose Full Payment if settling entire balance`;
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  }, [amount, paymentType, remaining, totalPaid, trip]);
-
-  // Record payment
-  const handleRecordPayment = useCallback(() => {
-    if (!validatePayment()) return;
-
-    setLoading(true);
-    try {
-      const amt = parseFloat(amount);
-      
-      // Get today's date in YYYY-MM-DD format for income recording
-      const today = new Date().toISOString().split('T')[0];
-
-      // Dispatch to record payment
-      dispatch({
-        type: 'RECORD_PAYMENT',
-        payload: {
-          tripId,
-          amount: amt.toString(),
-          paymentType,
-          notes,
-          paymentDate: today,
-        },
-      });
-
-      // Show success message
-      const isFullySettled = (totalPaid + amt) >= trip.lipaLater.originalAmount;
-      if (isFullySettled) {
-        Alert.alert(
-          'Success',
-          `✓ ${trip.lipaLater.customerName}'s account fully settled — KSh ${amt.toLocaleString()} received, now counted in today's income.`
-        );
-      } else {
-        const newRemaining = remaining - amt;
-        Alert.alert(
-          'Success',
-          `✓ Recorded KSh ${amt.toLocaleString()} partial payment for ${trip.lipaLater.customerName}. KSh ${newRemaining.toLocaleString()} still outstanding.`
-        );
-      }
-
-      // Navigate back to customers report
-      // This will allow HomeScreen to refresh when user navigates back to it
-      navigation.navigate('LipaLaterCustomers');
-    } catch (err) {
-      Alert.alert('Error', 'Failed to record payment');
-      console.error('[RecordLipaLaterPayment] Error:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [amount, paymentType, notes, validatePayment, dispatch, navigation, tripId, trip, remaining, totalPaid]);
-
   return (
-    <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.goBack()} label="← Back" />
+    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
+      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+      <Text style={styles.title}>{t('recordPayment') || 'Record Payment'}</Text>
 
-      <Text style={styles.title}>Record Payment</Text>
-      <Text style={styles.subtitle}>for {trip.lipaLater.customerName}</Text>
-
-      {/* Customer Info Card */}
-      <View style={styles.infoCard}>
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Customer</Text>
-          <Text style={styles.infoValue}>{trip.lipaLater.customerName}</Text>
-        </View>
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Phone</Text>
-          <Text style={styles.infoValue}>{trip.lipaLater.customerPhone}</Text>
-        </View>
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Original Amount</Text>
-          <Text style={styles.infoValue}>KSh {trip.lipaLater.originalAmount.toLocaleString()}</Text>
-        </View>
-        <View style={styles.infoRow}>
-          <Text style={styles.infoLabel}>Already Paid</Text>
-          <Text style={[styles.infoValue, { color: '#1e9e6f' }]}>KSh {totalPaid.toLocaleString()}</Text>
-        </View>
-        <View style={[styles.infoRow, { borderBottomWidth: 0 }]}>
-          <Text style={styles.infoLabel}>Still Owing</Text>
-          <Text style={[styles.infoValue, { color: '#ff7a1a', fontWeight: '700' }]}>KSh {remaining.toLocaleString()}</Text>
+      {/* Customer Summary Card */}
+      <View style={styles.summaryCard}>
+        <Text style={styles.customerNameLarge}>{record.customer_name}</Text>
+        <View style={styles.amountRow}>
+          <View>
+            <Text style={styles.amountLabelSmall}>{t('originalAmount') || 'ORIGINAL AMOUNT'}</Text>
+            <Text style={styles.amountValueLarge}>
+              KSh {original.toLocaleString()}
+            </Text>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={[styles.amountLabelSmall, { color: '#FFA500' }]}>{t('remaining') || 'REMAINING'}</Text>
+            <Text style={[styles.amountValueLarge, { color: '#FFA500' }]}>
+              KSh {remaining.toLocaleString()}
+            </Text>
+          </View>
         </View>
       </View>
 
-      {/* Payment Type Selection */}
-      <View style={styles.field}>
-        <Text style={styles.label}>Payment Type <Text style={styles.required}>*</Text></Text>
-        <View style={styles.typeOptions}>
-          <TouchableOpacity
-            style={[styles.typeButton, paymentType === 'full' && styles.typeButtonActive]}
-            onPress={() => {
-              setPaymentType('full');
-              setAmount(remaining.toString());
-              setErrors({});
-            }}
-          >
-            <Text style={[styles.typeButtonText, paymentType === 'full' && styles.typeButtonTextActive]}>
-              ✓ Full Payment
-            </Text>
-            <Text style={styles.typeButtonHint}>Pay full remaining balance</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.typeButton, paymentType === 'partial' && styles.typeButtonActive]}
-            onPress={() => {
-              setPaymentType('partial');
-              setAmount('');
-              setErrors({});
-            }}
-          >
-            <Text style={[styles.typeButtonText, paymentType === 'partial' && styles.typeButtonTextActive]}>
-              ◐ Partial Payment
-            </Text>
-            <Text style={styles.typeButtonHint}>Pay part of the balance</Text>
+      {/* Error Banner */}
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>{criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
         </View>
-        {errors.paymentType && <Text style={styles.errorMsg}>{errors.paymentType}</Text>}
-      </View>
+      )}
 
-      {/* Amount Input */}
+      {/* Payment Amount Field */}
       <View style={styles.field}>
-        <Text style={styles.label}>Amount (KSh) <Text style={styles.required}>*</Text></Text>
-        <TextInput
-          style={[styles.input, errors.amount && styles.inputError]}
-          placeholder="0"
-          value={amount}
-          onChangeText={(value) => {
-            setAmount(value);
-            if (errors.amount) setErrors(prev => ({ ...prev, amount: undefined }));
-          }}
-          keyboardType="decimal-pad"
-          placeholderTextColor="#c7c9ce"
-          editable={!loading}
-        />
-        {errors.amount && <Text style={styles.errorMsg}>{errors.amount}</Text>}
-      </View>
-
-      {/* Notes */}
-      <View style={styles.field}>
-        <Text style={styles.label}>Notes (optional)</Text>
-        <TextInput
-          style={styles.textarea}
-          placeholder="e.g. Cash payment, customer will come back for receipt"
-          value={notes}
-          onChangeText={setNotes}
-          multiline
-          numberOfLines={3}
-          placeholderTextColor="#c7c9ce"
-          editable={!loading}
-        />
-      </View>
-
-      {/* Record Button */}
-      <TouchableOpacity
-        style={[styles.recordButton, loading && styles.recordButtonDisabled]}
-        onPress={handleRecordPayment}
-        disabled={loading}
-      >
-        <Text style={styles.recordButtonText}>
-          {loading ? 'Saving...' : '💳 Record Payment'}
+        <Text style={styles.label}>
+          {t('paymentAmount') || 'Payment Amount'} <Text style={styles.required}>*</Text>
         </Text>
-      </TouchableOpacity>
+        <TextInput
+          style={styles.input}
+          placeholder="0"
+          placeholderTextColor="#b0a89d"
+          keyboardType="decimal-pad"
+          value={formState.amount}
+          onChangeText={(val) => handleInputChange('amount', val)}
+          editable={!formState.saving}
+        />
+        <Text style={styles.hint}>{t('max') || 'Max'}: KSh {remaining.toLocaleString()}</Text>
+      </View>
 
-      {/* Cancel Button */}
+      {/* Payment Date Field */}
+      <View style={styles.field}>
+        <Text style={styles.label}>{t('paymentDate') || 'Payment Date'}</Text>
+        <TextInput
+          style={styles.input}
+          placeholder={t('placeholder_dateFormat') || "YYYY-MM-DD"}
+          placeholderTextColor="#b0a89d"
+          value={formState.paymentDate}
+          onChangeText={(val) => handleInputChange('paymentDate', val)}
+          editable={!formState.saving}
+          maxLength={10}
+        />
+      </View>
+
+      {/* Reference Field */}
+      <View style={styles.field}>
+        <Text style={styles.label}>{t('reference') || 'Reference'} ({t('optional') || 'Optional'})</Text>
+        <TextInput
+          style={styles.input}
+          placeholder={t('placeholder_reference') || "e.g., M-Pesa ref, cash receipt..."}
+          placeholderTextColor="#b0a89d"
+          value={formState.reference}
+          onChangeText={(val) => handleInputChange('reference', val)}
+          editable={!formState.saving}
+          maxLength={255}
+        />
+      </View>
+
+      {/* Notes Field */}
+      <View style={styles.field}>
+        <Text style={styles.label}>{t('notes') || 'Notes'} ({t('optional') || 'Optional'})</Text>
+        <TextInput
+          style={[styles.input, { height: 80, paddingTop: 12, textAlignVertical: 'top' }]}
+          placeholder={t('placeholder_notes') || "Additional notes..."}
+          placeholderTextColor="#b0a89d"
+          value={formState.notes}
+          onChangeText={(val) => handleInputChange('notes', val)}
+          editable={!formState.saving}
+          multiline
+          maxLength={500}
+        />
+      </View>
+
+      {/* Submit Button */}
       <TouchableOpacity
-        style={styles.cancelButton}
-        onPress={() => navigation.goBack()}
-        disabled={loading}
+        style={[
+          styles.primaryBtn,
+          (formState.saving || !formState.amount) && styles.primaryBtnDisabled
+        ]}
+        onPress={handleSave}
+        disabled={formState.saving || !formState.amount}
+        activeOpacity={0.8}
       >
-        <Text style={styles.cancelButtonText}>Cancel</Text>
+        <View style={styles.btnContent}>
+          {formState.saving && (
+            <ActivityIndicator
+              size="small"
+              color="#fff"
+              style={styles.btnSpinner}
+            />
+          )}
+          <Text style={styles.primaryBtnText}>
+            {formState.saving ? (t('recordingPayment') || 'Recording Payment...') : (t('recordPaymentButton') || 'Record Payment →')}
+          </Text>
+        </View>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
+function getTodayDate() {
+  return new Date().toISOString().split('T')[0];
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f6f4ef',
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 40,
+    padding: 20,
+    backgroundColor: '#f6f4ef'
   },
   title: {
-    fontSize: 24,
+    fontFamily: 'SpaceGrotesk-Bold',
+    fontSize: 22,
     fontWeight: '700',
     color: '#1a1c20',
-    marginTop: 16,
-    marginBottom: 4,
+    marginBottom: 20
   },
-  subtitle: {
-    fontSize: 13,
-    color: '#5b606c',
-    marginBottom: 20,
-  },
-  infoCard: {
+
+  summaryCard: {
     backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-    borderRadius: 12,
-    paddingHorizontal: 14,
+    borderRadius: 14,
+    padding: 16,
     marginBottom: 20,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff7a1a'
   },
-  infoRow: {
+  customerNameLarge: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 12
+  },
+  amountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between'
+  },
+  amountLabelSmall: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#a8a196',
+    marginBottom: 4
+  },
+  amountValueLarge: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1a1c20'
+  },
+
+  criticalErrorBanner: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1.5,
+    borderColor: '#f6cac7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    alignItems: 'center'
   },
-  infoLabel: {
+  criticalErrorText: {
     fontSize: 12,
-    color: '#5b606c',
-    fontWeight: '500',
-  },
-  infoValue: {
-    fontSize: 13,
-    color: '#1a1c20',
+    color: '#a5312c',
     fontWeight: '600',
-    textAlign: 'right',
+    flex: 1
   },
+  dismissText: {
+    fontSize: 11,
+    color: '#a5312c',
+    fontWeight: '700',
+    marginLeft: 12
+  },
+
   field: {
-    marginBottom: 16,
+    marginBottom: 20
   },
   label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1a1c20',
-    marginBottom: 8,
+    fontSize: 11.5,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.04,
+    color: '#5b606c',
+    marginBottom: 8
   },
   required: {
-    color: '#e0453f',
-    fontWeight: '700',
-  },
-  typeOptions: {
-    gap: 8,
-    marginBottom: 0,
-  },
-  typeButton: {
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    padding: 12,
-  },
-  typeButtonActive: {
-    backgroundColor: '#fff5f0',
-    borderColor: '#ff7a1a',
-  },
-  typeButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1a1c20',
-    marginBottom: 4,
-  },
-  typeButtonTextActive: {
-    color: '#ff7a1a',
-  },
-  typeButtonHint: {
-    fontSize: 11,
-    color: '#5b606c',
+    color: '#e5650a'
   },
   input: {
-    backgroundColor: '#fff',
+    width: '100%',
+    padding: 14,
+    borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#e7e4db',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    fontSize: 14,
-    color: '#1a1c20',
-  },
-  inputError: {
-    borderColor: '#e0453f',
-    backgroundColor: '#fdecea',
-  },
-  textarea: {
+    fontSize: 16,
     backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 11,
-    fontSize: 13,
     color: '#1a1c20',
-    minHeight: 80,
-    textAlignVertical: 'top',
+    marginBottom: 8
   },
-  errorMsg: {
+  hint: {
     fontSize: 11.5,
-    color: '#e0453f',
-    marginTop: 4,
-    fontWeight: '500',
+    color: '#5b606c',
+    fontWeight: '500'
   },
-  recordButton: {
+
+  primaryBtn: {
     backgroundColor: '#ff7a1a',
-    borderRadius: 10,
-    paddingVertical: 14,
+    borderRadius: 14,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 16,
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6
   },
-  recordButtonDisabled: {
-    opacity: 0.6,
+  primaryBtnDisabled: {
+    backgroundColor: '#e9dccc',
+    shadowOpacity: 0
   },
-  recordButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  btnSpinner: {
+    marginRight: 10
+  },
+  primaryBtnText: {
     color: '#fff',
-  },
-  cancelButton: {
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1a1c20',
-  },
-  errorText: {
-    fontSize: 14,
-    color: '#e0453f',
-    textAlign: 'center',
-    marginTop: 20,
-  },
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 0.02
+  }
 });
