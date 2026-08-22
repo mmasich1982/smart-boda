@@ -15,14 +15,14 @@ import {
   Slider
 } from 'react-native';
 import BackLink from '../../components/BackLink';
-import { AppContext } from '../../context/AppContext';
+import { useRider } from '../../rider/RiderContext';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import api from '../../api/client';
 
 const PrepaymentScreen = ({ navigation }) => {
-  const { state } = useContext(AppContext);
+  const { state } = useRider();
   const { t } = useTranslation();
 
   const [days, setDays] = useState(7);
