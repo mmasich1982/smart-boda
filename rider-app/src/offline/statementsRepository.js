@@ -12,7 +12,7 @@
  * ✅ Maintains backward compatibility with statement generation logic
  */
 
-import * as db from './adapters/indexeddb-adapter';
+import * as db from '../../adapters/indexeddb-adapter';
 
 const STATEMENTS_STORE = 'statements';
 const STATEMENT_REQUEST_STORE = 'statementRequests';

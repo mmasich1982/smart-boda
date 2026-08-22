@@ -13,7 +13,7 @@
  * ✅ Maintains backward compatibility with existing financial logic
  */
 
-import * as db from './adapters/indexeddb-adapter';
+import * as db from '../../adapters/indexeddb-adapter';
 
 const FINANCIAL_STORE = 'financialHistory';
 
