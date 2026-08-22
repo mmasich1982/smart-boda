@@ -5,21 +5,8 @@
 // ✅ UI/UX preserved
 
 import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  FlatList,
-  StyleSheet,
-  TouchableOpacity,
-  RefreshControl,
-  Alert,
-} from 'react-native';
-import BackLink from '../../components/BackLink';
-import { 
-  getQueuedRecords, 
-  updateQueuedRecord, 
-  removeFromSyncQueue 
-} from '../../offline/syncQueue';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, FlatList, ActivityIndicator } from 'react-native';
+import { getQueuedRecords, updateQueuedRecord, removeFromSyncQueue } from '../../offline/syncQueue';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 
 const OPERATION_TYPES = {
