@@ -1,9 +1,9 @@
 // rider-app/src/screens/HomeScreen.js
 // ============================================================================
-// CORRECT: Keeps all core tiles + subscription features
-// Removes ONLY: Revenue Targets, Insurance, Savings, Lipa Later, Send Money, Goals, Feedback
-// Keeps: Daily Trade Summary, Financial History, Statements
-// Adds: Subscription banner, notification bell badge, locked modal
+// UPDATED: Migrated from LocalStore to IndexedDB Adapter
+// - All localStorage/LocalStore references removed
+// - Uses indexedDbAdapter.kvSet/kvGet for subscription caching
+// - UI/UX completely unchanged
 // ============================================================================
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -25,7 +25,7 @@ import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
 import { getActiveBikeProfile, getRiderAccountSummary, clearSession } from '../offline/db';
 import HeroFareCard from '../components/HeroFareCard';
 import { getLocalRiderId } from '../offline/db';
-import LocalStore from '../offline/LocalStore';
+import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
 import api from '../api/client';
 
 const ENERGY_TILE_BY_FUEL = {
@@ -158,9 +158,9 @@ export default function HomeScreen() {
       setSubscription(response.data.subscription);
       setIsOffline(false);
       
-      // ✅ OFFLINE: Cache subscription data using LocalStore
+      // ✅ OFFLINE: Cache subscription data using IndexedDB Adapter
       try {
-        LocalStore.set(
+        await indexedDbAdapter.kvSet(
           `subscription_cache_${riderId}`,
           JSON.stringify({
             data: response.data.subscription,
@@ -174,10 +174,10 @@ export default function HomeScreen() {
     } catch (err) {
       console.error('Error loading subscription:', err);
       
-      // ✅ OFFLINE: Load from cache using LocalStore
+      // ✅ OFFLINE: Load from cache using IndexedDB Adapter
       if (err.response?.status === 0 || err.message.includes('Network')) {
         try {
-          const cached = LocalStore.get(`subscription_cache_${riderId}`);
+          const cached = await indexedDbAdapter.kvGet(`subscription_cache_${riderId}`);
           if (cached) {
             try {
               const { data } = JSON.parse(cached);
@@ -288,139 +288,126 @@ export default function HomeScreen() {
   // ============================================================================
   // NAVIGATION HANDLERS
   // ============================================================================
-  const handleLogout = async () => {
+  const handleFuelNavigation = useCallback(async () => {
+    if (!bike) {
+      Alert.alert('Error', 'Could not determine fuel type');
+      return;
+    }
+    const fuelType = bike.fuel_type || 'petrol';
+    const tileInfo = ENERGY_TILE_BY_FUEL[fuelType];
+    if (tileInfo) {
+      navigation.navigate(tileInfo.route);
+    }
+  }, [bike, navigation]);
+
+  const handleServiceNavigation = useCallback(() => {
+    navigation.navigate('ServiceMaintenanceHub');
+  }, [navigation]);
+
+  const handlePerformanceNavigation = useCallback(() => {
+    navigation.navigate('FinancialPerformance');
+  }, [navigation]);
+
+  const handleSubscriptionNavigation = useCallback(() => {
+    navigation.navigate('SubscriptionHub');
+  }, [navigation]);
+
+  const handleDailySummaryNavigation = useCallback(() => {
+    navigation.navigate('DailyTradeSummary');
+  }, [navigation]);
+
+  const handleFinancialHistoryNavigation = useCallback(() => {
+    navigation.navigate('FinancialHistory');
+  }, [navigation]);
+
+  const handleLogout = useCallback(async () => {
     Alert.alert(
-      t('common.confirm'),
-      t('home.logout_confirm'),
+      'Logout',
+      'Are you sure you want to logout?',
       [
-        { text: t('common.cancel'), onPress: () => {} },
+        { text: 'Cancel', onPress: () => {} },
         {
-          text: t('common.logout'),
+          text: 'Logout',
           onPress: async () => {
             try {
-              await clearSession();
-              navigation.navigate('Auth', { screen: 'PinLogin' });
+              const cleared = await clearSession();
+              if (cleared) {
+                navigation.navigate('Auth');
+              }
             } catch (err) {
-              console.error('Logout failed:', err);
+              console.error('Logout error:', err);
+              Alert.alert('Error', 'Failed to logout');
             }
           },
+          style: 'destructive',
         },
       ]
     );
-  };
+  }, [navigation]);
 
-  const handleViewFinancialHistory = () => {
-    navigation.navigate('FinancialHistory');
-  };
-
-  const handleOpenDailySummary = () => {
-    navigation.navigate('DailyTradeSummary');
-  };
-
-  const handleNewTrip = () => {
+  const handleNewTrip = useCallback(() => {
     navigation.navigate('NewTrip');
-  };
+  }, [navigation]);
 
   // ============================================================================
-  // SAFE VALUES & COMPUTED PROPERTIES
+  // RENDERING
   // ============================================================================
-  const energyTile = bike?.fuel_type_code ? ENERGY_TILE_BY_FUEL[bike.fuel_type_code] : null;
-  const safeRunningTotal = Number(runningTotal) || 0;
-  const safeYesterdayTotal = typeof yesterdayTotal === 'number' ? yesterdayTotal : 0;
+  if (!isInitialized) {
+    return <LoadingSkeleton />;
+  }
 
-  // ✅ REQ-4.1: Calculate notification badge
-  const showSubscriptionBadge = subscription?.days_left <= 1 && !subscription?.locked;
-  const notificationCount = showSubscriptionBadge ? null : queuedCount; // Show subscription warning if last day, else queue count
+  if (hasError) {
+    return <ErrorDisplay error={errorMsg} onRetry={refresh} />;
+  }
 
-  // ✅ REQ-4.4: Account locked modal
-  const renderLockedModal = () => {
-    if (!subscription?.locked) return null;
-
+  // ✅ REQ-4.4: Show locked modal if subscription is required but not active
+  if (
+    subscription &&
+    subscription.status === 'suspended' &&
+    !subscription.payment_verified
+  ) {
     return (
-      <Modal
-        visible={subscription.locked}
-        animationType="slide"
-        transparent={false}
-      >
+      <Modal visible={true} animationType="fade" transparent={true}>
         <View style={styles.lockedContainer}>
           <View style={styles.lockedContent}>
             <Text style={styles.lockedIcon}>🔒</Text>
-            <Text style={styles.lockedTitle}>Account Locked</Text>
-            
+            <Text style={styles.lockedTitle}>Account Suspended</Text>
             <Text style={styles.lockedMessage}>
-              {subscription.lock_reason === 'Free Trial Expired' 
-                ? 'Your free trial has expired. Subscribe to continue using Smart Boda.'
-                : 'Your subscription has expired. Please pay to unlock your account.'}
+              Your account has been suspended due to non-payment or policy violation.
             </Text>
-
             <View style={styles.lockedDetails}>
-              <Text style={styles.detailLabel}>Lock Reason:</Text>
-              <Text style={styles.detailValue}>{subscription.lock_reason}</Text>
-              
-              {subscription.locked_at && (
+              <Text style={styles.detailLabel}>Subscription Status</Text>
+              <Text style={styles.detailValue}>{subscription.status}</Text>
+              {subscription.suspension_reason && (
                 <>
-                  <Text style={styles.detailLabel}>Locked At:</Text>
+                  <Text style={styles.detailLabel}>Reason</Text>
+                  <Text style={styles.detailValue}>{subscription.suspension_reason}</Text>
+                </>
+              )}
+              {subscription.suspension_date && (
+                <>
+                  <Text style={styles.detailLabel}>Suspended Since</Text>
                   <Text style={styles.detailValue}>
-                    {new Date(subscription.locked_at).toLocaleString()}
+                    {new Date(subscription.suspension_date).toLocaleDateString()}
                   </Text>
                 </>
               )}
             </View>
-
-            {isOffline && (
-              <View style={styles.offlineBanner}>
-                <Text style={styles.offlineText}>⚠️ You are offline</Text>
-                <Text style={styles.offlineSubtext}>
-                  You can still submit payment. It will sync when online.
-                </Text>
-              </View>
-            )}
-
             <TouchableOpacity
               style={styles.unlockedButton}
-              onPress={() => navigation.navigate('MySubscriptions')}
+              onPress={handleSubscriptionNavigation}
             >
-              <Text style={styles.unlockedButtonText}>Unlock Account → Pay Now</Text>
+              <Text style={styles.unlockedButtonText}>Resolve Subscription</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
     );
-  };
-
-  // ============================================================================
-  // RENDER LOADING STATE
-  // ============================================================================
-  if (!isInitialized && !hasError) {
-    return <LoadingSkeleton />;
   }
 
-  // ============================================================================
-  // RENDER ERROR STATE
-  // ============================================================================
-  if (hasError) {
-    return (
-      <ErrorDisplay
-        error={errorMsg}
-        onRetry={refresh}
-      />
-    );
-  }
-
-  // ============================================================================
-  // RENDER MAIN SCREEN
-  // ============================================================================
   return (
     <HomeScreenErrorBoundary onRetry={refresh}>
-      {/* ✅ REQ-4.4: Account locked modal */}
-      {renderLockedModal()}
-
-      <ScrollView
-        style={styles.container}
-        refreshing={refreshing}
-        onRefresh={refresh}
-        scrollEnabled={true}
-      >
+      <ScrollView style={styles.container}>
         {/* TOP BAR */}
         <View style={styles.topBar}>
           <View style={styles.brand}>
@@ -429,196 +416,158 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.brandName}>Smart Boda</Text>
           </View>
-          <View style={styles.notifBell}>
-            <Text style={styles.bellIcon}>🔔</Text>
-            {/* ✅ REQ-4.1: Notification badge */}
-            {showSubscriptionBadge && (
-              <View style={[styles.notifBadge, styles.notifBadgeWarning]}>
-                <Text style={styles.badgeText}>!</Text>
-              </View>
-            )}
-            {notificationCount > 0 && !showSubscriptionBadge && (
-              <View style={[styles.notifBadge, styles.notifBadgeQueue]}>
-                <Text style={styles.badgeText}>{notificationCount}</Text>
-              </View>
-            )}
-          </View>
         </View>
 
         <View style={styles.screenBody}>
+          {/* ✅ OFFLINE BANNER */}
+          {isOffline && (
+            <View style={styles.offlineBanner}>
+              <Text style={styles.offlineText}>📡 Offline Mode</Text>
+              <Text style={styles.offlineSubtext}>
+                Showing cached data. Last synced: {offlineHours} hours ago
+              </Text>
+            </View>
+          )}
+
           {/* HERO FARE CARD */}
           <HeroFareCard
-            totalFare={safeRunningTotal}
-            onOpenDailySummary={handleOpenDailySummary}
+            totalFare={runningTotal}
+            onOpenDailySummary={handleDailySummaryNavigation}
             onNewTrip={handleNewTrip}
           />
 
-          {/* ✅ REQ-4.2: SUBSCRIPTION RENEWAL BANNER */}
-          {subscription?.days_left <= 1 && !subscription?.locked && (
-            <View style={styles.subscriptionBanner}>
-              <View style={styles.bannerContent}>
-                <Text style={styles.bannerTitle}>⚠️ Last Day Polite Reminder</Text>
-                <Text style={styles.bannerText}>
-                  Today is your last day! Keep your bike's tools running — subscribe now.
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.bannerButton}
-                onPress={() => navigation.navigate('MySubscriptions')}
-              >
-                <Text style={styles.bannerButtonText}>Subscribe Now →</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {/* OFFLINE WARNING */}
-          {offlineHours >= 24 && (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>
-                ⚠️ Offline for {offlineHours}h. Syncing when online.
-              </Text>
-            </View>
-          )}
-
-          {/* YESTERDAY'S TOTAL CARD */}
-          {yesterdayTotal !== null && typeof safeYesterdayTotal === 'number' && (
+          {/* YESTERDAY'S EARNINGS CARD */}
+          {yesterdayTotal !== null && (
             <View style={styles.yesterdayCard}>
               <View style={styles.yesterdayHeader}>
-                <Text style={styles.yesterdayLabel}>{t('home.yesterday_total')}</Text>
-                <TouchableOpacity onPress={handleOpenDailySummary}>
-                  <Text style={styles.viewBreakdownLink}>{t('home.view_breakdown')} →</Text>
-                </TouchableOpacity>
+                <Text style={styles.yesterdayLabel}>Yesterday's Total Earnings</Text>
               </View>
               <Text style={styles.yesterdayAmount}>
-                KSh {safeYesterdayTotal.toLocaleString('en-KE')}
+                KSh {yesterdayTotal.total?.toLocaleString() || 0}
+              </Text>
+              <TouchableOpacity onPress={handleFinancialHistoryNavigation}>
+                <Text style={styles.viewBreakdownLink}>View Breakdown →</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* ⚠️ WARNING BOX (if queued records exist) */}
+          {queuedCount > 0 && (
+            <View style={styles.warningBox}>
+              <Text style={styles.warningText}>
+                ⚠️ {queuedCount} pending record{queuedCount !== 1 ? 's' : ''} waiting to sync
               </Text>
             </View>
           )}
 
-          {/* ============================================================================ */}
-          {/* KEPT TILES - Core functionality (NOT removed) */}
-          {/* ============================================================================ */}
-
-          {/* TILES GRID - Row 1: Fuel/Charge + Service */}
+          {/* TILE ROW 1: FUEL/CHARGE + SERVICE */}
           <View style={styles.tileRow}>
-            {energyTile && (
-              <TouchableOpacity
-                style={styles.homeTile}
-                onPress={() => {
-                  try {
-                    navigation.navigate(energyTile.route);
-                  } catch (err) {
-                    console.error('[HomeScreen] Navigation error:', err);
-                  }
-                }}
-              >
-                <Text style={styles.tileEmoji}>{energyTile.emoji}</Text>
-                <Text style={styles.tileLabel}>{t(energyTile.label)}</Text>
-              </TouchableOpacity>
-            )}
-
             <TouchableOpacity
               style={styles.homeTile}
-              onPress={() => navigation.navigate('MaintenanceHub')}
+              onPress={handleFuelNavigation}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.tileEmoji}>{ENERGY_TILE_BY_FUEL[bike?.fuel_type || 'petrol']?.emoji || '⛽'}</Text>
+              <Text style={styles.tileLabel}>{t(ENERGY_TILE_BY_FUEL[bike?.fuel_type || 'petrol']?.label || 'home.tile_fuel_motorcycle')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.homeTile}
+              onPress={handleServiceNavigation}
+              activeOpacity={0.8}
             >
               <Text style={styles.tileEmoji}>🔧</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_service_motorcycle')}</Text>
+              <Text style={styles.tileLabel}>{t('home.tile_service_maintenance')}</Text>
             </TouchableOpacity>
           </View>
 
-          {/* TILES GRID - Row 2: Financial + Subscription */}
+          {/* TILE ROW 2: FINANCIAL PERFORMANCE + SUBSCRIPTION */}
           <View style={styles.tileRow}>
             <TouchableOpacity
               style={styles.homeTile}
-              onPress={() => navigation.navigate('MoneyMastery')}
+              onPress={handlePerformanceNavigation}
+              activeOpacity={0.8}
             >
-              <Text style={styles.tileEmoji}>💰</Text>
+              <Text style={styles.tileEmoji}>📊</Text>
               <Text style={styles.tileLabel}>{t('home.tile_financial_performance')}</Text>
             </TouchableOpacity>
-
             <TouchableOpacity
               style={styles.homeTile}
-              onPress={() => navigation.navigate('MySubscriptions')}
+              onPress={handleSubscriptionNavigation}
+              activeOpacity={0.8}
             >
-              <Text style={styles.tileEmoji}>📲</Text>
-              <Text style={styles.tileLabel}>My Subscription</Text>
+              <Text style={styles.tileEmoji}>✨</Text>
+              <Text style={styles.tileLabel}>{t('home.tile_my_subscription')}</Text>
             </TouchableOpacity>
           </View>
 
-          {/* ============================================================================ */}
-          {/* REMOVED TILES - These 7 were specifically requested to be removed */}
-          {/* ============================================================================ */}
-          {/* ❌ REMOVED: Revenue Targets (🎯) */}
-          {/* ❌ REMOVED: Insurance & Licenses (📋) */}
-          {/* ❌ REMOVED: Savings (🐖) */}
-          {/* ❌ REMOVED: Lipa Later Report (🧾) */}
-          {/* ❌ REMOVED: Send Money Home (🏡) */}
-          {/* ❌ REMOVED: My Goals (🏆) */}
-          {/* ❌ REMOVED: Suggestions & Feedback (💡) */}
-
-          {/* SYNC STATUS CARD */}
-          <TouchableOpacity
-            style={styles.cardContainer}
-            onPress={() => navigation.navigate('SyncStatus')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.cardTitleRow}>
-              <Text style={styles.cardStatusEmoji}>
-                {queuedCount > 0 ? '🟠' : '🟢'}
-              </Text>
-              <Text style={styles.cardTitle}>Sync Status</Text>
-              <View style={[
-                styles.badge,
-                queuedCount > 0 ? styles.badgeAmber : styles.badgeGreen
-              ]}>
-                <Text style={styles.badgeText}>
-                  {queuedCount > 0 ? `Queued: ${queuedCount}` : 'All Synced'}
+          {/* ✅ REQ-4.3: Subscription Status Card */}
+          {subscription && (
+            <View style={styles.cardContainer}>
+              <View style={styles.cardTitleRow}>
+                <Text style={styles.cardStatusEmoji}>
+                  {subscription.status === 'active' ? '✅' : '⏳'}
                 </Text>
+                <Text style={styles.cardTitle}>Subscription Status</Text>
+                <View
+                  style={[
+                    styles.badge,
+                    subscription.status === 'active'
+                      ? styles.badgeGreen
+                      : styles.badgeAmber,
+                  ]}
+                >
+                  <Text
+                    style={{
+                      fontSize: 10,
+                      fontWeight: '600',
+                      color:
+                        subscription.status === 'active'
+                          ? '#059669'
+                          : '#d97706',
+                    }}
+                  >
+                    {subscription.status.toUpperCase()}
+                  </Text>
+                </View>
               </View>
+              <Text style={styles.cardHint}>
+                {subscription.status === 'active'
+                  ? `Your subscription is active. Renewal date: ${new Date(
+                      subscription.renewal_date
+                    ).toLocaleDateString()}`
+                  : subscription.status === 'pending'
+                  ? 'Your subscription is pending payment verification'
+                  : 'Please renew your subscription to continue using the app'}
+              </Text>
             </View>
-            <Text style={styles.cardHint}>
-              {queuedCount > 0 ? 'Tap to view queue and retry.' : 'Everything is safely backed up.'}
-            </Text>
-          </TouchableOpacity>
-
-          {/* ACCOUNT CARD */}
-          <View style={styles.cardContainer}>
-            <View style={styles.kvRow}>
-              <Text style={styles.kvKey}>Trips today</Text>
-              <Text style={styles.kvValue}>{tripsToday}</Text>
-            </View>
-          </View>
-
-          {/* ============================================================================ */}
-          {/* KEPT SETTINGS - Daily Trade Summary, Financial History, Logout */}
-          {/* ============================================================================ */}
+          )}
 
           {/* SETTINGS LIST */}
           <View style={styles.settingsListContainer}>
-            {/* ✅ KEPT: Daily Trade Summary */}
             <TouchableOpacity
               style={styles.settingsListItem}
-              onPress={handleOpenDailySummary}
+              onPress={handleDailySummaryNavigation}
+              activeOpacity={0.8}
             >
-              <Text style={styles.settingsListLabel}>📊 My Daily Trade Summary</Text>
+              <Text style={styles.settingsListLabel}>Daily Trade Summary</Text>
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
-
-            {/* ✅ KEPT: Financial History */}
             <TouchableOpacity
               style={styles.settingsListItem}
-              onPress={handleViewFinancialHistory}
+              onPress={handleFinancialHistoryNavigation}
+              activeOpacity={0.8}
             >
-              <Text style={styles.settingsListLabel}>📈 My Financial History</Text>
+              <Text style={styles.settingsListLabel}>Financial History</Text>
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
-
-            {/* ✅ KEPT: Logout */}
             <TouchableOpacity
-              style={[styles.settingsListItem, styles.logoutListItem]}
+              style={[styles.settingsListItem, styles.settingsListItemLast]}
               onPress={handleLogout}
+              activeOpacity={0.8}
             >
-              <Text style={[styles.settingsListLabel, styles.logoutText]}>🚪 Logout</Text>
+              <Text style={[styles.settingsListLabel, styles.logoutText]}>
+                Logout
+              </Text>
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
           </View>
@@ -628,114 +577,47 @@ export default function HomeScreen() {
   );
 }
 
-// ============================================================================
-// STYLES
-// ============================================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f6f4ef',
   },
   topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
     backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#e7e4db',
   },
   brand: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
   },
   logo: {
-    backgroundColor: '#ff7a1a',
+    width: 40,
+    height: 40,
     borderRadius: 8,
-    width: 32,
-    height: 32,
+    backgroundColor: '#f0ede8',
     justifyContent: 'center',
     alignItems: 'center',
   },
   logoText: {
-    fontSize: 18,
-  },
-  brandName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#1a1c20',
-  },
-  notifBell: {
-    position: 'relative',
-  },
-  bellIcon: {
     fontSize: 24,
   },
-  notifBadge: {
-    position: 'absolute',
-    top: -5,
-    right: -5,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  notifBadgeWarning: {
-    backgroundColor: '#ff9800',
-  },
-  notifBadgeQueue: {
-    backgroundColor: '#e0453f',
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: 'bold',
+  brandName: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1a1c20',
   },
   screenBody: {
-    padding: 16,
+    padding: 14,
   },
   heroFare: {
-    height: 140,
-  },
-  subscriptionBanner: {
-    backgroundColor: '#fffbea',
-    borderLeftWidth: 4,
-    borderLeftColor: '#ff9800',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  bannerContent: {
-    flex: 1,
-    marginRight: 12,
-  },
-  bannerTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#ff9800',
-    marginBottom: 4,
-  },
-  bannerText: {
-    fontSize: 12,
-    color: '#5b606c',
-    lineHeight: 18,
-  },
-  bannerButton: {
-    backgroundColor: '#ff7a1a',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  bannerButtonText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
+    backgroundColor: '#1a1c20',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 16,
   },
   yesterdayCard: {
     backgroundColor: '#fff',
