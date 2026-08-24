@@ -26,7 +26,7 @@ import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, A
 import { useNavigation } from '@react-navigation/native';
 import { useTranslation } from '../i18n/LocalizationProvider';
 import { useToast } from '../components/Toast';
-import { getTodaysTrips, getTodaysRealizedIncome, getYesterdaysTotal, summarizeTrips } from '../offline/tripsRepository';
+import { getTodaysTrips, getTodaysRealizedIncome, getYesterdaysTotal, summarizeTrips, updateRiderOnboardingDate } from '../offline/tripsRepository';
 import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
 import { getActiveBikeProfile, getRiderAccountSummary, clearSession, getLocalRiderId } from '../offline/db';
 import HeroFareCard from '../components/HeroFareCard';
@@ -195,12 +195,20 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       const accountSummary = await getRiderAccountSummary();
       if (accountSummary) {
         setAccount(accountSummary);
+        
+        // ✅ CRITICAL FIX (25 AUG 2026): Sync onboarding date from account data
+        // This ensures retention window is based on actual onboarding date, not stale stored date
+        if (accountSummary.onboarded_at) {
+          await updateRiderOnboardingDate(riderId, accountSummary.onboarded_at);
+          console.log('[HomeScreen] ✅ Synced onboarding date from account:', accountSummary.onboarded_at);
+        }
       } else {
         console.warn('[HomeScreen] No account summary found - using defaults');
         setAccount(null);
       }
 
       // ✅ CRITICAL FIX: Pass riderId to getTodaysTrips
+      // Now uses fresh onboarding date synced from account data above
       const trips = await getTodaysTrips(riderId);
       const summary = summarizeTrips(trips);
       
