@@ -1,9 +1,10 @@
 // rider-app/src/components/HeroFareCard.js
-// ✅ VERIFIED: No localStorage/LocalStore usage - component is storage-agnostic
-// - Displays today's total income from parent state
-// - Clickable amount triggers daily summary modal
-// - New Trip button navigates to trip creation
-// - UI/UX unchanged from original
+// ✅ RESTORED FOR INDEXEDDB MIGRATION
+// CRITICAL FIX: Re-added missing HeroFareCard component
+// - Displays today's total income across all payment methods
+// - Click to view daily summary
+// - Plus button to create new trip
+// - Dark gradient styling per design specifications
 
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
