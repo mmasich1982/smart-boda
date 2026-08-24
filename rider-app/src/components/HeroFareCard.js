@@ -1,22 +1,106 @@
 // rider-app/src/components/HeroFareCard.js
-// FIXED: Corrected hero fare styling to match cleaned.html specifications
-// - Dark gradient background instead of orange
-// - Proper text styling and spacing
-// - Correct button styling with fullwidth plus character
-// - Made amount clickable for daily summary
+// ✅ MIGRATED: Updated to work with IndexedDB data structure
+// - Accepts runningTotal instead of totalFare
+// - Handles subscription object
+// - Proper null/undefined safety
+// - Dark gradient background with proper styling
 
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
-export default function HeroFareCard({ totalFare, onOpenDailySummary, onNewTrip }) {
+/**
+ * HeroFareCard Component
+ * 
+ * Props:
+ * - runningTotal (number): Today's total income
+ * - subscription (object): Subscription status object
+ * - isActive (boolean): Whether subscription is active
+ * - riderId (string): Current rider ID
+ * - onOpenDailySummary (function): Callback when amount is tapped
+ * - onNewTrip (function): Callback when new trip button is pressed
+ */
+export default function HeroFareCard({
+  totalFare = 0,
+  runningTotal = 0,
+  subscription = null,
+  isActive = false,
+  riderId = null,
+  onOpenDailySummary = null,
+  onNewTrip = null,
+}) {
+  // ✅ Defensive: Use runningTotal if provided, else fallback to totalFare
+  const displayAmount = typeof runningTotal === 'number' ? runningTotal : 
+                       typeof totalFare === 'number' ? totalFare : 0;
+  
+  // ✅ Defensive: Safely format the amount
+  const formattedAmount = (() => {
+    try {
+      if (typeof displayAmount === 'number' && displayAmount >= 0) {
+        return displayAmount.toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        });
+      }
+      return '0.00';
+    } catch (err) {
+      console.error('❌ Error formatting amount:', err);
+      return displayAmount.toString();
+    }
+  })();
+
+  // ✅ Subscription badge text
+  const getSubscriptionBadge = () => {
+    if (!subscription) return null;
+    
+    if (isActive) {
+      return {
+        text: '✅ Active',
+        bgColor: '#e6f5ef',
+        textColor: '#2d7659',
+      };
+    } else {
+      return {
+        text: '⭘ Inactive',
+        bgColor: '#fdf3df',
+        textColor: '#cc7a00',
+      };
+    }
+  };
+
+  const badge = getSubscriptionBadge();
+
   return (
     <View style={styles.heroFare}>
-      <Text style={styles.label}>Today's Total Income</Text>
+      {/* Top Row: Label + Badge */}
+      <View style={styles.headerRow}>
+        <Text style={styles.label}>Today's Total Income</Text>
+        {badge && (
+          <View style={[styles.badge, { backgroundColor: badge.bgColor }]}>
+            <Text style={[styles.badgeText, { color: badge.textColor }]}>
+              {badge.text}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      {/* Sublabel */}
       <Text style={styles.sublabel}>All payment methods (Cash, M-Pesa, Lipa Later)</Text>
-      <TouchableOpacity onPress={onOpenDailySummary} style={styles.amountTouchable}>
-        <Text style={styles.amount}>KSh {totalFare.toLocaleString()}</Text>
+
+      {/* Amount - Clickable */}
+      <TouchableOpacity 
+        onPress={onOpenDailySummary}
+        style={styles.amountTouchable}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.amount}>KSh {formattedAmount}</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={styles.newTripBtn} onPress={onNewTrip}>
+
+      {/* New Trip Button */}
+      <TouchableOpacity 
+        style={styles.newTripBtn} 
+        onPress={onNewTrip}
+        activeOpacity={0.8}
+      >
         <Text style={styles.newTripBtnText}>＋ New Trip</Text>
       </TouchableOpacity>
     </View>
@@ -31,13 +115,27 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     overflow: 'hidden',
   },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
   label: {
     fontSize: 11,
     textTransform: 'uppercase',
     letterSpacing: 0.06,
     color: '#a9adb6',
     fontWeight: '700',
-    marginBottom: 2,
+  },
+  badge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '600',
   },
   sublabel: {
     fontSize: 10,

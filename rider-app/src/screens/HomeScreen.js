@@ -154,26 +154,38 @@ export default function HomeScreen() {
     
     try {
       setSubscriptionLoading(true);
+      console.log('📡 Fetching subscription for rider:', currentRiderId);
+      
       const response = await api.get('/subscription', {
         params: { rider_id: currentRiderId }
       });
       
-      setSubscription(response.data.subscription);
-      setIsOffline(false);
+      console.log('✅ Subscription response:', response.data);
+      
+      if (response.data && response.data.subscription) {
+        setSubscription(response.data.subscription);
+        setIsOffline(false);
+        console.log('✅ Subscription set:', response.data.subscription);
+      } else {
+        console.warn('⚠️ No subscription data in response');
+        setSubscription(null);
+      }
       
       // ✅ MIGRATED: Cache subscription data using indexedDbAdapter
-      try {
-        await indexedDbAdapter.kvSet(
-          `subscription_cache_${currentRiderId}`,
-          {
-            data: response.data.subscription,
-            cached_at: new Date().toISOString()
-          }
-        );
-        console.log('✅ Cached subscription data in IndexedDB');
-      } catch (cacheErr) {
-        console.warn('⚠️ Warning: Unable to cache subscription data:', cacheErr);
-        // Continue even if caching fails
+      if (response.data && response.data.subscription) {
+        try {
+          await indexedDbAdapter.kvSet(
+            `subscription_cache_${currentRiderId}`,
+            {
+              data: response.data.subscription,
+              cached_at: new Date().toISOString()
+            }
+          );
+          console.log('✅ Cached subscription data in IndexedDB');
+        } catch (cacheErr) {
+          console.warn('⚠️ Warning: Unable to cache subscription data:', cacheErr.message);
+          // Continue even if caching fails
+        }
       }
     } catch (err) {
       console.error('❌ Error loading subscription:', err);
@@ -218,6 +230,7 @@ export default function HomeScreen() {
   // ============================================================================
   const refresh = useCallback(async () => {
     try {
+      console.log('🔄 Starting HomeScreen refresh...');
       setRefreshing(true);
       setHasError(false);
       setErrorMsg(null);
@@ -246,33 +259,49 @@ export default function HomeScreen() {
         }
       }
 
-      // ✅ FIXED: Now passing riderId to repository functions
+      // ✅ FIXED: Now passing riderId to repository functions with defensive checks
       if (effectiveRiderId) {
         console.log('🔄 Loading trips for rider:', effectiveRiderId);
         
         try {
           // Load today's trips and realized income
           const trips = await getTodaysTrips(effectiveRiderId);
-          console.log('✅ Loaded trips:', trips.length);
+          console.log('✅ Loaded trips:', trips ? trips.length : 0);
           
-          const summary = summarizeTrips(trips);
+          // Defensive null checks for trips
+          if (trips && Array.isArray(trips)) {
+            const summary = summarizeTrips(trips);
+            console.log('✅ Trip summary:', summary);
+          }
+          
           const realizedIncome = await getTodaysRealizedIncome(effectiveRiderId);
-          console.log('✅ Realized income:', realizedIncome?.total || 0);
+          console.log('✅ Realized income:', realizedIncome);
           
-          setRunningTotal(realizedIncome?.total || 0);
-          setTripsToday(trips?.length || 0);
+          // Defensive null check for income
+          const incomeTotal = realizedIncome?.total || realizedIncome || 0;
+          if (typeof incomeTotal === 'number' && incomeTotal > 0) {
+            setRunningTotal(incomeTotal);
+          } else {
+            setRunningTotal(0);
+          }
+          
+          setTripsToday(trips && Array.isArray(trips) ? trips.length : 0);
 
           // Load yesterday's total - with proper error handling
           try {
             const yest = await getYesterdaysTotal(effectiveRiderId);
-            setYesterdayTotal(yest || 0);
-            console.log('✅ Yesterday total:', yest || 0);
+            console.log('✅ Yesterday total:', yest);
+            
+            // Defensive null check for yesterday total
+            const yesterdayAmount = typeof yest === 'number' ? yest : 0;
+            setYesterdayTotal(Math.max(yesterdayAmount, 0));
           } catch (yesterdayErr) {
-            console.warn('⚠️ Warning: Could not load yesterday total:', yesterdayErr);
+            console.warn('⚠️ Warning: Could not load yesterday total:', yesterdayErr.message);
             setYesterdayTotal(0);
           }
         } catch (tripsErr) {
-          console.error('❌ Error loading trips:', tripsErr);
+          console.error('❌ Error loading trips:', tripsErr.message);
+          console.error('Full error:', tripsErr);
           setRunningTotal(0);
           setTripsToday(0);
           setYesterdayTotal(0);
@@ -416,25 +445,36 @@ export default function HomeScreen() {
           )}
 
           {/* Hero Fare Card */}
-          {subscription && !subscriptionLoading ? (
+          {!subscriptionLoading ? (
             <HeroFareCard
-              isActive={isSubscriptionActive}
+              runningTotal={typeof runningTotal === 'number' ? runningTotal : 0}
+              totalFare={typeof runningTotal === 'number' ? runningTotal : 0}
               subscription={subscription}
+              isActive={subscription?.status === 'active'}
+              riderId={riderId}
+              onOpenDailySummary={() => {
+                console.log('📊 Opening daily summary...');
+                navigation.navigate('DailyTradeSummaryHub');
+              }}
+              onNewTrip={() => {
+                console.log('🚕 Starting new trip...');
+                navigation.navigate('NewTripScreen');
+              }}
             />
-          ) : subscriptionLoading ? (
+          ) : (
             <View style={[styles.heroFare, styles.skeleton]} />
-          ) : null}
+          )}
 
           {/* Yesterday Card */}
-          {yesterdayTotal > 0 && (
+          {typeof yesterdayTotal === 'number' && yesterdayTotal > 0 && (
             <View style={styles.yesterdayCard}>
               <View style={styles.yesterdayHeader}>
                 <Text style={styles.yesterdayLabel}>Yesterday Total</Text>
                 <Text style={styles.yesterdayAmount}>
-                  KES {yesterdayTotal.toFixed(2)}
+                  KES {typeof yesterdayTotal === 'number' ? yesterdayTotal.toFixed(2) : '0.00'}
                 </Text>
               </View>
-              <TouchableOpacity>
+              <TouchableOpacity onPress={() => navigation.navigate('DailyTradeSummaryHub')}>
                 <Text style={styles.viewBreakdownLink}>View Breakdown →</Text>
               </TouchableOpacity>
             </View>
