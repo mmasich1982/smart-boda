@@ -64,52 +64,7 @@ export default function NewTripScreen({ navigation }) {
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  /**
-   * ✅ UPDATE CACHE: Add new trip to daily trips cache
-   * This ensures UI updates immediately with the new trip while offline
-   * Uses IndexedDB key-value store for quick cache lookups
-   * 
-   * CRITICAL NOTE: Cache is an OPTIMIZATION ONLY
-   * - Source of truth: IndexedDB 'trips' store (trip is already saved there)
-   * - Cache: Provides fast reads for getTodaysTrips() when cache is populated
-   * - If cache is empty/stale: getTodaysTrips() falls back to database query
-   * 
-   * ✅ MIGRATION FIX (24 AUG 2026):
-   *    - Cache key format: `trips_today_${riderId}` (matches getTodaysTrips line 79)
-   *    - offlineRecord uses snake_case: rider_id (matches DB schema)
-   *    - Stores complete trip object in cache for instant access
-   *    - If cache update fails: database has the trip (data is never lost)
-   */
-  const updateTripsCache = async (offlineRecord) => {
-    try {
-      const cacheKey = `trips_today_${effectiveRiderId}`;
-      
-      // Get existing cache from IndexedDB (may be empty)
-      const cachedData = await indexedDbAdapter.kvGet(cacheKey);
-      let items = [];
-      
-      if (cachedData) {
-        try {
-          items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
-          if (!Array.isArray(items)) items = [];
-        } catch (parseErr) {
-          console.warn('⚠️ Cache parse error, starting fresh');
-          items = [];
-        }
-      }
-      
-      // Add new trip to front (most recent first)
-      items.unshift(offlineRecord);
-      
-      // Save updated cache to IndexedDB
-      // Note: If this fails, the trip is still in the 'trips' store
-      await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(items));
-      console.log(`✅ Updated cache: trips_today_${effectiveRiderId} now has ${items.length} trips`);
-    } catch (err) {
-      console.error('❌ Error updating cache (trip still saved in database):', err);
-      // Don't throw - cache is optimization only, trip is already in IndexedDB
-    }
-  };
+
 
   const handleKeypadPress = (digit) => {
     if (digit === 'back') {
@@ -209,11 +164,11 @@ export default function NewTripScreen({ navigation }) {
         cacheKey: `trips_today_${effectiveRiderId}`
       });
 
-      // ✅ AUDIT FIX #4: Database persistence with cache coordination
-      // STEP 1: Save to 'trips' store so getTodaysTrips() can read it immediately
+      // ✅ DIRECT DATABASE PERSISTENCE (NO CACHE LAYER)
+      // Save to 'trips' store so getTodaysTrips() queries it directly
       try {
         await indexedDbAdapter.insertRow('trips', offlineRecord);
-        console.log('✅ Trip inserted into trips store (rider_id, ts, method all set)');
+        console.log('✅ Trip inserted into IndexedDB trips store (rider_id, ts, method all set)');
       } catch (insertErr) {
         console.error('⚠️ Error inserting into trips store:', insertErr);
         // Fall back to kvSet if insertRow fails
@@ -222,11 +177,6 @@ export default function NewTripScreen({ navigation }) {
           JSON.stringify(offlineRecord)
         );
       }
-
-      // STEP 2: Update cache immediately for instant UI feedback
-      // Cache uses same key format as getTodaysTrips() queries from
-      await updateTripsCache(offlineRecord);
-      console.log(`✅ Cache updated: trips_today_${effectiveRiderId}`);
 
       // Add to sync queue for background sync
       const queueSuccess = await addToSyncQueue({
