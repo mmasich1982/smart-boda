@@ -66,19 +66,25 @@ export default function NewTripScreen({ navigation }) {
 
   /**
    * ✅ UPDATE CACHE: Add new trip to daily trips cache
-   * This ensures UI updates immediately with the new trip
-   * Uses IndexedDB key-value for quick cache updates
+   * This ensures UI updates immediately with the new trip while offline
+   * Uses IndexedDB key-value store for quick cache lookups
    * 
-   * ✅ AUDIT VERIFIED (24 AUG 2026):
-   *    - Cache key format: `trips_today_${riderId}` (must match getTodaysTrips line 199)
+   * CRITICAL NOTE: Cache is an OPTIMIZATION ONLY
+   * - Source of truth: IndexedDB 'trips' store (trip is already saved there)
+   * - Cache: Provides fast reads for getTodaysTrips() when cache is populated
+   * - If cache is empty/stale: getTodaysTrips() falls back to database query
+   * 
+   * ✅ MIGRATION FIX (24 AUG 2026):
+   *    - Cache key format: `trips_today_${riderId}` (matches getTodaysTrips line 79)
    *    - offlineRecord uses snake_case: rider_id (matches DB schema)
    *    - Stores complete trip object in cache for instant access
+   *    - If cache update fails: database has the trip (data is never lost)
    */
   const updateTripsCache = async (offlineRecord) => {
     try {
       const cacheKey = `trips_today_${effectiveRiderId}`;
       
-      // Get existing cache from IndexedDB
+      // Get existing cache from IndexedDB (may be empty)
       const cachedData = await indexedDbAdapter.kvGet(cacheKey);
       let items = [];
       
@@ -96,10 +102,12 @@ export default function NewTripScreen({ navigation }) {
       items.unshift(offlineRecord);
       
       // Save updated cache to IndexedDB
+      // Note: If this fails, the trip is still in the 'trips' store
       await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(items));
-      console.log(`✅ Updated trips_today_${effectiveRiderId} cache with new trip`);
+      console.log(`✅ Updated cache: trips_today_${effectiveRiderId} now has ${items.length} trips`);
     } catch (err) {
-      console.error('❌ Error updating cache:', err);
+      console.error('❌ Error updating cache (trip still saved in database):', err);
+      // Don't throw - cache is optimization only, trip is already in IndexedDB
     }
   };
 
