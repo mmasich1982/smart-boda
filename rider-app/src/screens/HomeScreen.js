@@ -3,7 +3,7 @@
 // UPDATED: Migrated from LocalStore to IndexedDB Adapter
 // - All localStorage/LocalStore references replaced with indexedDbAdapter.kvSet/kvGet
 // - UI/UX completely preserved - all tiles, cards, and layouts intact
-// - All navigation handlers and state management preserved
+// - FIXED: Added cache expiration (24 hours) to prevent stale locked status
 // ============================================================================
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -32,6 +32,9 @@ const ENERGY_TILE_BY_FUEL = {
   petrol: { emoji: '⛽', label: 'home.tile_fuel_motorcycle', route: 'FuelHub' },
   electric: { emoji: '🔋', label: 'home.tile_charge_battery', route: 'ChargeBatteryHub' },
 };
+
+// Cache expiration: 24 hours in milliseconds
+const SUBSCRIPTION_CACHE_TTL = 24 * 60 * 60 * 1000;
 
 // ============================================================================
 // CORE TILES - These are KEPT (not removed)
@@ -116,6 +119,22 @@ class HomeScreenErrorBoundary extends React.Component {
 }
 
 // ============================================================================
+// CACHE VALIDATION HELPER
+// ============================================================================
+function isCacheValid(cachedData) {
+  if (!cachedData || !cachedData.cached_at) {
+    return false;
+  }
+  
+  const cachedTime = new Date(cachedData.cached_at).getTime();
+  const now = new Date().getTime();
+  const age = now - cachedTime;
+  
+  // Cache is valid if less than 24 hours old
+  return age < SUBSCRIPTION_CACHE_TTL;
+}
+
+// ============================================================================
 // MAIN HOMESCREEN COMPONENT
 // ============================================================================
 export default function HomeScreen() {
@@ -142,7 +161,7 @@ export default function HomeScreen() {
   const [riderId, setRiderId] = useState(null);
 
   // ============================================================================
-  // SUBSCRIPTION LOADING
+  // SUBSCRIPTION LOADING WITH CACHE VALIDATION
   // ============================================================================
   
   // ✅ REQ-4.1, 4.2: Load subscription data
@@ -158,7 +177,7 @@ export default function HomeScreen() {
       setSubscription(response.data.subscription);
       setIsOffline(false);
       
-      // ✅ OFFLINE: Cache subscription data using IndexedDB Adapter
+      // ✅ OFFLINE: Cache subscription data using IndexedDB Adapter with timestamp
       try {
         await indexedDbAdapter.kvSet(
           `subscription_cache_${riderId}`,
@@ -167,6 +186,7 @@ export default function HomeScreen() {
             cached_at: new Date().toISOString()
           })
         );
+        console.log('✅ Subscription cached successfully');
       } catch (cacheErr) {
         console.warn('Warning: Unable to cache subscription data:', cacheErr);
         // Continue even if caching fails
@@ -174,17 +194,27 @@ export default function HomeScreen() {
     } catch (err) {
       console.error('Error loading subscription:', err);
       
-      // ✅ OFFLINE: Load from cache using IndexedDB Adapter
+      // ✅ OFFLINE: Load from cache using IndexedDB Adapter with validation
       if (err.response?.status === 0 || err.message.includes('Network')) {
         try {
-          const cached = await indexedDbAdapter.kvGet(`subscription_cache_${riderId}`);
-          if (cached) {
+          const cachedRaw = await indexedDbAdapter.kvGet(`subscription_cache_${riderId}`);
+          if (cachedRaw) {
             try {
-              const { data } = JSON.parse(cached);
-              setSubscription(data);
-              setIsOffline(true);
+              const cached = JSON.parse(cachedRaw);
+              
+              // ✅ VALIDATE CACHE: Only use if less than 24 hours old
+              if (isCacheValid(cached)) {
+                console.log('✅ Using valid cached subscription data');
+                setSubscription(cached.data);
+                setIsOffline(true);
+              } else {
+                console.warn('❌ Cached subscription data is stale (>24h), ignoring');
+                setSubscription(null); // Don't show stale locked status
+                setIsOffline(true);
+              }
             } catch (e) {
               console.error('Error parsing cached subscription:', e);
+              setSubscription(null);
             }
           }
         } catch (cacheErr) {
@@ -298,6 +328,10 @@ export default function HomeScreen() {
           text: t('common.logout'),
           onPress: async () => {
             try {
+              // Clear subscription cache on logout
+              if (riderId) {
+                await indexedDbAdapter.kvDelete(`subscription_cache_${riderId}`);
+              }
               await clearSession();
               navigation.navigate('Auth', { screen: 'PinLogin' });
             } catch (err) {
@@ -332,7 +366,7 @@ export default function HomeScreen() {
   const showSubscriptionBadge = subscription?.days_left <= 1 && !subscription?.locked;
   const notificationCount = showSubscriptionBadge ? null : queuedCount; // Show subscription warning if last day, else queue count
 
-  // ✅ REQ-4.4: Account locked modal
+  // ✅ REQ-4.4: Account locked modal - ONLY show if not from stale cache
   const renderLockedModal = () => {
     if (!subscription?.locked) return null;
 
