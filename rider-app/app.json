@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "Smart Boda",
+    "slug": "smart-boda-rider-app",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "android": {
+      "package": "com.smartboda.rider",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "name": "Smart Boda",
+      "shortName": "Smart Boda",
+      "lang": "en",
+      "scope": "/",
+      "startUrl": "/",
+      "display": "standalone",
+      "orientation": "portrait",
+      "themeColor": "#ff7a1a",
+      "backgroundColor": "#f6f4ef",
+      "description": "Track trips, fuel, maintenance, and savings — works fully offline."
+    },
+    "extra": {
+      "apiBaseUrl": "http://localhost:8000"
+    },
+    "plugins": [
+      "expo-localization",
+      "expo-sharing",
+      "expo-sqlite"
+    ]
+  }
+}
