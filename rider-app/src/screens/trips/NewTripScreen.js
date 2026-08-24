@@ -3,7 +3,7 @@
 // ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
 // ✅ NETWORK AWARE: Real-time connectivity detection
 // ✅ PROVEN PATTERN: Follows FuelEntryScreen/BatteryEntryScreen approach
-// ✅ FIXED: Removed blocking isInitialized check that caused blank screen
+// ✅ FIXED: Removed blocking isInitialized check and undefined error variable
 
 import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
@@ -294,7 +294,7 @@ export default function NewTripScreen({ navigation }) {
     <ScrollView style={styles.container}>
       <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Home'} />
       
-      {/* FIXED: Added Smart Boda Branding Header (matching home screen) */}
+      {/* Smart Boda Branding Header */}
       <View style={styles.brandingHeader}>
         <View style={styles.brandingContent}>
           <Text style={styles.brandingEmoji}>🏍️</Text>
@@ -467,7 +467,6 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
 
-  // FIXED: Added branding header styles
   brandingHeader: {
     marginBottom: 20,
     paddingHorizontal: 0,
@@ -530,7 +529,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // FIXED: Enhanced hover effect with prominent light orange highlight
   keypadButtonHovered: {
     backgroundColor: '#ffebd9',
     borderColor: '#ff7a1a',
@@ -545,7 +543,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#1a1c20',
   },
-  // FIXED: Text hover state for better readability
   keypadButtonTextHovered: {
     color: '#ff7a1a',
     fontWeight: '800',
