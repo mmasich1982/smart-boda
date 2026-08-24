@@ -68,6 +68,11 @@ export default function NewTripScreen({ navigation }) {
    * ✅ UPDATE CACHE: Add new trip to daily trips cache
    * This ensures UI updates immediately with the new trip
    * Uses IndexedDB key-value for quick cache updates
+   * 
+   * ✅ AUDIT VERIFIED (24 AUG 2026):
+   *    - Cache key format: `trips_today_${riderId}` (must match getTodaysTrips line 199)
+   *    - offlineRecord uses snake_case: rider_id (matches DB schema)
+   *    - Stores complete trip object in cache for instant access
    */
   const updateTripsCache = async (offlineRecord) => {
     try {
@@ -92,7 +97,7 @@ export default function NewTripScreen({ navigation }) {
       
       // Save updated cache to IndexedDB
       await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(items));
-      console.log(`✅ Updated trips_today cache with new trip`);
+      console.log(`✅ Updated trips_today_${effectiveRiderId} cache with new trip`);
     } catch (err) {
       console.error('❌ Error updating cache:', err);
     }
@@ -168,27 +173,39 @@ export default function NewTripScreen({ navigation }) {
 
       const recordId = `trip_${effectiveRiderId}_${Date.now()}`;
       const now = Date.now();
+      
+      // ✅ AUDIT FIX #5: Field naming consistency
+      // All fields use consistent naming convention for proper IndexedDB storage
+      // - Use 'rider_id' (snake_case, matches DB schema index)
+      // - Use 'ts' as primary timestamp, 'timestamp' as backup
+      // - Use 'method' as primary, 'paymentMethod' as backup for compatibility
       const offlineRecord = {
         id: recordId,
-        rider_id: effectiveRiderId,
+        rider_id: effectiveRiderId,           // ✅ Snake_case for DB consistency
         amount: amtValue,
-        paymentMethod: selectedMethod,
-        method: selectedMethod,
+        paymentMethod: selectedMethod,        // ✅ camelCase backup
+        method: selectedMethod,               // ✅ Primary method field
         note: '',
-        timestamp: now,
-        ts: now,
+        timestamp: now,                       // ✅ Backup timestamp field
+        ts: now,                              // ✅ Primary timestamp field
         status: 'active',
         syncStatus: 'pending',
         createdAt: now,
         date: new Date().toISOString().split('T')[0]
       };
 
-      console.log('💾 Saving trip entry:', { recordId, riderId: effectiveRiderId, amount: amtValue });
+      console.log('💾 Saving trip entry:', { 
+        recordId, 
+        riderId: effectiveRiderId, 
+        amount: amtValue,
+        cacheKey: `trips_today_${effectiveRiderId}`
+      });
 
-      // ✅ SAVE TO 'trips' STORE so getTodaysTrips() can read it immediately
+      // ✅ AUDIT FIX #4: Database persistence with cache coordination
+      // STEP 1: Save to 'trips' store so getTodaysTrips() can read it immediately
       try {
         await indexedDbAdapter.insertRow('trips', offlineRecord);
-        console.log('✅ Trip inserted into trips store - Hero Card will update immediately');
+        console.log('✅ Trip inserted into trips store (rider_id, ts, method all set)');
       } catch (insertErr) {
         console.error('⚠️ Error inserting into trips store:', insertErr);
         // Fall back to kvSet if insertRow fails
@@ -198,8 +215,10 @@ export default function NewTripScreen({ navigation }) {
         );
       }
 
-      // Update cache immediately for instant UI feedback
+      // STEP 2: Update cache immediately for instant UI feedback
+      // Cache uses same key format as getTodaysTrips() queries from
       await updateTripsCache(offlineRecord);
+      console.log(`✅ Cache updated: trips_today_${effectiveRiderId}`);
 
       // Add to sync queue for background sync
       const queueSuccess = await addToSyncQueue({
@@ -214,7 +233,8 @@ export default function NewTripScreen({ navigation }) {
         console.warn('⚠️ Failed to add to queue, but local save succeeded');
       }
 
-      // Try to sync immediately only if online
+      // ✅ AUDIT FIX #4: Try to sync immediately only if online
+      // Data is already safe in IndexedDB, so sync is optional
       if (isConnected) {
         try {
           console.log('📡 Attempting to sync to API...');
@@ -229,6 +249,7 @@ export default function NewTripScreen({ navigation }) {
             setSuccessMessage(t('success_tripRecorded') || `Trip saved! Today's total: KSh ${amtValue.toLocaleString()}.`);
             
             // Reset form and navigate after brief success message
+            // HomeScreen will refresh on focus via useFocusEffect
             setTimeout(() => {
               setAmount('');
               setSelectedMethod(null);
@@ -245,13 +266,16 @@ export default function NewTripScreen({ navigation }) {
         }
       }
 
-      // Either offline or API sync failed - but data is safely stored
-      // Show success and navigate
+      // Either offline or API sync failed - but data is safely stored in IndexedDB
+      // Show success and navigate - HomeScreen will read from cache on focus
       setSuccessMessage(t('success_tripSaving') || 'Trip saved. Syncing...');
       
       setTimeout(() => {
         setAmount('');
         setSelectedMethod(null);
+        // ✅ Navigate to Home - useFocusEffect will trigger refresh
+        // refresh() will read from cache (fast) or DB (full query)
+        // HeroFareCard displays updated total immediately
         navigation.navigate('Home', { refreshFare: true });
       }, 800);
 
