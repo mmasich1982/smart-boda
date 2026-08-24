@@ -1,9 +1,9 @@
 // rider-app/src/components/HeroFareCard.js
-// FIXED: Corrected hero fare styling to match cleaned.html specifications
-// - Dark gradient background instead of orange
-// - Proper text styling and spacing
-// - Correct button styling with fullwidth plus character
-// - Made amount clickable for daily summary
+// ✅ VERIFIED: No localStorage/LocalStore usage - component is storage-agnostic
+// - Displays today's total income from parent state
+// - Clickable amount triggers daily summary modal
+// - New Trip button navigates to trip creation
+// - UI/UX unchanged from original
 
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
