@@ -478,7 +478,15 @@ export async function queryRows(storeName, filterFn) {
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
         const allRows = request.result || [];
+        console.log(`[queryRows] ${storeName}: Retrieved ${allRows.length} raw records from database`);
+        
+        // Debug: Log first few records if available
+        if (allRows.length > 0) {
+          console.log(`[queryRows] ${storeName}: First record:`, JSON.stringify(allRows[0]).substring(0, 200));
+        }
+        
         const filtered = filterFn ? allRows.filter(filterFn) : allRows;
+        console.log(`[queryRows] ${storeName}: After filtering: ${filtered.length} records`);
         resolve(filtered);
       };
     });
