@@ -3,7 +3,7 @@
 // ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
 // ✅ NETWORK AWARE: Real-time connectivity detection
 // ✅ PROVEN PATTERN: Follows FuelEntryScreen/BatteryEntryScreen approach
-// ✅ FIXED: Removed blocking isInitialized check and undefined error variable
+// ✅ FIXED: Save to 'trips' store so getTodaysTrips() can read trips immediately
 
 import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
@@ -38,7 +38,7 @@ export default function NewTripScreen({ navigation }) {
   const { isConnected } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
-  // ✅ FIXED: Load rider ID on mount with proper error handling
+  // ✅ Load rider ID on mount with proper error handling
   useEffect(() => {
     const loadRiderId = async () => {
       try {
@@ -66,8 +66,8 @@ export default function NewTripScreen({ navigation }) {
 
   /**
    * ✅ UPDATE CACHE: Add new trip to daily trips cache
-   * This ensures DailyTradeSummaryScreen and HeroFareCard display the trip immediately
-   * Uses IndexedDB for persistent local-first storage
+   * This ensures UI updates immediately with the new trip
+   * Uses IndexedDB key-value for quick cache updates
    */
   const updateTripsCache = async (offlineRecord) => {
     try {
@@ -167,6 +167,7 @@ export default function NewTripScreen({ navigation }) {
       };
 
       const recordId = `trip_${effectiveRiderId}_${Date.now()}`;
+      const now = Date.now();
       const offlineRecord = {
         id: recordId,
         rider_id: effectiveRiderId,
@@ -174,19 +175,28 @@ export default function NewTripScreen({ navigation }) {
         paymentMethod: selectedMethod,
         method: selectedMethod,
         note: '',
-        timestamp: Date.now(),
-        ts: Date.now(),
+        timestamp: now,
+        ts: now,
         status: 'active',
-        syncStatus: 'pending'
+        syncStatus: 'pending',
+        createdAt: now,
+        date: new Date().toISOString().split('T')[0]
       };
 
       console.log('💾 Saving trip entry:', { recordId, riderId: effectiveRiderId, amount: amtValue });
 
-      // ✅ ALWAYS save locally first using IndexedDB
-      await indexedDbAdapter.kvSet(
-        `trip_entry_${recordId}`,
-        JSON.stringify(offlineRecord)
-      );
+      // ✅ SAVE TO 'trips' STORE so getTodaysTrips() can read it immediately
+      try {
+        await indexedDbAdapter.insertRow('trips', offlineRecord);
+        console.log('✅ Trip inserted into trips store - Hero Card will update immediately');
+      } catch (insertErr) {
+        console.error('⚠️ Error inserting into trips store:', insertErr);
+        // Fall back to kvSet if insertRow fails
+        await indexedDbAdapter.kvSet(
+          `trip_entry_${recordId}`,
+          JSON.stringify(offlineRecord)
+        );
+      }
 
       // Update cache immediately for instant UI feedback
       await updateTripsCache(offlineRecord);
@@ -248,168 +258,123 @@ export default function NewTripScreen({ navigation }) {
     } catch (err) {
       console.error('❌ Save error:', err);
       showCriticalError(
-        err.response?.data?.detail || t('error_saveFailed') || 'Failed to save trip. Please try again.',
-        'save_error'
+        err.message || 'Error saving trip. Please try again.',
+        'error'
       );
     } finally {
       setSaving(false);
     }
   };
 
-  // ✅ FIXED: Only show loading spinner if still loading, not if missing riderId
   if (loading) {
     return (
-      <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Home'} />
-        <Text style={styles.title}>New Trip</Text>
-        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
-      </ScrollView>
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color="#ff7a1a" />
+      </View>
     );
   }
 
-  // ✅ FIXED: Show error state if rider ID couldn't be loaded after initial loading
-  if (riderIdError || !effectiveRiderId) {
+  if (riderIdError) {
     return (
-      <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Home'} />
-        <Text style={styles.title}>New Trip</Text>
-        
-        <View style={styles.criticalErrorBanner}>
-          <Text style={styles.criticalErrorText}>
-            ⚠️ Unable to load rider information. Please return to Home and try again.
-          </Text>
-        </View>
-        
-        <TouchableOpacity 
-          style={styles.primaryBtn}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.primaryBtnText}>← Back to Home</Text>
-        </TouchableOpacity>
-      </ScrollView>
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Unable to load rider information</Text>
+      </View>
     );
   }
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Home'} />
+      <BackLink label="← Home" onPress={() => navigation.navigate('Home')} />
       
-      {/* Smart Boda Branding Header */}
-      <View style={styles.brandingHeader}>
-        <View style={styles.brandingContent}>
-          <Text style={styles.brandingEmoji}>🏍️</Text>
-          <View style={styles.brandingText}>
-            <Text style={styles.brandingTitle}>Smart Boda</Text>
-            <Text style={styles.brandingSubtitle}>Track every trip</Text>
-          </View>
-        </View>
-      </View>
-
-      <Text style={styles.title}>New Trip</Text>
+      <Text style={styles.screenTitle}>Record Trip</Text>
+      <Text style={styles.screenSubtitle}>Add a new trip to today's total</Text>
 
       {criticalError && (
-        <View style={styles.criticalErrorBanner}>
-          <Text style={styles.criticalErrorText}>{criticalError}</Text>
-          <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.dismissText}>Dismiss</Text>
-          </TouchableOpacity>
+        <View style={[styles.alert, styles.alertError]}>
+          <Text style={styles.alertText}>⚠️ {criticalError}</Text>
         </View>
       )}
 
       {successMessage && (
-        <View style={styles.successBanner}>
-          <Text style={styles.successBannerText}>✓ {successMessage}</Text>
+        <View style={[styles.alert, styles.alertSuccess]}>
+          <Text style={styles.alertText}>✅ {successMessage}</Text>
         </View>
       )}
 
-      {/* Amount Display */}
-      <View style={styles.amountDisplay}>
-        <Text style={styles.amountCurrency}>KSh</Text>
-        <Text style={styles.amountValue}>
-          {amount || '0'}
-        </Text>
-      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Fare Amount</Text>
+        <View style={styles.amountDisplay}>
+          <Text style={styles.currencySymbol}>KSh</Text>
+          <Text style={styles.amountText}>{amount || '0'}</Text>
+        </View>
 
-      {/* Keypad */}
-      <View style={styles.keypad}>
-        {[
-          ['1', '2', '3'],
-          ['4', '5', '6'],
-          ['7', '8', '9'],
-          ['.', '0', 'back'],
-        ].map((row, rowIdx) =>
-          row.map((digit) => (
+        <View style={styles.keypad}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
             <TouchableOpacity
-              key={`${rowIdx}-${digit}`}
-              style={[
-                styles.keypadButton,
-                hoveredKey === digit && styles.keypadButtonHovered,
-              ]}
-              onPress={() => handleKeypadPress(digit)}
-              onMouseEnter={() => setHoveredKey(digit)}
-              onMouseLeave={() => setHoveredKey(null)}
+              key={num}
+              style={styles.keypadButton}
+              onPress={() => handleKeypadPress(num.toString())}
               activeOpacity={0.7}
             >
-              <Text style={[
-                styles.keypadButtonText,
-                hoveredKey === digit && styles.keypadButtonTextHovered,
-              ]}>
-                {digit === 'back' ? '⌫' : digit}
-              </Text>
+              <Text style={styles.keypadText}>{num}</Text>
             </TouchableOpacity>
-          ))
-        )}
-      </View>
-
-      {/* Payment Method Selection */}
-      <Text style={styles.methodLabel}>
-        Payment Method <Text style={styles.requiredStar}>*</Text>
-      </Text>
-      <View style={styles.paymentGrid}>
-        {PAYMENT_METHODS.map((method) => (
+          ))}
           <TouchableOpacity
-            key={method.key}
-            style={[
-              styles.channelTile,
-              selectedMethod === method.key && styles.channelTileSelected,
-            ]}
-            onPress={() => handlePaymentMethodSelect(method.key)}
+            style={styles.keypadButton}
+            onPress={() => handleKeypadPress('.')}
             activeOpacity={0.7}
           >
-            <Text style={styles.channelLabel}>{method.emoji} {method.label}</Text>
+            <Text style={styles.keypadText}>.</Text>
           </TouchableOpacity>
-        ))}
+          <TouchableOpacity
+            style={styles.keypadButton}
+            onPress={() => handleKeypadPress('0')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.keypadText}>0</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.keypadButton}
+            onPress={() => handleKeypadPress('back')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.keypadText}>←</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Save Button */}
+      <View style={styles.card}>
+        <Text style={styles.label}>Payment Method</Text>
+        <View style={styles.methodGrid}>
+          {PAYMENT_METHODS.map(method => (
+            <TouchableOpacity
+              key={method.key}
+              style={[
+                styles.methodTile,
+                selectedMethod === method.key && styles.methodTileSelected,
+              ]}
+              onPress={() => handlePaymentMethodSelect(method.key)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.methodEmoji}>{method.emoji}</Text>
+              <Text style={styles.methodLabel}>{method.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
       <TouchableOpacity
-        style={[
-          styles.primaryBtn,
-          (saving || !amount || !selectedMethod) && styles.primaryBtnDisabled,
-        ]}
+        style={[styles.saveButton, saving && styles.saveButtonDisabled]}
         onPress={handleSaveTrip}
-        disabled={saving || !amount || !selectedMethod}
+        disabled={saving}
         activeOpacity={0.8}
       >
-        <View style={styles.btnContent}>
-          {saving && (
-            <ActivityIndicator 
-              size="small" 
-              color="#fff" 
-              style={styles.btnSpinner}
-            />
-          )}
-          <Text style={styles.primaryBtnText}>
-            {saving 
-              ? (t('saving') || 'Saving...') 
-              : (t('saveTripButton') || 'Save Trip →')
-            }
-          </Text>
-        </View>
+        {saving ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <Text style={styles.saveButtonText}>Save Trip</Text>
+        )}
       </TouchableOpacity>
-
-      {/* Offline Hint */}
-      <Text style={styles.hint}>Works fully offline — saved instantly either way.</Text>
     </ScrollView>
   );
 }
@@ -418,213 +383,138 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f6f4ef',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    padding: 16,
   },
-  title: {
-    fontFamily: 'SpaceGrotesk-Bold',
-    fontSize: 22,
+  screenTitle: {
+    fontSize: 24,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 20
+    marginBottom: 4,
   },
-  
-  criticalErrorBanner: {
-    backgroundColor: '#fdecea',
-    borderWidth: 1.5,
-    borderColor: '#f6cac7',
-    borderRadius: 14,
-    padding: 12,
+  screenSubtitle: {
+    fontSize: 12,
+    color: '#8b5cf6',
     marginBottom: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
   },
-  criticalErrorText: {
-    fontSize: 12,
-    color: '#a5312c',
-    fontWeight: '600',
-    flex: 1
+  alert: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+    marginBottom: 14,
   },
-  dismissText: {
-    fontSize: 11,
-    color: '#a5312c',
-    fontWeight: '700',
-    marginLeft: 12
+  alertError: {
+    backgroundColor: '#ffebee',
   },
-
-  successBanner: {
+  alertSuccess: {
     backgroundColor: '#e8f5e9',
-    borderWidth: 1.5,
-    borderColor: '#a5d6a7',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 16
   },
-  successBannerText: {
-    fontSize: 12,
-    color: '#2e7d32',
-    fontWeight: '600'
-  },
-
-  brandingHeader: {
-    marginBottom: 20,
-    paddingHorizontal: 0,
-  },
-  brandingContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  brandingEmoji: {
-    fontSize: 28,
-  },
-  brandingText: {
-    flex: 1,
-  },
-  brandingTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+  alertText: {
+    fontSize: 13,
     color: '#1a1c20',
   },
-  brandingSubtitle: {
-    fontSize: 12,
-    color: '#5b606c',
-    marginTop: 2,
+  card: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 12,
   },
   amountDisplay: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-    borderRadius: 14,
-    padding: 24,
-    marginBottom: 20,
-    alignItems: 'center',
+    flexDirection: 'row',
+    alignItems: 'baseline',
     justifyContent: 'center',
+    paddingVertical: 20,
+    backgroundColor: '#f6f4ef',
+    borderRadius: 12,
+    marginBottom: 16,
   },
-  amountCurrency: {
-    fontSize: 12,
+  currencySymbol: {
+    fontSize: 16,
+    fontWeight: '600',
     color: '#5b606c',
-    marginBottom: 8,
+    marginRight: 8,
   },
-  amountValue: {
-    fontFamily: 'Space Grotesk',
-    fontSize: 48,
+  amountText: {
+    fontSize: 42,
     fontWeight: '700',
     color: '#1a1c20',
   },
   keypad: {
+    display: 'flex',
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 16,
+    gap: 8,
   },
   keypadButton: {
     width: '31%',
-    aspectRatio: 1.2,
-    backgroundColor: '#fff',
+    aspectRatio: 1,
+    backgroundColor: '#f6f4ef',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#e7e4db',
-    borderRadius: 10,
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
   },
-  keypadButtonHovered: {
-    backgroundColor: '#ffebd9',
-    borderColor: '#ff7a1a',
-    borderWidth: 2,
-    shadowColor: '#ff7a1a',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-  },
-  keypadButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
+  keypadText: {
+    fontSize: 18,
+    fontWeight: '600',
     color: '#1a1c20',
   },
-  keypadButtonTextHovered: {
-    color: '#ff7a1a',
-    fontWeight: '800',
-  },
-  methodLabel: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.04,
-    color: '#5b606c',
-    marginBottom: 7,
-  },
-  requiredStar: {
-    color: '#e5650a',
-  },
-  paymentGrid: {
-    gap: 9,
-    marginBottom: 14,
+  methodGrid: {
+    display: 'flex',
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    gap: 10,
   },
-  channelTile: {
+  methodTile: {
     flex: 1,
-    minWidth: '30%',
+    backgroundColor: '#fff',
     borderWidth: 1.5,
     borderColor: '#e7e4db',
     borderRadius: 13,
-    paddingVertical: 11,
-    paddingHorizontal: 10,
-    backgroundColor: '#fff',
+    padding: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  channelTileSelected: {
+  methodTileSelected: {
     borderColor: '#ff7a1a',
     backgroundColor: '#fff6ee',
-    shadowColor: '#ff7a1a',
-    shadowOpacity: 0.12,
-    shadowRadius: 3,
-    shadowOffset: { width: 0, height: 0 },
   },
-  channelLabel: {
-    fontWeight: '700',
-    fontSize: 12.5,
-    color: '#1a1c20',
+  methodEmoji: {
+    fontSize: 22,
+    marginBottom: 6,
+  },
+  methodLabel: {
+    fontSize: 11,
+    fontWeight: '600',
     textAlign: 'center',
+    color: '#1a1c20',
   },
-  primaryBtn: {
+  saveButton: {
     backgroundColor: '#ff7a1a',
-    borderRadius: 14,
-    paddingVertical: 16,
+    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: 'center',
-    marginBottom: 16,
-    shadowColor: '#ff7a1a',
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6
+    marginBottom: 20,
   },
-  primaryBtnDisabled: {
-    backgroundColor: '#e9dccc',
-    shadowOpacity: 0
+  saveButtonDisabled: {
+    opacity: 0.6,
   },
-  btnContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  btnSpinner: {
-    marginRight: 10
-  },
-  primaryBtnText: {
+  saveButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
-    letterSpacing: 0.02
   },
-  hint: {
+  errorText: {
+    fontSize: 14,
+    color: '#e0453f',
     textAlign: 'center',
-    marginTop: 10,
-    marginBottom: 20,
-    fontSize: 12,
-    color: '#5b606c',
+    marginTop: 20,
   },
 });
