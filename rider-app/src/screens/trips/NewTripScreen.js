@@ -3,6 +3,7 @@
 // ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
 // ✅ NETWORK AWARE: Real-time connectivity detection
 // ✅ PROVEN PATTERN: Follows FuelEntryScreen/BatteryEntryScreen approach
+// ✅ FIXED: Removed blocking isInitialized check that caused blank screen
 
 import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
@@ -32,11 +33,12 @@ export default function NewTripScreen({ navigation }) {
   const [hoveredKey, setHoveredKey] = useState(null);
   const [localRiderId, setLocalRiderId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [riderIdError, setRiderIdError] = useState(false);
 
-  const { isConnected, isInitialized } = useNetworkStatus();
+  const { isConnected } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
-  // ✅ LOAD RIDER ID ON MOUNT
+  // ✅ FIXED: Load rider ID on mount with proper error handling
   useEffect(() => {
     const loadRiderId = async () => {
       try {
@@ -44,9 +46,14 @@ export default function NewTripScreen({ navigation }) {
         if (id) {
           setLocalRiderId(id);
           console.log('✅ NewTrip: Loaded rider ID:', id);
+          setRiderIdError(false);
+        } else {
+          console.warn('⚠️ No rider ID found in local storage');
+          setRiderIdError(true);
         }
       } catch (err) {
         console.error('❌ Error loading rider ID:', err);
+        setRiderIdError(true);
       } finally {
         setLoading(false);
       }
@@ -198,7 +205,7 @@ export default function NewTripScreen({ navigation }) {
       }
 
       // Try to sync immediately only if online
-      if (isConnected && isInitialized) {
+      if (isConnected) {
         try {
           console.log('📡 Attempting to sync to API...');
           const response = await api.post(
@@ -249,12 +256,36 @@ export default function NewTripScreen({ navigation }) {
     }
   };
 
-  if (loading || !effectiveRiderId || !isInitialized) {
+  // ✅ FIXED: Only show loading spinner if still loading, not if missing riderId
+  if (loading) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Home'} />
         <Text style={styles.title}>New Trip</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+      </ScrollView>
+    );
+  }
+
+  // ✅ FIXED: Show error state if rider ID couldn't be loaded after initial loading
+  if (riderIdError || !effectiveRiderId) {
+    return (
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Home'} />
+        <Text style={styles.title}>New Trip</Text>
+        
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>
+            ⚠️ Unable to load rider information. Please return to Home and try again.
+          </Text>
+        </View>
+        
+        <TouchableOpacity 
+          style={styles.primaryBtn}
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.primaryBtnText}>← Back to Home</Text>
+        </TouchableOpacity>
       </ScrollView>
     );
   }
@@ -280,53 +311,60 @@ export default function NewTripScreen({ navigation }) {
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>{criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
+            <Text style={styles.dismissText}>Dismiss</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {successMessage && !saving && (
+      {successMessage && (
         <View style={styles.successBanner}>
-          <Text style={styles.successBannerText}>✅ {successMessage}</Text>
+          <Text style={styles.successBannerText}>✓ {successMessage}</Text>
         </View>
       )}
 
       {/* Amount Display */}
       <View style={styles.amountDisplay}>
         <Text style={styles.amountCurrency}>KSh</Text>
-        <Text style={styles.amountValue}>{amount || '0'}</Text>
+        <Text style={styles.amountValue}>
+          {amount || '0'}
+        </Text>
       </View>
 
-      {/* FIXED: Keypad with Enhanced Hover Effects */}
+      {/* Keypad */}
       <View style={styles.keypad}>
-        {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'back'].map((key) => (
-          <TouchableOpacity
-            key={key}
-            style={[
-              styles.keypadButton,
-              hoveredKey === key && styles.keypadButtonHovered,
-            ]}
-            onPress={() => handleKeypadPress(key)}
-            onPressIn={() => setHoveredKey(key)}
-            onPressOut={() => setHoveredKey(null)}
-            activeOpacity={0.7}
-          >
-            <Text style={[
-              styles.keypadButtonText,
-              hoveredKey === key && styles.keypadButtonTextHovered,
-            ]}>
-              {key === 'back' ? '⌫' : key}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {[
+          ['1', '2', '3'],
+          ['4', '5', '6'],
+          ['7', '8', '9'],
+          ['.', '0', 'back'],
+        ].map((row, rowIdx) =>
+          row.map((digit) => (
+            <TouchableOpacity
+              key={`${rowIdx}-${digit}`}
+              style={[
+                styles.keypadButton,
+                hoveredKey === digit && styles.keypadButtonHovered,
+              ]}
+              onPress={() => handleKeypadPress(digit)}
+              onMouseEnter={() => setHoveredKey(digit)}
+              onMouseLeave={() => setHoveredKey(null)}
+              activeOpacity={0.7}
+            >
+              <Text style={[
+                styles.keypadButtonText,
+                hoveredKey === digit && styles.keypadButtonTextHovered,
+              ]}>
+                {digit === 'back' ? '⌫' : digit}
+              </Text>
+            </TouchableOpacity>
+          ))
+        )}
       </View>
 
-      {/* Payment Method Label */}
+      {/* Payment Method Selection */}
       <Text style={styles.methodLabel}>
         Payment Method <Text style={styles.requiredStar}>*</Text>
       </Text>
-
-      {/* Payment Method Tiles */}
       <View style={styles.paymentGrid}>
         {PAYMENT_METHODS.map((method) => (
           <TouchableOpacity
@@ -336,17 +374,12 @@ export default function NewTripScreen({ navigation }) {
               selectedMethod === method.key && styles.channelTileSelected,
             ]}
             onPress={() => handlePaymentMethodSelect(method.key)}
+            activeOpacity={0.7}
           >
             <Text style={styles.channelLabel}>{method.emoji} {method.label}</Text>
           </TouchableOpacity>
         ))}
       </View>
-
-      {error && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      )}
 
       {/* Save Button */}
       <TouchableOpacity
@@ -460,13 +493,6 @@ const styles = StyleSheet.create({
     color: '#5b606c',
     marginTop: 2,
   },
-  title: {
-    fontFamily: 'Space Grotesk',
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 20,
-  },
   amountDisplay: {
     backgroundColor: '#fff',
     borderWidth: 1,
@@ -567,19 +593,6 @@ const styles = StyleSheet.create({
     color: '#1a1c20',
     textAlign: 'center',
   },
-  errorBanner: {
-    backgroundColor: '#fdecea',
-    borderWidth: 1.5,
-    borderColor: '#f6cac7',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 14,
-  },
-  errorText: {
-    fontSize: 11.5,
-    color: '#a5312c',
-    fontWeight: '600',
-  },
   primaryBtn: {
     backgroundColor: '#ff7a1a',
     borderRadius: 14,
@@ -613,6 +626,7 @@ const styles = StyleSheet.create({
   hint: {
     textAlign: 'center',
     marginTop: 10,
+    marginBottom: 20,
     fontSize: 12,
     color: '#5b606c',
   },
