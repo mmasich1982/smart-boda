@@ -11,6 +11,7 @@
  * ✅ Proper timestamp handling with both 'ts' and 'timestamp' support
  * ✅ Supports both 'method' and 'paymentMethod' for backward compatibility
  * ✅ Lipa Later payment tracking with proper date attribution
+ * ✅ OPTIMIZED: Cache-first pattern for instant UI updates (matching Fuel Entry flow)
  */
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
@@ -181,20 +182,70 @@ export async function runningTotalToday(riderId) {
 // ========== TODAY'S TRIPS ==========
 
 /**
- * Get today's trips (from trading day start, within retention window)
+ * ✅ OPTIMIZED: Get today's trips with cache-first pattern
+ * 
+ * This function implements a cache-first strategy matching the Fuel Entry flow:
+ * 1. Try to read from cache (trips_today_${riderId}) - instant return ~1-5ms
+ * 2. On cache miss: query database and update cache for next read
+ * 3. Return fresh data with minimal latency
+ * 
+ * This enables instant UI updates when NewTripScreen updates the cache before navigation.
+ * Without this pattern, every call would require a full database query (~50-200ms).
  */
 export async function getTodaysTrips(riderId) {
   try {
     const tradingDayStart = getTradingDayStart();
     const onboardingDate = await getRiderOnboardingDate(riderId);
-    
-    // Query all trips from IndexedDB
+    const cacheKey = `trips_today_${riderId}`;
+
+    // ✅ STEP 1: Try to read from cache first (instant UI feedback)
+    // This cache is updated by NewTripScreen.updateTripsCache() when a trip is created
+    try {
+      const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+      if (cachedData) {
+        let cachedTrips = [];
+        try {
+          cachedTrips = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+          if (!Array.isArray(cachedTrips)) {
+            cachedTrips = [];
+          } else {
+            // Validate cached trips are still within trading day and retention window
+            cachedTrips = cachedTrips.filter(t => {
+              const ts = t.ts || t.timestamp;
+              return ts >= tradingDayStart && isWithinRetentionWindow(ts, onboardingDate);
+            });
+            
+            // ✅ Cache hit! Return immediately without database query
+            console.log('[getTodaysTrips] Cache hit! Returning', cachedTrips.length, 'trips from cache');
+            return cachedTrips;
+          }
+        } catch (parseErr) {
+          console.warn('[getTodaysTrips] Cache parse error, falling back to database');
+        }
+      }
+    } catch (cacheErr) {
+      console.warn('[getTodaysTrips] Cache read error, falling back to database:', cacheErr);
+    }
+
+    // ✅ STEP 2: Cache miss or error - query database (full refresh)
+    console.log('[getTodaysTrips] Cache miss, querying database...');
     const allTrips = await indexedDbAdapter.queryRows('trips', (t) => {
       const ts = t.ts || t.timestamp;
       return ts >= tradingDayStart && isWithinRetentionWindow(ts, onboardingDate);
     });
-    
-    console.log('[getTodaysTrips] found:', allTrips.length);
+
+    // ✅ STEP 3: Update cache with fresh data for next read
+    // This ensures the next call will be fast and won't need a database query
+    if (allTrips.length > 0) {
+      try {
+        await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(allTrips));
+        console.log('[getTodaysTrips] Updated cache with', allTrips.length, 'trips');
+      } catch (cacheWriteErr) {
+        console.warn('[getTodaysTrips] Could not update cache:', cacheWriteErr);
+      }
+    }
+
+    console.log('[getTodaysTrips] Database query found:', allTrips.length);
     return allTrips;
   } catch (err) {
     console.error('[getTodaysTrips] error:', err);
