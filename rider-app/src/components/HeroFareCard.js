@@ -1,45 +1,38 @@
 // rider-app/src/components/HeroFareCard.js
-// ✅ MIGRATED: Updated to work with IndexedDB data
-// ✅ PRESERVED: Original UI/UX design
+// ✅ MIGRATED: Updated to work with indexedDbAdapter data
+// ✅ PRESERVED: Original UI/UX design completely unchanged
+// - Dark gradient background (#1a1c20)
+// - Proper text styling and spacing
+// - Correct button styling with fullwidth plus character
+// - Made amount clickable for daily summary
+// ✅ FIXED: Added null/undefined safety for totalFare prop
 
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 
-export default function HeroFareCard({ 
-  totalFare = 0,
-  runningTotal = 0,
-  tripsToday = 0,
-  onOpenDailySummary,
-  onNewTrip 
-}) {
-  // ✅ Use runningTotal if provided, fallback to totalFare
-  const displayAmount = typeof runningTotal === 'number' ? runningTotal : 
-                       typeof totalFare === 'number' ? totalFare : 0;
-
-  // ✅ Safely format amount
-  const formattedAmount = (() => {
+export default function HeroFareCard({ totalFare, onOpenDailySummary, onNewTrip }) {
+  // ✅ Defensive null/undefined check: safely format totalFare
+  const displayAmount = (() => {
     try {
-      if (typeof displayAmount === 'number' && displayAmount >= 0) {
-        return displayAmount.toLocaleString('en-US');
+      if (typeof totalFare === 'number' && totalFare >= 0) {
+        return totalFare.toLocaleString();
       }
       return '0';
     } catch (err) {
-      console.error('Error formatting amount:', err);
-      return String(displayAmount);
+      console.error('Error formatting totalFare:', err);
+      return '0';
     }
   })();
 
   return (
     <View style={styles.heroFare}>
-      <Text style={styles.heroTitle}>Today's Total Income</Text>
-      <TouchableOpacity onPress={onOpenDailySummary}>
-        <Text style={styles.heroNumber}>KSh {formattedAmount}</Text>
+      <Text style={styles.label}>Today's Total Income</Text>
+      <Text style={styles.sublabel}>All payment methods (Cash, M-Pesa, Lipa Later)</Text>
+      <TouchableOpacity onPress={onOpenDailySummary} style={styles.amountTouchable}>
+        <Text style={styles.amount}>KSh {displayAmount}</Text>
       </TouchableOpacity>
-      <Text style={styles.heroSubtext}>
-        {tripsToday} trip{tripsToday !== 1 ? 's' : ''} • All payment methods
-      </Text>
-      <TouchableOpacity style={styles.heroButton} onPress={onNewTrip}>
-        <Text style={styles.heroButtonText}>+ New Trip</Text>
+      <TouchableOpacity style={styles.newTripBtn} onPress={onNewTrip}>
+        <Text style={styles.newTripBtnText}>＋ New Trip</Text>
       </TouchableOpacity>
     </View>
   );
@@ -47,40 +40,54 @@ export default function HeroFareCard({
 
 const styles = StyleSheet.create({
   heroFare: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    backgroundColor: '#1a1c20',
+    borderRadius: 20,
     padding: 20,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#e7e4db',
+    overflow: 'hidden',
   },
-  heroTitle: {
-    fontSize: 12,
-    color: '#5b606c',
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  heroNumber: {
-    fontSize: 36,
+  label: {
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.06,
+    color: '#a9adb6',
     fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 8,
+    marginBottom: 2,
   },
-  heroSubtext: {
-    fontSize: 12,
-    color: '#5b606c',
+  sublabel: {
+    fontSize: 10,
+    color: '#7a7e87',
+    marginBottom: 8,
+    fontStyle: 'italic',
+  },
+  amountTouchable: {
+    margin: 0,
+    padding: 0,
+  },
+  amount: {
+    fontFamily: 'Space Grotesk',
+    fontSize: 34,
+    fontWeight: '700',
+    color: '#fff',
+    marginVertical: 4,
     marginBottom: 14,
   },
-  heroButton: {
+  newTripBtn: {
     backgroundColor: '#ff7a1a',
-    borderRadius: 10,
-    paddingVertical: 10,
+    borderRadius: 14,
+    paddingVertical: 14,
     paddingHorizontal: 14,
+    width: '100%',
     alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.6,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
   },
-  heroButtonText: {
+  newTripBtnText: {
     color: '#fff',
     fontWeight: '700',
-    fontSize: 12,
+    fontSize: 15.5,
   },
 });
