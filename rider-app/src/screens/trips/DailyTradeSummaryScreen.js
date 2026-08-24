@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, FlatList, Alert } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import BackLink from '../../components/BackLink';
@@ -25,7 +26,8 @@ const PAYMENT_METHODS = {
 const ITEMS_PER_PAGE = 10;
 
 /**
- * CORRECTED: Daily Trade Summary Screen (RA-04-A)
+ * ✅ UPDATED: Daily Trade Summary Screen (RA-04-A)
+ * ✅ REAL-TIME UPDATES: Uses useFocusEffect for instant refresh when returning from NewTripScreen
  * ✅ MIGRATED: Uses IndexedDB via updated tripsRepository
  * ✅ UPDATED: Passes riderId to all repository functions
  * ✅ CLEAN UI: No technical details exposed to riders
@@ -38,6 +40,7 @@ const ITEMS_PER_PAGE = 10;
  * - Clear pending/settled status display
  * - Fast, low-latency UI (no retention status calls)
  * - Data retention managed server-side (hidden from riders)
+ * - ✅ Real-time updates via useFocusEffect
  */
 export default function DailyTradeSummaryScreen({ navigation, route }) {
   const { t } = useTranslation();
@@ -128,14 +131,15 @@ export default function DailyTradeSummaryScreen({ navigation, route }) {
     }
   }, [riderId, loadData]);
 
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', () => {
-      if (route?.params?.refreshData && riderId) {
+  // ✅ FIXED: Use useFocusEffect for real-time updates
+  // This ensures data refreshes immediately when returning from NewTripScreen
+  useFocusEffect(
+    useCallback(() => {
+      if (riderId) {
         loadData();
       }
-    });
-    return unsubscribe;
-  }, [navigation, loadData, route, riderId]);
+    }, [riderId, loadData])
+  );
 
   const hoursSinceTrip = (tripTs) => {
     const ts = tripTs || 0;
