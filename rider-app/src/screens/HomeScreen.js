@@ -1,7 +1,6 @@
 // rider-app/src/screens/HomeScreen.js
 // ============================================================================
-// ✅ MIGRATED: LocalStore → indexedDbAdapter (IndexedDB)
-// ✅ PRESERVED: Original UI/UX design
+// FIXED: Now passing riderId to repository functions + proper null handling
 // ============================================================================
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -13,6 +12,8 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  Modal,
+  Dimensions,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from '../i18n/LocalizationProvider';
@@ -21,14 +22,20 @@ import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
 import { getActiveBikeProfile, getRiderAccountSummary, clearSession } from '../offline/db';
 import HeroFareCard from '../components/HeroFareCard';
 import { getLocalRiderId } from '../offline/db';
-// ✅ MIGRATED: Replace LocalStore with indexedDbAdapter
-import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
+import LocalStore from '../offline/LocalStore';
 import api from '../api/client';
 
 const ENERGY_TILE_BY_FUEL = {
   petrol: { emoji: '⛽', label: 'home.tile_fuel_motorcycle', route: 'FuelHub' },
   electric: { emoji: '🔋', label: 'home.tile_charge_battery', route: 'ChargeBatteryHub' },
 };
+
+// ============================================================================
+// CORE TILES - These are KEPT (not removed)
+// ============================================================================
+// Row 1: Fuel/Charge + Service/Maintenance
+// Row 2: Financial Performance + My Subscription
+// Settings: Daily Trade Summary + Financial History + Logout
 
 // ============================================================================
 // LOADING SKELETON
@@ -39,7 +46,7 @@ function LoadingSkeleton() {
       <View style={styles.topBar}>
         <View style={styles.brand}>
           <View style={styles.logo}>
-            <Text style={styles.logoText}>🏍️</Text>
+            <Text style={styles.logoText}>🚕</Text>
           </View>
           <Text style={styles.brandName}>Smart Boda</Text>
         </View>
@@ -132,7 +139,7 @@ export default function HomeScreen() {
   const [riderId, setRiderId] = useState(null);
 
   // ============================================================================
-  // SUBSCRIPTION LOADING - ✅ MIGRATED TO indexedDbAdapter
+  // SUBSCRIPTION LOADING
   // ============================================================================
   
   // ✅ REQ-4.1, 4.2: Load subscription data
@@ -148,37 +155,37 @@ export default function HomeScreen() {
       setSubscription(response.data.subscription);
       setIsOffline(false);
       
-      // ✅ MIGRATED: Cache subscription data using indexedDbAdapter
+      // ✅ OFFLINE: Cache subscription data using LocalStore
       try {
-        await indexedDbAdapter.kvSet(
+        LocalStore.set(
           `subscription_cache_${currentRiderId}`,
-          {
+          JSON.stringify({
             data: response.data.subscription,
             cached_at: new Date().toISOString()
-          }
+          })
         );
       } catch (cacheErr) {
-        console.warn('⚠️ Warning: Unable to cache subscription data:', cacheErr);
+        console.warn('Warning: Unable to cache subscription data:', cacheErr);
         // Continue even if caching fails
       }
     } catch (err) {
-      console.error('❌ Error loading subscription:', err);
+      console.error('Error loading subscription:', err);
       
-      // ✅ MIGRATED: Load from cache using indexedDbAdapter
+      // ✅ OFFLINE: Load from cache using LocalStore
       if (err.response?.status === 0 || err.message.includes('Network')) {
         try {
-          const cached = await indexedDbAdapter.kvGet(`subscription_cache_${currentRiderId}`);
+          const cached = LocalStore.get(`subscription_cache_${currentRiderId}`);
           if (cached) {
             try {
-              const cacheData = typeof cached === 'string' ? JSON.parse(cached) : cached;
-              setSubscription(cacheData.data);
+              const { data } = JSON.parse(cached);
+              setSubscription(data);
               setIsOffline(true);
             } catch (e) {
-              console.error('❌ Error parsing cached subscription:', e);
+              console.error('Error parsing cached subscription:', e);
             }
           }
         } catch (cacheErr) {
-          console.error('❌ Error loading subscription from cache:', cacheErr);
+          console.error('Error loading subscription from cache:', cacheErr);
           setIsOffline(true);
         }
       } else {
@@ -237,41 +244,26 @@ export default function HomeScreen() {
         try {
           // Load today's trips and realized income
           const trips = await getTodaysTrips(effectiveRiderId);
-          console.log('✅ Loaded trips:', trips ? trips.length : 0);
+          console.log('✅ Loaded trips:', trips.length);
           
-          // Defensive null checks
-          if (trips && Array.isArray(trips)) {
-            const summary = summarizeTrips(trips);
-            console.log('✅ Trip summary:', summary);
-          }
-          
+          const summary = summarizeTrips(trips);
           const realizedIncome = await getTodaysRealizedIncome(effectiveRiderId);
-          console.log('✅ Realized income:', realizedIncome);
+          console.log('✅ Realized income:', realizedIncome?.total || 0);
           
-          // Defensive null check for income
-          const incomeTotal = realizedIncome?.total || realizedIncome || 0;
-          if (typeof incomeTotal === 'number' && incomeTotal > 0) {
-            setRunningTotal(incomeTotal);
-          } else {
-            setRunningTotal(0);
-          }
-          
-          setTripsToday(trips && Array.isArray(trips) ? trips.length : 0);
+          setRunningTotal(realizedIncome?.total || 0);
+          setTripsToday(trips?.length || 0);
 
           // Load yesterday's total - with proper error handling
           try {
             const yest = await getYesterdaysTotal(effectiveRiderId);
-            console.log('✅ Yesterday total:', yest);
-            
-            // Defensive null check
-            const yesterdayAmount = typeof yest === 'number' ? yest : 0;
-            setYesterdayTotal(Math.max(yesterdayAmount, 0));
+            setYesterdayTotal(yest || 0);
+            console.log('✅ Yesterday total:', yest || 0);
           } catch (yesterdayErr) {
-            console.warn('⚠️ Warning: Could not load yesterday total:', yesterdayErr.message);
+            console.warn('Warning: Could not load yesterday total:', yesterdayErr);
             setYesterdayTotal(0);
           }
         } catch (tripsErr) {
-          console.error('❌ Error loading trips:', tripsErr.message);
+          console.error('Error loading trips:', tripsErr);
           setRunningTotal(0);
           setTripsToday(0);
           setYesterdayTotal(0);
@@ -291,13 +283,13 @@ export default function HomeScreen() {
       const hours = await hoursSinceLastSync();
       setOfflineHours(Math.floor(hours) || 0);
 
-      if (!isInitialized) {
-        setIsInitialized(true);
-      }
-
       // Load subscription
       if (effectiveRiderId) {
         await loadSubscription(effectiveRiderId);
+      }
+
+      if (!isInitialized) {
+        setIsInitialized(true);
       }
     } catch (err) {
       console.error('[HomeScreen] Refresh error:', err);
@@ -314,22 +306,6 @@ export default function HomeScreen() {
   // ============================================================================
   // AUTO-REFRESH ON FOCUS
   // ============================================================================
-  useEffect(() => {
-    const initializeScreen = async () => {
-      try {
-        const localRiderId = await getLocalRiderId();
-        if (localRiderId) {
-          setRiderId(localRiderId);
-          console.log('✅ Loaded rider ID from IndexedDB:', localRiderId);
-        }
-      } catch (err) {
-        console.error('❌ Error getting rider ID:', err);
-      }
-    };
-
-    initializeScreen();
-  }, []);
-
   useEffect(() => {
     refresh();
     const unsubscribe = navigation.addListener('focus', () => {
@@ -473,20 +449,18 @@ export default function HomeScreen() {
         <View style={styles.screenBody}>
           {/* HERO FARE CARD */}
           <HeroFareCard 
-            runningTotal={typeof runningTotal === 'number' ? runningTotal : 0}
-            totalFare={typeof runningTotal === 'number' ? runningTotal : 0}
+            runningTotal={runningTotal}
             tripsToday={tripsToday}
-            onOpenDailySummary={() => navigation.navigate('DailyTradeSummary')}
-            onNewTrip={() => navigation.navigate('NewTripScreen')}
+            onNavigate={(screen) => navigation.navigate(screen)}
           />
 
           {/* YESTERDAY'S TOTAL CARD */}
-          {typeof yesterdayTotal === 'number' && yesterdayTotal > 0 && (
+          {yesterdayTotal > 0 && (
             <View style={styles.yesterdayCard}>
               <View style={styles.yesterdayHeader}>
                 <Text style={styles.yesterdayLabel}>Yesterday</Text>
                 <Text style={styles.yesterdayAmount}>
-                  KSh {typeof yesterdayTotal === 'number' ? yesterdayTotal.toLocaleString() : '0'}
+                  KSh {(yesterdayTotal || 0).toLocaleString()}
                 </Text>
               </View>
               <TouchableOpacity onPress={() => navigation.navigate('DailyTradeSummary')}>
@@ -593,9 +567,6 @@ export default function HomeScreen() {
   );
 }
 
-// ============================================================================
-// STYLES - ORIGINAL UI
-// ============================================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
@@ -743,6 +714,63 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1a1c20',
     textAlign: 'center',
+  },
+  cardContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#e7e4db',
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  cardStatusEmoji: {
+    fontSize: 16,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1c20',
+    flex: 1,
+  },
+  cardHint: {
+    fontSize: 12,
+    color: '#5b606c',
+    lineHeight: 18,
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeGreen: {
+    backgroundColor: '#e6f5ef',
+  },
+  badgeAmber: {
+    backgroundColor: '#fdf3df',
+  },
+  kvRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#e7e4db',
+  },
+  kvKey: {
+    fontSize: 12,
+    color: '#5b606c',
+    fontWeight: '500',
+  },
+  kvValue: {
+    fontSize: 12,
+    color: '#1a1c20',
+    fontWeight: '600',
   },
   settingsListContainer: {
     marginTop: 6,
