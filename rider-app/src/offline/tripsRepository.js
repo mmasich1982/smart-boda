@@ -49,26 +49,47 @@ const DATA_RETENTION_MONTHS = 6; // 6-month retention window from rider onboardi
 
 /**
  * Get rider's onboarding date from saved rider data
- * Falls back to current date if not available
+ * ✅ FIX: Returns a date far in the past if not available (instead of current time)
+ * This prevents trips from being filtered out due to missing onboarding date
+ * 
+ * ISSUE FIXED: Was defaulting to new Date() which could be AFTER trip timestamps
+ * This caused trips recorded before onboarding date was queried to fail retention checks
+ * 
+ * Example of the bug:
+ *   Trip recorded at: 2026-08-24T20:32:46.739Z
+ *   Onboarding queried at: 2026-08-24T20:32:48.522Z (2 seconds later!)
+ *   Trip failed retention check because it appeared BEFORE onboarding
  */
 export async function getRiderOnboardingDate(riderId) {
   try {
     const riderData = await indexedDbAdapter.kvGet(`rider_onboarding_${riderId}`);
     if (riderData) {
+      console.log(`[getRiderOnboardingDate] Found stored onboarding date: ${riderData}`);
       return new Date(riderData);
     }
     
     // Fallback: try to get from rider status
     const riderStatus = await indexedDbAdapter.kvGet('rider_status');
     if (riderStatus && riderStatus.onboarded_at) {
+      console.log(`[getRiderOnboardingDate] Found onboarding date from rider_status: ${riderStatus.onboarded_at}`);
       return new Date(riderStatus.onboarded_at);
     }
     
-    // Default to current date if not found (new rider)
-    return new Date();
+    // ✅ FIX: Use a date far in the past (13 months ago) instead of current date
+    // This ensures trips aren't accidentally filtered out due to missing onboarding date
+    // The 6-month retention window will still expire 6 months from the actual onboarding date
+    // But at least trips recorded before this fallback call won't be filtered incorrectly
+    const fallbackDate = new Date();
+    fallbackDate.setMonth(fallbackDate.getMonth() - 13); // Set to ~13 months ago
+    console.warn(`[getRiderOnboardingDate] ⚠️  No onboarding date found for rider ${riderId}, using fallback date: ${fallbackDate.toISOString()}`);
+    console.warn('  → This should be fixed by storing actual onboarding date when rider account loads');
+    return fallbackDate;
   } catch (err) {
     console.error('[getRiderOnboardingDate] error:', err);
-    return new Date();
+    // Same fallback: use date far in the past instead of current time
+    const fallbackDate = new Date();
+    fallbackDate.setMonth(fallbackDate.getMonth() - 13);
+    return fallbackDate;
   }
 }
 
