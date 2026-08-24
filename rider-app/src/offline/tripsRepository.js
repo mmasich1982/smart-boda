@@ -90,7 +90,14 @@ export function isWithinRetentionWindow(recordDate, onboardingDate) {
   const onboarded = new Date(onboardingDate);
   const windowEnd = getRetentionWindowEnd(onboarded);
   
-  return record >= onboarded && record <= windowEnd;
+  const isWithin = record >= onboarded && record <= windowEnd;
+  if (!isWithin) {
+    console.log('[isWithinRetentionWindow] ❌ Outside retention window');
+    console.log('  - record:', record.toISOString());
+    console.log('  - onboarded:', onboarded.toISOString());
+    console.log('  - windowEnd:', windowEnd.toISOString());
+  }
+  return isWithin;
 }
 
 /**
@@ -104,7 +111,10 @@ function getTradingDayStart() {
     startHour.setDate(startHour.getDate() - 1);
   }
   
-  return startHour.getTime();
+  const result = startHour.getTime();
+  console.log('[getTradingDayStart] now:', now.toISOString());
+  console.log('[getTradingDayStart] tradingDayStart:', new Date(result).toISOString());
+  return result;
 }
 
 // ========== CRITICAL FUNCTION: EXTRACT REALIZED INCOME ITEMS ==========
@@ -232,17 +242,54 @@ export async function getTodaysTrips(riderId) {
     
     const tradingDayStart = getTradingDayStart();
     const onboardingDate = await getRiderOnboardingDate(riderId);
+    
+    // 🔍 DEBUG: Log filter criteria
+    console.log('[getTodaysTrips] Filter criteria:');
+    console.log('  - riderId:', riderId);
+    console.log('  - tradingDayStart:', new Date(tradingDayStart).toISOString());
+    console.log('  - onboardingDate:', new Date(onboardingDate).toISOString());
 
     // ✅ Query IndexedDB directly - NO cache layer
-    // Filter by rider_id to get only this rider's trips on today's trading day
+    // First, get ALL trips to see what's in the database
+    console.log('[getTodaysTrips] 🔍 DEBUG: Getting ALL trips to inspect data...');
+    const debugAllTrips = await indexedDbAdapter.queryRows('trips', () => true);
+    console.log('[getTodaysTrips] 🔍 DEBUG: Total trips in database:', debugAllTrips.length);
+    debugAllTrips.forEach((t, idx) => {
+      console.log(`[getTodaysTrips] 🔍 DEBUG Trip ${idx}:`, {
+        id: t.id,
+        rider_id: t.rider_id,
+        amount: t.amount,
+        ts: t.ts ? new Date(t.ts).toISOString() : null,
+        timestamp: t.timestamp ? new Date(t.timestamp).toISOString() : null,
+        method: t.method,
+        paymentMethod: t.paymentMethod,
+        status: t.status
+      });
+    });
+    
+    // Now filter with our criteria
     const allTrips = await indexedDbAdapter.queryRows('trips', (t) => {
       const ts = t.ts || t.timestamp;
-      return t.rider_id === riderId && 
-             ts >= tradingDayStart && 
-             isWithinRetentionWindow(ts, onboardingDate);
+      const riderMatch = t.rider_id === riderId;
+      const timeMatch = ts >= tradingDayStart;
+      const retentionMatch = isWithinRetentionWindow(ts, onboardingDate);
+      
+      // 🔍 DEBUG: Log each trip evaluation
+      console.log('[getTodaysTrips] 🔍 Evaluating trip:', t.id);
+      console.log('    - rider_id:', t.rider_id, '| looking for:', riderId, '| match:', riderMatch);
+      console.log('    - ts:', ts ? new Date(ts).toISOString() : 'null', '| tradingDayStart:', new Date(tradingDayStart).toISOString(), '| match:', timeMatch);
+      console.log('    - retentionMatch:', retentionMatch);
+      console.log('    - PASS:', riderMatch && timeMatch && retentionMatch);
+      
+      return riderMatch && timeMatch && retentionMatch;
     });
 
     console.log('[getTodaysTrips] ✅ Retrieved', allTrips.length, 'trips from IndexedDB for riderId:', riderId);
+    if (allTrips.length > 0) {
+      allTrips.forEach(t => {
+        console.log('[getTodaysTrips] ✅ Trip:', t.id, 'amount:', t.amount, 'method:', t.method || t.paymentMethod);
+      });
+    }
     return allTrips;
   } catch (err) {
     console.error('[getTodaysTrips] error:', err);
