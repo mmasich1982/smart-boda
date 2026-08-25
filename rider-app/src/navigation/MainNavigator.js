@@ -535,6 +535,7 @@ export const MainNavigator = () => {
       />
 
       {/* ===== TILE 10: MY SUBSCRIPTION ===== */}
+
       <Stack.Screen
         name="Subscription"
         component={SubscriptionScreen}
@@ -543,31 +544,21 @@ export const MainNavigator = () => {
           animationEnabled: true,
         }}
       />
-
-      {/* ===== MY SUBSCRIPTIONS (Alternative Route Name) ===== */}
+	  
+  
       <Stack.Screen
-        name="MySubscriptions"
-        component={SubscriptionScreen}
+        name="SelectFrequency"
+        component={FrequencySelectScreen}
         options={{
           headerShown: false,
           animationEnabled: true,
         }}
       />
 	  
-	  {/* ✅ NEW: ChooseFrequencyScreen - shown when user clicks "Subscribe Now" */}
-		<Stack.Screen
-		  name="ChooseFrequencyScreen"
-		  component={ChooseFrequencyScreen}
-		  options={{
-			headerShown: false,
-			animationEnabled: true,
-		  }}
-		/>
 
-		{/* ✅ NEW: ConfirmSubscriptionScreen - shown after selecting frequency */}
 		<Stack.Screen
-		  name="ConfirmSubscriptionScreen"
-		  component={ConfirmSubscriptionScreen}
+		  name="PrepayScreen"
+		  component={PrepayScreen}
 		  options={{
 			headerShown: false,
 			animationEnabled: true,
@@ -592,6 +583,25 @@ export const MainNavigator = () => {
           animationEnabled: true,
         }}
       />
+	  
+	  <Stack.Screen
+        name="SubscriptionBanners"
+        component={SubscriptionBanners}
+        options={{
+          headerShown: false,
+          animationEnabled: true,
+        }}
+      />
+	  
+	  <Stack.Screen
+        name="ConfirmSubscriptionScreen"
+        component={ConfirmSubscriptionScreen}
+        options={{
+          headerShown: false,
+          animationEnabled: true,
+        }}
+      />
+	  
 
       {/* ===== TILE 11: SUGGESTIONS AND FEEDBACK ===== */}
       <Stack.Screen
