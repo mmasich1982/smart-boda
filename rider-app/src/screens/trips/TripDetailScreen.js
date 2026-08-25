@@ -1,5 +1,6 @@
 // rider-app/src/screens/trips/TripDetailScreen.js
 // ✅ FULLY DEFENSIVE: Trip Detail Screen with complete error handling
+// ✅ FIXED: Proper state management for correctionReasonItems and paymentMethodItems
 // Every .map() is guarded, every undefined is checked
 
 import React, { useState, useEffect } from 'react';
@@ -59,9 +60,42 @@ export default function TripDetailScreen({ navigation, route }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tripNotFound, setTripNotFound] = useState(false);
+  
+  // ✅ FIXED: Manage items as state instead of creating during render
+  const [correctionReasonItems, setCorrectionReasonItems] = useState(DEFAULT_CORRECTION_ITEMS);
+  const [paymentMethodItems, setPaymentMethodItems] = useState(DEFAULT_PAYMENT_METHODS);
 
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
+
+  // ✅ Initialize correction and payment items on mount
+  useEffect(() => {
+    try {
+      // Build correction reason items
+      if (CORRECTION_REASONS && Array.isArray(CORRECTION_REASONS) && CORRECTION_REASONS.length > 0) {
+        const items = CORRECTION_REASONS.map((r) => ({
+          key: r,
+          label: r,
+        }));
+        setCorrectionReasonItems(items);
+        console.log('✅ correctionReasonItems initialized:', items.length);
+      }
+    } catch (err) {
+      console.error('❌ Error initializing correctionReasonItems:', err);
+      setCorrectionReasonItems(DEFAULT_CORRECTION_ITEMS);
+    }
+
+    try {
+      // Set payment method items
+      if (PAYMENT_METHODS && Array.isArray(PAYMENT_METHODS) && PAYMENT_METHODS.length > 0) {
+        setPaymentMethodItems(PAYMENT_METHODS);
+        console.log('✅ paymentMethodItems initialized:', PAYMENT_METHODS.length);
+      }
+    } catch (err) {
+      console.error('❌ Error initializing paymentMethodItems:', err);
+      setPaymentMethodItems(DEFAULT_PAYMENT_METHODS);
+    }
+  }, []);
 
   // ✅ Load riderId on mount
   useEffect(() => {
@@ -342,33 +376,6 @@ export default function TripDetailScreen({ navigation, route }) {
   const tripMethod = trip?.paymentMethod || trip?.method || 'Unknown';
   const isLipaLaterTrip = tripMethod === 'LipaLater';
 
-  // ✅ Build correction reason items (with defaults)
-  let correctionReasonItems = DEFAULT_CORRECTION_ITEMS;
-  try {
-    if (CORRECTION_REASONS && Array.isArray(CORRECTION_REASONS) && CORRECTION_REASONS.length > 0) {
-      correctionReasonItems = CORRECTION_REASONS.map((r) => ({
-        key: r,
-        label: r,
-      }));
-      console.log('✅ correctionReasonItems created:', correctionReasonItems.length);
-    }
-  } catch (err) {
-    console.error('❌ Error creating correctionReasonItems, using defaults:', err);
-    correctionReasonItems = DEFAULT_CORRECTION_ITEMS;
-  }
-
-  // ✅ Build payment method items (with defaults)
-  let paymentMethodItems = DEFAULT_PAYMENT_METHODS;
-  try {
-    if (PAYMENT_METHODS && Array.isArray(PAYMENT_METHODS) && PAYMENT_METHODS.length > 0) {
-      paymentMethodItems = PAYMENT_METHODS;
-      console.log('✅ paymentMethodItems ready:', paymentMethodItems.length);
-    }
-  } catch (err) {
-    console.error('❌ Error with paymentMethodItems, using defaults:', err);
-    paymentMethodItems = DEFAULT_PAYMENT_METHODS;
-  }
-
   return (
     <ScrollView style={styles.container}>
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
@@ -417,7 +424,7 @@ export default function TripDetailScreen({ navigation, route }) {
 
       <Text style={styles.methodLabel}>Corrected Payment Method</Text>
       <View style={styles.methodGrid}>
-        {paymentMethodItems && paymentMethodItems.length > 0 ? (
+        {paymentMethodItems && Array.isArray(paymentMethodItems) && paymentMethodItems.length > 0 ? (
           paymentMethodItems.map((method) => (
             <TouchableOpacity
               key={method.key}
@@ -438,7 +445,7 @@ export default function TripDetailScreen({ navigation, route }) {
         <Text style={styles.fieldLabel}>
           Correction Reason <Text style={styles.required}>*</Text>
         </Text>
-        {correctionReasonItems && correctionReasonItems.length > 0 ? (
+        {correctionReasonItems && Array.isArray(correctionReasonItems) && correctionReasonItems.length > 0 ? (
           <DropdownField
             selectedValue={draftReason}
             onValueChange={(value) => setDraftReason(value)}
