@@ -409,7 +409,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     );
   }
 
-  const energyTile = ENERGY_TILE_BY_FUEL[bike?.fuelType || 'petrol'];
+  const energyRoute = ENERGY_TILE_BY_FUEL[bike?.fuelType || 'petrol'];
 
   return (
     <HomeScreenErrorBoundary onRetry={() => refresh()}>
@@ -464,8 +464,10 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </View>
           )}
 
+          {/* Tiles Grid - Aligned with cleaned.html */}
+          {/* Row 1: Fuel/Charge + Service */}
           <View style={styles.tileRow}>
-          {energyTile && (
+            {energyTile && (
               <TouchableOpacity
                 style={styles.homeTile}
                 onPress={() => {
@@ -548,7 +550,8 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               {queuedCount > 0 ? 'Tap to view queue and retry.' : 'Everything is safely backed up.'}
             </Text>
           </TouchableOpacity>
-
+          
+		  
           {/* Account Card */}
           <View style={styles.cardContainer}>
             <View style={styles.kvRow}>
@@ -556,8 +559,10 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.kvValue}>{tripsToday}</Text>
             </View>
           </View>
-
-          {/* Settings List Items */}
+		  
+		  
+		  
+		  /* Settings List Items */}
           <View style={styles.settingsListContainer}>
             <TouchableOpacity 
               style={styles.settingsListItem}
@@ -583,6 +588,8 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
           </View>
+  
+          
         </View>
       </ScrollView>
     </HomeScreenErrorBoundary>
