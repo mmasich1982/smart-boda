@@ -1,22 +1,22 @@
 // rider-app/src/screens/financialPerformance/AddOtherExpenseScreen.js
-// ✅ HYBRID SYNC ARCHITECTURE:
-// - Localization Provider for multilingual support
-// - Network Status hooks for real-time connectivity detection
-// - IndexedDB Adapter for offline-first persistent storage
-// - Loads categories from cache with API fallback
-// - Queues expenses for background sync
-// - UI/UX design preserved exactly
-// ✅ FIXED: Follows proven FuelHistory pattern, single load on mount
+// ✅ REFACTORED: IndexedDB-first architecture (mirrors FuelEntryScreen)
+// ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, clean UI, immediate feedback
+// ✅ UNIFIED ARCHITECTURE: Uses consistent other_expense_${entryId} pattern
+// ✅ INSTANT UPDATES: Invalidates financial caches on save
+// ✅ NETWORK AWARE: Real-time connectivity detection
+// ✅ UI/UX: 100% preserved from original
+// ✅ RETENTION POLICY: All expenses subject to 6-month window
 
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Picker, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
 import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
-import { getLocalRiderStatus } from '../../offline/db';
+import { getLocalRiderId } from '../../offline/db';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { addToSyncQueue } from '../../offline/syncQueue';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import { invalidateFinancialCaches } from '../../offline/financialPerformanceUtils';
 import api from '../../api/client';
 
 export default function AddOtherExpenseScreen({ navigation }) {
@@ -36,16 +36,17 @@ export default function AddOtherExpenseScreen({ navigation }) {
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
-  // ✅ LOAD RIDER ID FROM INDEXEDDB
+  // ✅ Load rider ID on mount
   useEffect(() => {
     async function loadRiderId() {
       try {
-        const status = await getLocalRiderStatus();
-        if (status?.rider_id) {
-          setLocalRiderId(status.rider_id);
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ AddOtherExpense: Loaded rider ID:', id);
         }
       } catch (err) {
-        console.error('Error loading rider status:', err);
+        console.error('❌ Error loading rider ID:', err);
       } finally {
         setLoading(false);
       }
@@ -53,10 +54,10 @@ export default function AddOtherExpenseScreen({ navigation }) {
     loadRiderId();
   }, []);
 
-  // ✅ USE LOCAL STORAGE AS PRIMARY, FALLBACK TO CONTEXT
+  // ✅ Use local storage as primary, fallback to context
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  // ✅ LOAD CATEGORIES ON MOUNT - Single execution
+  // ✅ Load categories on mount - Single execution
   useEffect(() => {
     if (!isInitialized || hasLoadedCategoriesRef.current) {
       return; // Exit if already loaded
@@ -163,6 +164,46 @@ export default function AddOtherExpenseScreen({ navigation }) {
     };
   }, [isConnected, isInitialized, t]);
 
+  /**
+   * ✅ Update other expenses summary cache
+   * Called after saving new expense to keep MoneyMasteryScreen data fresh
+   */
+  const updateOtherExpensesCache = async (newExpense) => {
+    try {
+      const summaryKey = `other_expenses_summary_${effectiveRiderId}`;
+      
+      // Load existing summary
+      let summary = { total: 0, count: 0, entries: [], byCategory: {} };
+      try {
+        const cached = await indexedDbAdapter.kvGet(summaryKey);
+        if (cached) {
+          summary = typeof cached === 'string' ? JSON.parse(cached) : cached;
+          if (!Array.isArray(summary.entries)) summary.entries = [];
+          if (!summary.byCategory) summary.byCategory = {};
+        }
+      } catch (err) {
+        console.warn('⚠️ Error loading expense summary:', err);
+      }
+
+      // Add new expense
+      summary.entries.unshift(newExpense);
+      summary.total += newExpense.amount;
+      summary.count += 1;
+      
+      // Update by-category breakdown
+      if (!summary.byCategory[newExpense.category]) {
+        summary.byCategory[newExpense.category] = 0;
+      }
+      summary.byCategory[newExpense.category] += newExpense.amount;
+
+      // Save updated summary
+      await indexedDbAdapter.kvSet(summaryKey, JSON.stringify(summary));
+      console.log('✅ Updated other_expenses_summary cache');
+    } catch (err) {
+      console.error('❌ Error updating expenses cache:', err);
+    }
+  };
+
   const handleSave = async () => {
     clearCriticalError();
 
@@ -193,50 +234,53 @@ export default function AddOtherExpenseScreen({ navigation }) {
 
     setSaving(true);
     try {
-      const recordId = `expense_${effectiveRiderId}_${Date.now()}`;
+      const now = Date.now();
+      const recordId = `other_expense_${effectiveRiderId}_${now}`;
+      
+      // ✅ Build expense record with timestamp for retention policy
       const entry = {
         id: recordId,
         rider_id: effectiveRiderId,
         category,
         amount: amt,
         note: note || '',
+        ts: now,
+        timestamp: now,
         created_at: new Date().toISOString(),
-        status: 'pending',
+        date: new Date().toISOString().split('T')[0],
+        status: 'active',
+        syncStatus: 'pending',
       };
 
       console.log('💾 Saving expense:', { recordId, riderId: effectiveRiderId, category, amount: amt });
 
-      // ✅ SAVE TO INDEXEDDB FIRST (offline-first)
-      try {
-        await indexedDbAdapter.insertRow('local_expenses', entry);
-        console.log('✅ Saved to IndexedDB');
-      } catch (insertErr) {
-        console.warn('⚠️ Failed to save to IndexedDB:', insertErr);
-      }
+      // ✅ SAVE TO INDEXEDDB FIRST (fuel pattern - using kvSet)
+      await indexedDbAdapter.kvSet(`other_expense_${recordId}`, JSON.stringify(entry));
+      console.log('✅ Expense saved to IndexedDB');
+
+      // ✅ Update summary cache for instant UI updates
+      await updateOtherExpensesCache(entry);
+
+      // ✅ Invalidate financial period caches (MoneyMasteryScreen will recompute)
+      await invalidateFinancialCaches(effectiveRiderId);
 
       // ✅ ADD TO SYNC QUEUE FOR BACKGROUND SYNC
-      try {
-        const queueSuccess = await addToSyncQueue({
-          id: recordId,
-          type: 'expense',
-          endpoint: `/financial/expenses?rider_id=${effectiveRiderId}`,
-          data: {
-            rider_id: effectiveRiderId,
-            category,
-            amount: amt,
-            note: note || '',
-            submitted_at: Date.now(),
-          },
-          timestamp: new Date(),
-        });
+      const queueSuccess = await addToSyncQueue({
+        id: recordId,
+        type: 'expense',
+        endpoint: `/financial/expenses?rider_id=${effectiveRiderId}`,
+        data: {
+          rider_id: effectiveRiderId,
+          category,
+          amount: amt,
+          note: note || '',
+          submitted_at: now,
+        },
+        timestamp: new Date(),
+      });
 
-        if (queueSuccess) {
-          console.log('✅ Added to sync queue');
-        } else {
-          console.warn('⚠️ Failed to add to sync queue, but local save succeeded');
-        }
-      } catch (queueErr) {
-        console.warn('⚠️ Sync queue error:', queueErr);
+      if (!queueSuccess) {
+        console.warn('⚠️ Failed to add to queue, but local save succeeded');
       }
 
       // Try to sync immediately only if online
@@ -250,7 +294,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
               category,
               amount: amt,
               note: note || '',
-              submitted_at: Date.now(),
+              submitted_at: now,
             }
           );
 
@@ -269,7 +313,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
         }
       }
 
-      // Data is safely stored and queued
+      // Data is safely stored and queued - navigate
       navigation.navigate('MoneyMastery');
 
     } catch (err) {
