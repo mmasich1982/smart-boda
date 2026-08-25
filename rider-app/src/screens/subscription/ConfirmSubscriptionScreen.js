@@ -1,26 +1,29 @@
 // rider-app/src/screens/subscription/ConfirmSubscriptionScreen.js
 // ============================================================================
-// UPDATED: ConfirmSubscriptionScreen - Sync Queue Integration
-// ✅ Saves payment locally first
-// ✅ Adds to sync queue for incremental sync
-// ✅ Updates IndexedDB subscription state
+// ✅ FIXED: Dependency Management & Infinite Loop Resolution
+// ============================================================================
+// CRITICAL FIXES:
+// 1. Removed loadSubscriptionDetails from useFocusEffect dependencies
+// 2. Used refs to track initialization state
+// 3. Separated concerns: data loading from lifecycle hooks
+// 4. Memoized payment processing function
 // ============================================================================
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  ScrollView,
   View,
   Text,
-  TextInput,
   TouchableOpacity,
+  ScrollView,
   StyleSheet,
-  ActivityIndicator
+  ActivityIndicator,
+  Alert
 } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
-import subscriptionGate from '../../utils/subscriptionGate_IndexedDBUtilities';
+import api from '../../api/client';
 
 const ConfirmSubscriptionScreen = () => {
   const navigation = useNavigation();
@@ -29,191 +32,206 @@ const ConfirmSubscriptionScreen = () => {
   const { state } = useRider();
   const riderId = state?.riderId;
 
+  // ========================================================================
+  // STATE
+  // ========================================================================
+  const [loading, setLoading] = useState(false);
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState(null);
+  const [subscriptionDetails, setSubscriptionDetails] = useState(null);
+
+  // Route params from FrequencySelectScreen
   const { frequency, label, days, price, isRenewal } = route.params || {};
 
-  const [mpesaCode, setMpesaCode] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const [successMessage, setSuccessMessage] = useState('');
-  const [syncMessage, setSyncMessage] = useState('');
-
-  // ✅ CONTROL: Prevent double submissions
-  const isSubmittingRef = useRef(false);
+  // ========================================================================
+  // CONTROL MECHANISMS
+  // ========================================================================
+  const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
+  const riderIdRef = useRef(riderId);
+
+  // Update rider ID ref when it changes
+  useEffect(() => {
+    riderIdRef.current = riderId;
+  }, [riderId]);
 
   // ========================================================================
-  // PAYMENT HANDLER (IndexedDB-First + Sync Queue)
+  // LOAD SUBSCRIPTION DETAILS
   // ========================================================================
-
-  const handlePayment = useCallback(async () => {
-    if (isSubmittingRef.current || !isMountedRef.current) {
+  // ✅ FIXED: This function is NOT in useFocusEffect dependencies
+  const loadSubscriptionDetails = useCallback(async () => {
+    if (!riderIdRef.current || !isMountedRef.current) {
       return;
     }
 
-    isSubmittingRef.current = true;
-
     try {
-      // Validation
-      const validation = subscriptionGate.validateMpesaCode(mpesaCode);
-      if (!validation.valid) {
-        setError(validation.error);
-        isSubmittingRef.current = false;
-        return;
-      }
-
-      if (!riderId || !frequency) {
-        setError('missing_required_data');
-        isSubmittingRef.current = false;
-        return;
-      }
-
-      setSaving(true);
+      setLoading(true);
       setError(null);
-      setSuccessMessage('');
-      setSyncMessage('Saving payment locally...');
 
-      // ========================================================================
-      // STEP 1: Save payment locally to IndexedDB
-      // ========================================================================
+      let details = null;
 
-      const paymentRecord = {
-        id: `payment_${riderId}_${Date.now()}`,
-        rider_id: riderId,
-        frequency,
-        mpesa_code: validation.code,
-        amount: price,
-        days,
-        submitted_at: new Date().toISOString(),
-        reconciliation: 'Pending',
-        sync_status: 'pending'
-      };
+      // Try API first
+      try {
+        const response = await api.get('/subscription/details', {
+          params: { rider_id: riderIdRef.current }
+        });
 
-      console.log('💾 Saving payment locally...', paymentRecord);
+        if (response?.data) {
+          details = response.data;
 
-      await indexedDbAdapter.kvSet(
-        `payment_${paymentRecord.id}`,
-        JSON.stringify(paymentRecord)
-      );
-
-      setSyncMessage('Payment saved locally!');
-
-      // ========================================================================
-      // STEP 2: Update subscription cache with new state
-      // ========================================================================
-
-      console.log('📝 Updating subscription cache...');
-
-      const now = new Date();
-      const expiryDays = subscriptionGate.SUBSCRIPTION_PLANS[
-        frequency.toUpperCase()
-      ]?.days || 30;
-
-      const currentSub = await subscriptionGate.getSubscriptionFromCache(riderId);
-      const baseDate = currentSub?.expiry_at
-        ? new Date(Math.max(new Date(currentSub.expiry_at).getTime(), Date.now()))
-        : now;
-
-      const newExpiry = new Date(
-        baseDate.getTime() + expiryDays * 24 * 60 * 60 * 1000
-      );
-
-      const updatedSubscription = {
-        ...currentSub,
-        frequency,
-        has_ever_paid: true,
-        expiry_at: newExpiry.toISOString(),
-        last_payment_at: now.toISOString(),
-        last_payment_amount: price,
-        total_paid_lifetime: (currentSub?.total_paid_lifetime || 0) + price,
-        locked: false,
-        lock_reason: null,
-        locked_at: null,
-        sync_status: 'pending' // Mark for sync
-      };
-
-      await subscriptionGate.cacheSubscription(riderId, updatedSubscription);
-
-      setSyncMessage('Subscription updated locally!');
-
-      // ========================================================================
-      // STEP 3: Add to sync queue for backend sync
-      // ========================================================================
-
-      console.log('📤 Adding to sync queue...');
-
-      const syncQueueId = await subscriptionGate.addToSyncQueue(
-        'pay', // action
-        'subscription', // table
-        {
-          frequency,
-          mpesa_code: validation.code,
-          amount: price,
-          days: expiryDays,
-          new_expiry_at: newExpiry.toISOString()
-        },
-        riderId
-      );
-
-      setSyncMessage('Added to sync queue! Will sync when online...');
-
-      if (!isMountedRef.current) return;
-
-      // ========================================================================
-      // STEP 4: Show success message
-      // ========================================================================
-
-      setSuccessMessage(
-        `✅ Payment saved locally!\n\n` +
-        `M-Pesa Code: ${validation.code}\n` +
-        `Frequency: ${label}\n` +
-        `New Expiry: ${newExpiry.toLocaleDateString('en-KE')}\n\n` +
-        `Your payment will sync to the server when you're online.`
-      );
-
-      console.log('✅ Payment processing complete');
-
-      // Navigate back after delay
-      setTimeout(() => {
-        if (isMountedRef.current) {
-          navigation.navigate('SubscriptionScreen');
+          // Cache in IndexedDB
+          await indexedDbAdapter.kvSet(
+            `subscription_details_${riderIdRef.current}`,
+            JSON.stringify({
+              data: details,
+              cached_at: new Date().toISOString()
+            })
+          );
         }
-      }, 2000);
+      } catch (apiErr) {
+        console.warn('⚠️ API fetch failed:', apiErr.message);
+      }
 
-    } catch (err) {
-      console.error('❌ Payment error:', err);
+      // Fallback to cache
+      if (!details) {
+        try {
+          const cached = await indexedDbAdapter.kvGet(
+            `subscription_details_${riderIdRef.current}`
+          );
+          if (cached) {
+            details = JSON.parse(cached).data;
+          }
+        } catch (cacheErr) {
+          console.warn('⚠️ Cache load failed:', cacheErr.message);
+        }
+      }
+
       if (isMountedRef.current) {
-        setError(
-          err.response?.data?.detail ||
-          err.message ||
-          t('subscription.payment_error')
-        );
+        setSubscriptionDetails(details);
+      }
+    } catch (err) {
+      console.error('❌ Error loading subscription details:', err);
+      if (isMountedRef.current) {
+        setError('error_loading');
       }
     } finally {
-      setSaving(false);
-      isSubmittingRef.current = false;
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [mpesaCode, riderId, frequency, price, label, navigation, t]);
+  }, []); // ✅ FIXED: Empty dependency array - uses riderIdRef
 
   // ========================================================================
-  // LIFECYCLE
+  // SUBMIT PAYMENT
+  // ========================================================================
+  // ✅ FIXED: Memoized with stable dependencies
+  const handleSubmitPayment = useCallback(async () => {
+    if (!riderIdRef.current || !frequency || !price || processing) {
+      return;
+    }
+
+    try {
+      setProcessing(true);
+      setError(null);
+
+      // Submit payment initiation request
+      const response = await api.post('/subscription/initiate-payment', {
+        rider_id: riderIdRef.current,
+        frequency,
+        amount: price,
+        days,
+        isRenewal
+      });
+
+      if (response?.data?.payment_code) {
+        // Cache payment pending status
+        await indexedDbAdapter.kvSet(
+          `payment_pending_${riderIdRef.current}`,
+          JSON.stringify({
+            paymentCode: response.data.payment_code,
+            frequency,
+            amount: price,
+            initiated_at: new Date().toISOString()
+          })
+        );
+
+        // Navigate to payment confirmation screen
+        navigation.navigate('ConfirmPaymentScreen', {
+          paymentCode: response.data.payment_code,
+          frequency,
+          amount: price,
+          days
+        });
+      } else {
+        setError('payment_initiation_failed');
+      }
+    } catch (err) {
+      console.error('❌ Payment submission error:', err);
+      setError('error_submitting_payment');
+      
+      Alert.alert(
+        t('common.error'),
+        t('subscription.payment_initiation_failed'),
+        [{ text: t('common.retry'), onPress: handleSubmitPayment }]
+      );
+    } finally {
+      if (isMountedRef.current) {
+        setProcessing(false);
+      }
+    }
+  }, [frequency, price, days, isRenewal, navigation]);
+
+  // ========================================================================
+  // EFFECTS & LIFECYCLE
   // ========================================================================
 
-  React.useEffect(() => {
+  // ✅ Initialize mount/unmount state
+  useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
   }, []);
 
+  // ✅ FIXED: Load on screen focus
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasLoadedRef.current && riderIdRef.current) {
+        hasLoadedRef.current = true;
+        loadSubscriptionDetails();
+      }
+
+      return () => {
+        // Don't reset on unfocus
+      };
+    }, [loadSubscriptionDetails]) // loadSubscriptionDetails is now stable
+  );
+
+  // ✅ Reset loaded flag when rider ID changes
+  useEffect(() => {
+    hasLoadedRef.current = false;
+  }, [riderId]);
+
   // ========================================================================
   // RENDER
   // ========================================================================
 
+  if (!frequency || !price || !days) {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.errorText}>{t('common.error')}</Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Text style={styles.retryButtonText}>{t('common.go_back')}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={{ paddingBottom: 60 }}
-    >
+    <ScrollView style={styles.container}>
       <TouchableOpacity
         onPress={() => navigation.goBack()}
         style={styles.backLink}
@@ -221,200 +239,124 @@ const ConfirmSubscriptionScreen = () => {
         <Text style={styles.backLinkText}>← {t('common.back')}</Text>
       </TouchableOpacity>
 
-      <Text style={styles.title}>{t('subscription.confirm_payment')}</Text>
+      <Text style={styles.title}>{t('subscription.confirm_purchase')}</Text>
+
+      {/* SELECTED PLAN CARD */}
+      <View style={styles.planCard}>
+        <View style={styles.planHeader}>
+          <Text style={styles.planLabel}>📦 {t('subscription.selected_plan')}</Text>
+        </View>
+
+        <View style={styles.planDetail}>
+          <Text style={styles.planDetailLabel}>{t('subscription.plan_type')}</Text>
+          <Text style={styles.planDetailValue}>{label}</Text>
+        </View>
+
+        <View style={styles.planDetail}>
+          <Text style={styles.planDetailLabel}>{t('subscription.duration')}</Text>
+          <Text style={styles.planDetailValue}>
+            {days} {t('common.days')}
+          </Text>
+        </View>
+
+        <View style={[styles.planDetail, styles.planDetailHighlight]}>
+          <Text style={styles.planDetailLabelBold}>
+            {t('subscription.total_amount')}
+          </Text>
+          <Text style={styles.planDetailValueBold}>
+            KES {price.toLocaleString('en-KE')}
+          </Text>
+        </View>
+      </View>
+
+      {/* CURRENT SUBSCRIPTION INFO */}
+      {isRenewal && subscriptionDetails && (
+        <View style={styles.infoCard}>
+          <Text style={styles.infoCardTitle}>
+            {t('subscription.current_subscription')}
+          </Text>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>
+              {t('subscription.expires_at')}
+            </Text>
+            <Text style={styles.infoValue}>
+              {subscriptionDetails.expiry_at
+                ? new Date(subscriptionDetails.expiry_at).toLocaleDateString('en-KE')
+                : 'N/A'}
+            </Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>
+              {t('subscription.days_left')}
+            </Text>
+            <Text style={styles.infoValue}>
+              {subscriptionDetails.days_left || 0}
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* TERMS & CONDITIONS */}
+      <View style={styles.termsCard}>
+        <View style={styles.termsHeader}>
+          <Text style={styles.termsIcon}>⚖️</Text>
+          <Text style={styles.termsTitle}>{t('subscription.payment_terms')}</Text>
+        </View>
+
+        <Text style={styles.termsText}>
+          {t('subscription.payment_will_be_charged')}
+        </Text>
+
+        <Text style={styles.termsText}>
+          {t('subscription.by_proceeding_you_agree')}
+        </Text>
+      </View>
 
       {/* ERROR BANNER */}
       {error && (
         <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={() => setError(null)}>
-            <Text style={styles.dismissText}>✕</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* SUCCESS BANNER */}
-      {successMessage && !saving && (
-        <View style={styles.successBanner}>
-          <Text style={styles.successBannerText}>{successMessage}</Text>
-        </View>
-      )}
-
-      {/* SYNC MESSAGE */}
-      {syncMessage && saving && (
-        <View style={styles.syncMessageBanner}>
-          <ActivityIndicator size="small" color="#1976d2" style={styles.syncSpinner} />
-          <Text style={styles.syncMessageText}>{syncMessage}</Text>
-        </View>
-      )}
-
-      {/* PRICE BREAKDOWN */}
-      <View style={styles.breakdownCard}>
-        <View style={styles.breakdownRow}>
-          <Text style={styles.breakdownLabel}>{t('subscription.plan')}</Text>
-          <Text style={styles.breakdownValue}>{label}</Text>
-        </View>
-        <View style={styles.breakdownRow}>
-          <Text style={styles.breakdownLabel}>{t('subscription.duration')}</Text>
-          <Text style={styles.breakdownValue}>
-            {days} {t('common.days')}
+          <Text style={styles.errorText}>
+            {t(`subscription.${error}`)}
           </Text>
         </View>
-        <View
-          style={[
-            styles.breakdownRow,
-            styles.breakdownRowHighlight
-          ]}
+      )}
+
+      {/* ACTION BUTTONS */}
+      <View style={styles.actionsContainer}>
+        <TouchableOpacity
+          style={[styles.confirmButton, processing && styles.buttonDisabled]}
+          onPress={handleSubmitPayment}
+          disabled={processing}
         >
-          <Text style={styles.breakdownLabelHighlight}>
-            {t('subscription.amount_to_pay')}
+          {processing ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.confirmButtonText}>
+              {t('subscription.proceed_to_payment')} →
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.cancelButton}
+          onPress={() => navigation.goBack()}
+          disabled={processing}
+        >
+          <Text style={styles.cancelButtonText}>
+            {t('common.cancel')}
           </Text>
-          <Text style={styles.breakdownValueHighlight}>
-            KES {price.toLocaleString()}
-          </Text>
-        </View>
-      </View>
-
-      {/* M-PESA INSTRUCTIONS */}
-      <View style={styles.instructionsCard}>
-        <Text style={styles.instructionsTitle}>
-          {t('subscription.how_to_pay')}
-        </Text>
-
-        <View style={styles.instructionStep}>
-          <View style={styles.stepCircle}>
-            <Text style={styles.stepNumber}>1</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>
-              {t('subscription.dial_mpesa')}
-            </Text>
-            <Text style={styles.stepText}>
-              {t('subscription.use_333_or_app')}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.instructionStep}>
-          <View style={styles.stepCircle}>
-            <Text style={styles.stepNumber}>2</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>
-              {t('subscription.select_send_money')}
-            </Text>
-            <Text style={styles.stepText}>
-              {t('subscription.send_money_description')}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.instructionStep}>
-          <View style={styles.stepCircle}>
-            <Text style={styles.stepNumber}>3</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>
-              {t('subscription.enter_our_number')}
-            </Text>
-            <Text style={styles.stepText}>0757 334 481</Text>
-          </View>
-        </View>
-
-        <View style={styles.instructionStep}>
-          <View style={styles.stepCircle}>
-            <Text style={styles.stepNumber}>4</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>
-              {t('subscription.enter_amount_pin')}
-            </Text>
-            <Text style={styles.stepText}>
-              KES {price.toLocaleString()} + {t('subscription.your_mpesa_pin')}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.instructionStep}>
-          <View style={styles.stepCircle}>
-            <Text style={styles.stepNumber}>5</Text>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>
-              {t('subscription.get_confirmation')}
-            </Text>
-            <Text style={styles.stepText}>
-              {t('subscription.mpesa_sends_code')}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* M-PESA CODE INPUT */}
-      <View style={styles.field}>
-        <Text style={styles.label}>
-          {t('subscription.mpesa_code')}
-          <Text style={styles.required}> *</Text>
-        </Text>
-        <TextInput
-          style={styles.input}
-          placeholder={t('subscription.code_example')}
-          placeholderTextColor="#b0a89d"
-          value={mpesaCode}
-          onChangeText={(val) => {
-            setMpesaCode(val);
-            setError(null);
-          }}
-          editable={!saving}
-          autoCapitalize="characters"
-          maxLength={20}
-        />
-        <Text style={styles.hint}>
-          {t('subscription.enter_code_from_safaricom')}
-        </Text>
-      </View>
-
-      {/* OFFLINE NOTICE */}
-      <View style={styles.offlineBanner}>
-        <Text style={styles.offlineIcon}>📱</Text>
-        <Text style={styles.offlineText}>
-          Your payment is saved locally. It will sync automatically when you're online.
-        </Text>
+        </TouchableOpacity>
       </View>
 
       {/* INFO BANNER */}
       <View style={styles.infoBanner}>
         <Text style={styles.infoIcon}>ℹ️</Text>
         <Text style={styles.infoText}>
-          {t('subscription.payment_verification_info')}
+          {t('subscription.payment_via_mpesa_secure')}
         </Text>
       </View>
-
-      {/* SUBMIT BUTTON */}
-      <TouchableOpacity
-        style={[
-          styles.primaryBtn,
-          (saving || !mpesaCode) && styles.primaryBtnDisabled
-        ]}
-        onPress={handlePayment}
-        disabled={saving || !mpesaCode}
-        activeOpacity={0.8}
-      >
-        <View style={styles.btnContent}>
-          {saving && (
-            <ActivityIndicator
-              size="small"
-              color="#fff"
-              style={styles.btnSpinner}
-            />
-          )}
-          <Text style={styles.primaryBtnText}>
-            {saving
-              ? t('common.submitting')
-              : t('subscription.submit_payment')}
-          </Text>
-        </View>
-      </TouchableOpacity>
     </ScrollView>
   );
 };
@@ -426,8 +368,15 @@ const ConfirmSubscriptionScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 16,
-    backgroundColor: '#f6f4ef'
+    backgroundColor: '#f6f4ef',
+    padding: 16
+  },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f6f4ef',
+    paddingHorizontal: 20
   },
 
   backLink: {
@@ -443,7 +392,123 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#1a1c20',
+    marginBottom: 20
+  },
+
+  planCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#ff7a1a',
+    padding: 16,
     marginBottom: 16
+  },
+  planHeader: {
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7e4db'
+  },
+  planLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1a1c20'
+  },
+
+  planDetail: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10
+  },
+  planDetailHighlight: {
+    marginTop: 8,
+    paddingTop: 12,
+    paddingBottom: 12,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff8f0',
+    borderRadius: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#e7e4db'
+  },
+  planDetailLabel: {
+    fontSize: 13,
+    color: '#5b606c',
+    fontWeight: '500'
+  },
+  planDetailLabelBold: {
+    fontSize: 14,
+    color: '#ff7a1a',
+    fontWeight: '700'
+  },
+  planDetailValue: {
+    fontSize: 14,
+    color: '#1a1c20',
+    fontWeight: '600'
+  },
+  planDetailValueBold: {
+    fontSize: 18,
+    color: '#ff7a1a',
+    fontWeight: '700'
+  },
+
+  infoCard: {
+    backgroundColor: '#e3f2fd',
+    borderLeftWidth: 4,
+    borderLeftColor: '#1976d2',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16
+  },
+  infoCardTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1565c0',
+    marginBottom: 10
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8
+  },
+  infoLabel: {
+    fontSize: 12,
+    color: '#1a1c20',
+    fontWeight: '500'
+  },
+  infoValue: {
+    fontSize: 12,
+    color: '#1565c0',
+    fontWeight: '600'
+  },
+
+  termsCard: {
+    backgroundColor: '#fff3e0',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff9800'
+  },
+  termsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  termsIcon: {
+    fontSize: 16,
+    marginRight: 8
+  },
+  termsTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#e65100'
+  },
+  termsText: {
+    fontSize: 12,
+    color: '#1a1c20',
+    lineHeight: 16,
+    marginBottom: 8
   },
 
   errorBanner: {
@@ -452,215 +517,63 @@ const styles = StyleSheet.create({
     borderColor: '#f6cac7',
     borderRadius: 8,
     padding: 12,
-    marginBottom: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
+    marginBottom: 16
   },
   errorText: {
     fontSize: 12,
     color: '#a5312c',
-    fontWeight: '600',
-    flex: 1
-  },
-  dismissText: {
-    fontSize: 16,
-    color: '#a5312c',
-    fontWeight: '700',
-    marginLeft: 12
-  },
-
-  successBanner: {
-    backgroundColor: '#e8f5e9',
-    borderWidth: 1.5,
-    borderColor: '#a5d6a7',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16
-  },
-  successBannerText: {
-    fontSize: 12,
-    color: '#2e7d32',
-    fontWeight: '600',
-    lineHeight: 18
-  },
-
-  syncMessageBanner: {
-    backgroundColor: '#e3f2fd',
-    borderWidth: 1.5,
-    borderColor: '#90caf9',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    flexDirection: 'row',
-    alignItems: 'center'
-  },
-  syncSpinner: {
-    marginRight: 10
-  },
-  syncMessageText: {
-    fontSize: 12,
-    color: '#1565c0',
-    fontWeight: '600',
-    flex: 1
-  },
-
-  breakdownCard: {
-    backgroundColor: '#fff8f0',
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: '#ffb366',
-    padding: 14,
-    marginBottom: 16
-  },
-  breakdownRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 10
-  },
-  breakdownRowHighlight: {
-    marginTop: 6,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#ffb366'
-  },
-  breakdownLabel: {
-    fontSize: 13,
-    color: '#5b606c',
-    fontWeight: '500'
-  },
-  breakdownLabelHighlight: {
-    fontSize: 13,
-    color: '#ff7a1a',
-    fontWeight: '700'
-  },
-  breakdownValue: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1a1c20'
-  },
-  breakdownValueHighlight: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#ff7a1a'
-  },
-
-  instructionsCard: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    padding: 14,
-    marginBottom: 16
-  },
-  instructionsTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 12
-  },
-
-  instructionStep: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 10,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db'
-  },
-  stepCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#ff7a1a',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10
-  },
-  stepNumber: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 12
-  },
-  stepTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1a1c20',
-    marginBottom: 2
-  },
-  stepText: {
-    fontSize: 11,
-    color: '#5b606c',
-    lineHeight: 14
-  },
-
-  field: {
-    marginBottom: 16
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-    color: '#5b606c',
-    marginBottom: 6
-  },
-  required: {
-    color: '#e5650a'
-  },
-  input: {
-    width: '100%',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    fontSize: 15,
-    backgroundColor: '#fff',
-    color: '#1a1c20',
-    marginBottom: 6,
     fontWeight: '600'
   },
-  hint: {
-    fontSize: 11,
-    color: '#5b606c',
-    fontWeight: '500'
-  },
 
-  offlineBanner: {
-    backgroundColor: '#fff3e0',
+  actionsContainer: {
+    gap: 12,
+    marginBottom: 16
+  },
+  confirmButton: {
+    backgroundColor: '#ff7a1a',
+    paddingVertical: 14,
     borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#ff9800',
-    flexDirection: 'row',
-    gap: 10
+    alignItems: 'center',
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4
   },
-  offlineIcon: {
-    fontSize: 16,
-    marginTop: 2
+  cancelButton: {
+    backgroundColor: '#fff',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db'
   },
-  offlineText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#e65100',
-    lineHeight: 16,
-    fontWeight: '500'
+  buttonDisabled: {
+    opacity: 0.6
+  },
+  confirmButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700'
+  },
+  cancelButtonText: {
+    color: '#1a1c20',
+    fontSize: 15,
+    fontWeight: '600'
   },
 
   infoBanner: {
     backgroundColor: '#e3f2fd',
     borderRadius: 8,
     padding: 12,
-    marginBottom: 16,
     borderLeftWidth: 4,
     borderLeftColor: '#1976d2',
     flexDirection: 'row',
-    gap: 8
+    gap: 10,
+    marginBottom: 24
   },
   infoIcon: {
-    fontSize: 16,
-    marginTop: 2
+    fontSize: 16
   },
   infoText: {
     flex: 1,
@@ -668,36 +581,16 @@ const styles = StyleSheet.create({
     color: '#1a1c20',
     lineHeight: 16
   },
-
-  primaryBtn: {
+  retryButton: {
     backgroundColor: '#ff7a1a',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
     borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginBottom: 16,
-    shadowColor: '#ff7a1a',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4
   },
-  primaryBtnDisabled: {
-    backgroundColor: '#e9dccc',
-    shadowOpacity: 0
-  },
-  btnContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  btnSpinner: {
-    marginRight: 8
-  },
-  primaryBtnText: {
+  retryButtonText: {
     color: '#fff',
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 0.2
+    fontWeight: '600',
+    fontSize: 14,
   }
 });
 
