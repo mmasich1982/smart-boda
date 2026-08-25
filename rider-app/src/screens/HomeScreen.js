@@ -354,7 +354,8 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       navigation.navigate('NewTrip');
     }
   }, [navigation]);
-
+  
+  
   const handleDailyTradeSummary = useCallback(() => {
     if (navigation && navigation.navigate) {
       navigation.navigate('DailyTradeSummary');
@@ -409,6 +410,10 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     );
   }
 
+  const handleViewFinancialHistory = () => {
+    navigation.navigate('FinancialHistory');
+  };
+  
   const energyTile = bike?.fuel_type_code ? ENERGY_TILE_BY_FUEL[bike.fuel_type_code] : null;
 
   return (
@@ -566,7 +571,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           <View style={styles.settingsListContainer}>
             <TouchableOpacity 
               style={styles.settingsListItem}
-              onPress={handleOpenDailySummary}
+              onPress={handleDailyTradeSummary}
             >
               <Text style={styles.settingsListLabel}>📊 My Daily Trade Summary</Text>
               <Text style={styles.settingsListArrow}>›</Text>
