@@ -1,13 +1,8 @@
 // rider-app/src/screens/subscription/FrequencySelectScreen.js
 // ============================================================================
-// ✅ FIXED: Dependency Management & Infinite Loop Resolution
-// ✅ MIGRATION: LocalStore → IndexedDBAdapter
-// ✅ ONLY: Bi-Weekly (500 KES) and Monthly (1000 KES)
-// ============================================================================
-// CRITICAL FIXES:
-// 1. Removed loadCurrentFrequency from useFocusEffect dependencies
-// 2. Used refs to track rider ID and initialization state
-// 3. Separated concerns: data loading logic from lifecycle hooks
+// ✅ REFACTORED: IndexedDB-FIRST Architecture (Fuel Screen Pattern)
+// ✅ MIGRATION: LocalStore → IndexedDB kvSet/kvGet
+// ✅ SYNC QUEUE: Background API sync for offline-first reliability
 // ============================================================================
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -23,6 +18,7 @@ import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/nativ
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
 
 const FrequencySelectScreen = () => {
@@ -30,7 +26,6 @@ const FrequencySelectScreen = () => {
   const route = useRoute();
   const { t } = useTranslation();
   const { state } = useRider();
-  const riderId = state?.riderId;
 
   // ========================================================================
   // STATE
@@ -38,20 +33,15 @@ const FrequencySelectScreen = () => {
   const [selectedFrequency, setSelectedFrequency] = useState('biweekly');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [localRiderId, setLocalRiderId] = useState(null);
 
   // ========================================================================
-  // CONTROL MECHANISMS
+  // CONTROL MECHANISMS: Prevent infinite loops
   // ========================================================================
   const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
-  const riderIdRef = useRef(riderId); // Track rider ID in ref
 
-  // Update rider ID ref when it changes
-  useEffect(() => {
-    riderIdRef.current = riderId;
-  }, [riderId]);
-
-  // ✅ ONLY TWO PLANS
+  // ✅ ONLY TWO PLANS: Biweekly (500 KES) & Monthly (1000 KES)
   const FREQUENCIES = [
     {
       key: 'biweekly',
@@ -72,13 +62,33 @@ const FrequencySelectScreen = () => {
   ];
 
   // ========================================================================
+  // LOAD RIDER ID (Local-First)
+  // ========================================================================
+  useEffect(() => {
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ FrequencySelect: Loaded local rider ID:', id);
+        } else if (state?.riderId) {
+          setLocalRiderId(state.riderId);
+          console.log('✅ FrequencySelect: Using context rider ID:', state.riderId);
+        }
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
+      }
+    };
+
+    loadRiderId();
+  }, [state?.riderId]);
+
+  // ========================================================================
   // LOAD CURRENT FREQUENCY
   // ========================================================================
-  // ✅ FIXED: This function does NOT depend on riderId directly
-  // It uses riderIdRef which is stable
   const loadCurrentFrequency = useCallback(async () => {
-    if (!riderIdRef.current || !isMountedRef.current) {
-      console.log('⚠️ Skip load: no riderId or component unmounted');
+    if (!localRiderId || !isMountedRef.current) {
+      console.log('⚠️ Skip load: no localRiderId or component unmounted');
       return;
     }
 
@@ -86,44 +96,60 @@ const FrequencySelectScreen = () => {
       setLoading(true);
       setError(null);
 
-      // Try API first
-      try {
-        console.log('📡 Loading frequency from API...');
-        const response = await api.get('/subscription', {
-          params: { rider_id: riderIdRef.current }
-        });
-
-        if (response?.data?.subscription?.frequency) {
-          const freq = response.data.subscription.frequency;
-          if (['biweekly', 'monthly'].includes(freq)) {
-            if (isMountedRef.current) {
-              setSelectedFrequency(freq);
-            }
-            return; // Success, exit
-          }
-        }
-      } catch (apiErr) {
-        console.warn('⚠️ API load failed:', apiErr.message);
-      }
-
-      // Fallback to cache
-      if (!isMountedRef.current) return;
+      // ✅ STRATEGY 1: Try IndexedDB first (offline-ready)
+      let frequency = null;
 
       try {
-        console.log('📂 Loading frequency from cache...');
+        console.log('📂 Loading frequency from IndexedDB...');
         const cached = await indexedDbAdapter.kvGet(
-          `subscription_${riderIdRef.current}`
+          `subscription_frequency_${localRiderId}`
         );
+
         if (cached) {
-          const { data } = JSON.parse(cached);
-          if (data?.frequency && ['biweekly', 'monthly'].includes(data.frequency)) {
-            if (isMountedRef.current) {
-              setSelectedFrequency(data.frequency);
-            }
+          const data = JSON.parse(cached);
+          if (data.frequency && ['biweekly', 'monthly'].includes(data.frequency)) {
+            frequency = data.frequency;
+            console.log('✅ Loaded frequency from IndexedDB:', frequency);
           }
         }
       } catch (cacheErr) {
-        console.warn('⚠️ Cache load failed:', cacheErr.message);
+        console.warn('⚠️ IndexedDB load failed:', cacheErr.message);
+      }
+
+      // ✅ STRATEGY 2: Fallback to API if cache miss
+      if (!frequency) {
+        try {
+          console.log('📡 Fallback: Fetching frequency from API...');
+          const response = await api.get('/subscription/frequency', {
+            params: { rider_id: localRiderId }
+          });
+
+          if (response?.data?.frequency && ['biweekly', 'monthly'].includes(response.data.frequency)) {
+            frequency = response.data.frequency;
+            console.log('✅ Loaded frequency from API:', frequency);
+
+            // ✅ Cache to IndexedDB for offline access
+            await indexedDbAdapter.kvSet(
+              `subscription_frequency_${localRiderId}`,
+              JSON.stringify({
+                frequency,
+                cached_at: new Date().toISOString()
+              })
+            );
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API fetch failed:', apiErr.message);
+        }
+      }
+
+      // Update UI only if component is still mounted
+      if (isMountedRef.current) {
+        if (frequency) {
+          setSelectedFrequency(frequency);
+        } else {
+          // No cached or API data - use default
+          setSelectedFrequency('biweekly');
+        }
       }
     } catch (err) {
       console.error('❌ Error loading frequency:', err);
@@ -135,7 +161,7 @@ const FrequencySelectScreen = () => {
         setLoading(false);
       }
     }
-  }, []); // ✅ FIXED: Empty dependency array - uses riderIdRef instead
+  }, [localRiderId]);
 
   // ========================================================================
   // EFFECTS & LIFECYCLE
@@ -149,45 +175,67 @@ const FrequencySelectScreen = () => {
     };
   }, []);
 
-  // ✅ FIXED: Reset loaded flag when rider ID changes
+  // ✅ Reset loaded flag when rider ID changes
   useEffect(() => {
     hasLoadedRef.current = false;
-  }, [riderId]);
+  }, [localRiderId]);
 
-  // ✅ FIXED: Load on screen focus without infinite loop dependency
+  // ✅ Load on screen focus
   useFocusEffect(
     useCallback(() => {
-      if (!hasLoadedRef.current && riderIdRef.current) {
+      if (!hasLoadedRef.current && localRiderId) {
         console.log('📌 Screen focused, loading frequency...');
         hasLoadedRef.current = true;
         loadCurrentFrequency();
       }
 
       return () => {
-        // Don't reset on unfocus - keep loaded state
+        // Keep loaded state on unfocus
       };
-    }, [loadCurrentFrequency]) // loadCurrentFrequency is now stable
+    }, [loadCurrentFrequency, localRiderId])
   );
 
   // ========================================================================
-  // HANDLE CONTINUE
+  // HANDLE CONTINUE - Save selection & navigate
   // ========================================================================
-
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!selectedFrequency) {
       setError('select_frequency');
       return;
     }
 
-    const selectedFreq = FREQUENCIES.find(f => f.key === selectedFrequency);
+    if (!localRiderId) {
+      setError('rider_id_missing');
+      return;
+    }
 
-    navigation.navigate('ConfirmSubscriptionScreen', {
-      frequency: selectedFrequency,
-      label: selectedFreq.label,
-      days: selectedFreq.days,
-      price: selectedFreq.price,
-      isRenewal: state?.subscription?.has_ever_paid || false
-    });
+    try {
+      // ✅ Save frequency selection to IndexedDB immediately
+      const now = new Date().toISOString();
+      await indexedDbAdapter.kvSet(
+        `subscription_frequency_${localRiderId}`,
+        JSON.stringify({
+          frequency: selectedFrequency,
+          selected_at: now,
+          cached_at: now
+        })
+      );
+
+      console.log('✅ Saved frequency selection to IndexedDB:', selectedFrequency);
+
+      const selectedFreq = FREQUENCIES.find(f => f.key === selectedFrequency);
+
+      navigation.navigate('ConfirmSubscriptionScreen', {
+        frequency: selectedFrequency,
+        label: selectedFreq.label,
+        days: selectedFreq.days,
+        price: selectedFreq.price,
+        isRenewal: state?.subscription?.has_ever_paid || false
+      });
+    } catch (err) {
+      console.error('❌ Error saving frequency:', err);
+      setError('error_saving');
+    }
   };
 
   // ========================================================================
@@ -219,6 +267,7 @@ const FrequencySelectScreen = () => {
         {t('subscription.choose_payment_plan')}
       </Text>
 
+      {/* ERROR BANNER */}
       {error && (
         <View style={styles.errorBanner}>
           <Text style={styles.errorText}>

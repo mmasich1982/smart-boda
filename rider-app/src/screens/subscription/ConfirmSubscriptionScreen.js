@@ -1,12 +1,8 @@
 // rider-app/src/screens/subscription/ConfirmSubscriptionScreen.js
 // ============================================================================
-// ✅ FIXED: Dependency Management & Infinite Loop Resolution
-// ============================================================================
-// CRITICAL FIXES:
-// 1. Removed loadSubscriptionDetails from useFocusEffect dependencies
-// 2. Used refs to track initialization state
-// 3. Separated concerns: data loading from lifecycle hooks
-// 4. Memoized payment processing function
+// ✅ REFACTORED: IndexedDB-FIRST + Sync Queue (Fuel Screen Pattern)
+// ✅ Immediate UI updates on confirmation save
+// ✅ Background API sync via addToSyncQueue
 // ============================================================================
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -23,6 +19,8 @@ import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/nativ
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { addToSyncQueue } from '../../offline/syncQueue';
+import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
 
 const ConfirmSubscriptionScreen = () => {
@@ -30,7 +28,6 @@ const ConfirmSubscriptionScreen = () => {
   const route = useRoute();
   const { t } = useTranslation();
   const { state } = useRider();
-  const riderId = state?.riderId;
 
   // ========================================================================
   // STATE
@@ -39,6 +36,7 @@ const ConfirmSubscriptionScreen = () => {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState(null);
   const [subscriptionDetails, setSubscriptionDetails] = useState(null);
+  const [localRiderId, setLocalRiderId] = useState(null);
 
   // Route params from FrequencySelectScreen
   const { frequency, label, days, price, isRenewal } = route.params || {};
@@ -48,19 +46,34 @@ const ConfirmSubscriptionScreen = () => {
   // ========================================================================
   const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
-  const riderIdRef = useRef(riderId);
 
-  // Update rider ID ref when it changes
+  // ========================================================================
+  // LOAD RIDER ID (Local-First)
+  // ========================================================================
   useEffect(() => {
-    riderIdRef.current = riderId;
-  }, [riderId]);
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ ConfirmSubscription: Loaded local rider ID:', id);
+        } else if (state?.riderId) {
+          setLocalRiderId(state.riderId);
+          console.log('✅ ConfirmSubscription: Using context rider ID:', state.riderId);
+        }
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
+      }
+    };
+
+    loadRiderId();
+  }, [state?.riderId]);
 
   // ========================================================================
-  // LOAD SUBSCRIPTION DETAILS
+  // LOAD SUBSCRIPTION DETAILS (Current subscription info for renewal context)
   // ========================================================================
-  // ✅ FIXED: This function is NOT in useFocusEffect dependencies
   const loadSubscriptionDetails = useCallback(async () => {
-    if (!riderIdRef.current || !isMountedRef.current) {
+    if (!localRiderId || !isMountedRef.current) {
       return;
     }
 
@@ -70,39 +83,45 @@ const ConfirmSubscriptionScreen = () => {
 
       let details = null;
 
-      // Try API first
+      // ✅ STRATEGY 1: Try IndexedDB first
       try {
-        const response = await api.get('/subscription/details', {
-          params: { rider_id: riderIdRef.current }
-        });
+        console.log('📂 Loading subscription details from IndexedDB...');
+        const cached = await indexedDbAdapter.kvGet(
+          `subscription_details_${localRiderId}`
+        );
 
-        if (response?.data) {
-          details = response.data;
-
-          // Cache in IndexedDB
-          await indexedDbAdapter.kvSet(
-            `subscription_details_${riderIdRef.current}`,
-            JSON.stringify({
-              data: details,
-              cached_at: new Date().toISOString()
-            })
-          );
+        if (cached) {
+          const data = JSON.parse(cached);
+          details = data.details;
+          console.log('✅ Loaded subscription details from IndexedDB');
         }
-      } catch (apiErr) {
-        console.warn('⚠️ API fetch failed:', apiErr.message);
+      } catch (cacheErr) {
+        console.warn('⚠️ IndexedDB load failed:', cacheErr.message);
       }
 
-      // Fallback to cache
-      if (!details) {
+      // ✅ STRATEGY 2: Fallback to API
+      if (!details && isRenewal) {
         try {
-          const cached = await indexedDbAdapter.kvGet(
-            `subscription_details_${riderIdRef.current}`
-          );
-          if (cached) {
-            details = JSON.parse(cached).data;
+          console.log('📡 Fallback: Fetching subscription details from API...');
+          const response = await api.get('/subscription/details', {
+            params: { rider_id: localRiderId }
+          });
+
+          if (response?.data) {
+            details = response.data;
+            console.log('✅ Loaded subscription details from API');
+
+            // Cache to IndexedDB
+            await indexedDbAdapter.kvSet(
+              `subscription_details_${localRiderId}`,
+              JSON.stringify({
+                details,
+                cached_at: new Date().toISOString()
+              })
+            );
           }
-        } catch (cacheErr) {
-          console.warn('⚠️ Cache load failed:', cacheErr.message);
+        } catch (apiErr) {
+          console.warn('⚠️ API fetch failed:', apiErr.message);
         }
       }
 
@@ -119,14 +138,13 @@ const ConfirmSubscriptionScreen = () => {
         setLoading(false);
       }
     }
-  }, []); // ✅ FIXED: Empty dependency array - uses riderIdRef
+  }, [localRiderId, isRenewal]);
 
   // ========================================================================
-  // SUBMIT PAYMENT
+  // SUBMIT PAYMENT - Save to IndexedDB & Queue for Sync
   // ========================================================================
-  // ✅ FIXED: Memoized with stable dependencies
   const handleSubmitPayment = useCallback(async () => {
-    if (!riderIdRef.current || !frequency || !price || processing) {
+    if (!localRiderId || !frequency || !price || processing) {
       return;
     }
 
@@ -134,52 +152,129 @@ const ConfirmSubscriptionScreen = () => {
       setProcessing(true);
       setError(null);
 
-      // Submit payment initiation request
-      const response = await api.post('/subscription/initiate-payment', {
-        rider_id: riderIdRef.current,
+      const now = Date.now();
+      const paymentId = `subscription_payment_${localRiderId}_${now}`;
+
+      // ✅ STEP 1: Prepare payment record for IndexedDB storage
+      const paymentRecord = {
+        id: paymentId,
+        rider_id: localRiderId,
         frequency,
         amount: price,
         days,
-        isRenewal
-      });
+        isRenewal,
+        status: 'pending_verification',
+        syncStatus: 'pending',
+        ts: now,
+        timestamp: now,
+        created_at: new Date().toISOString(),
+        initiated_at: new Date().toISOString()
+      };
 
-      if (response?.data?.payment_code) {
-        // Cache payment pending status
-        await indexedDbAdapter.kvSet(
-          `payment_pending_${riderIdRef.current}`,
-          JSON.stringify({
-            paymentCode: response.data.payment_code,
-            frequency,
-            amount: price,
-            initiated_at: new Date().toISOString()
-          })
-        );
+      // ✅ STEP 2: Save payment to IndexedDB FIRST (offline-first)
+      console.log('💾 Saving payment record to IndexedDB:', paymentId);
+      await indexedDbAdapter.kvSet(
+        paymentId,
+        JSON.stringify(paymentRecord)
+      );
 
-        // Navigate to payment confirmation screen
-        navigation.navigate('ConfirmPaymentScreen', {
-          paymentCode: response.data.payment_code,
+      // ✅ STEP 3: Update subscription_payment_pending cache
+      await indexedDbAdapter.kvSet(
+        `subscription_payment_pending_${localRiderId}`,
+        JSON.stringify({
+          paymentId,
           frequency,
           amount: price,
-          days
-        });
+          initiated_at: new Date().toISOString(),
+          status: 'pending_verification'
+        })
+      );
+
+      console.log('✅ Saved payment record to IndexedDB');
+
+      // ✅ STEP 4: Add to sync queue for background API upload
+      const queueSuccess = await addToSyncQueue({
+        id: paymentId,
+        type: 'subscription_payment',
+        endpoint: `/subscription/initiate-payment?rider_id=${localRiderId}`,
+        data: {
+          frequency,
+          amount: price,
+          days,
+          isRenewal
+        },
+        timestamp: new Date()
+      });
+
+      if (!queueSuccess) {
+        console.warn('⚠️ Failed to add to sync queue, but local save succeeded');
+      }
+
+      // ✅ STEP 5: Try to sync immediately if online
+      let paymentCode = null;
+
+      if (navigator.onLine) {
+        try {
+          console.log('📡 Attempting immediate API sync...');
+          const response = await api.post('/subscription/initiate-payment', {
+            frequency,
+            amount: price,
+            days,
+            isRenewal
+          });
+
+          if (response?.data?.payment_code) {
+            paymentCode = response.data.payment_code;
+            console.log('✅ API sync successful, got payment code');
+
+            // Update payment record with payment code
+            await indexedDbAdapter.kvSet(
+              paymentId,
+              JSON.stringify({
+                ...paymentRecord,
+                payment_code: paymentCode,
+                status: 'awaiting_payment',
+                syncStatus: 'synced'
+              })
+            );
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API sync failed (will retry later):', apiErr.message);
+          // Data is safely stored and queued - that's okay
+        }
       } else {
-        setError('payment_initiation_failed');
+        console.log('🔴 Offline: Payment queued for sync when online');
+      }
+
+      // ✅ STEP 6: Navigate to payment confirmation
+      if (isMountedRef.current) {
+        navigation.navigate('ConfirmPaymentScreen', {
+          paymentId,
+          paymentCode: paymentCode || 'PENDING_SYNC',
+          frequency,
+          amount: price,
+          days,
+          status: paymentCode ? 'awaiting_payment' : 'pending_sync'
+        });
       }
     } catch (err) {
       console.error('❌ Payment submission error:', err);
       setError('error_submitting_payment');
-      
+
       Alert.alert(
         t('common.error'),
         t('subscription.payment_initiation_failed'),
-        [{ text: t('common.retry'), onPress: handleSubmitPayment }]
+        [
+          { text: t('common.retry'), onPress: handleSubmitPayment },
+          { text: t('common.cancel'), style: 'cancel' }
+        ]
       );
     } finally {
       if (isMountedRef.current) {
         setProcessing(false);
       }
     }
-  }, [frequency, price, days, isRenewal, navigation]);
+  }, [localRiderId, frequency, price, days, isRenewal, navigation]);
 
   // ========================================================================
   // EFFECTS & LIFECYCLE
@@ -193,24 +288,19 @@ const ConfirmSubscriptionScreen = () => {
     };
   }, []);
 
-  // ✅ FIXED: Load on screen focus
+  // ✅ Load on screen focus
   useFocusEffect(
     useCallback(() => {
-      if (!hasLoadedRef.current && riderIdRef.current) {
+      if (!hasLoadedRef.current && localRiderId) {
         hasLoadedRef.current = true;
         loadSubscriptionDetails();
       }
 
       return () => {
-        // Don't reset on unfocus
+        // Keep loaded state on unfocus
       };
-    }, [loadSubscriptionDetails]) // loadSubscriptionDetails is now stable
+    }, [loadSubscriptionDetails, localRiderId])
   );
-
-  // ✅ Reset loaded flag when rider ID changes
-  useEffect(() => {
-    hasLoadedRef.current = false;
-  }, [riderId]);
 
   // ========================================================================
   // RENDER
@@ -585,12 +675,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#ff7a1a',
     paddingVertical: 12,
     paddingHorizontal: 24,
-    borderRadius: 8,
+    borderRadius: 8
   },
   retryButtonText: {
     color: '#fff',
     fontWeight: '600',
-    fontSize: 14,
+    fontSize: 14
   }
 });
 

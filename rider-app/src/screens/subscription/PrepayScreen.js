@@ -1,20 +1,23 @@
 // rider-app/src/screens/subscription/PrepayScreen.js
 // ============================================================================
-// ✅ MIGRATION: LocalStore → IndexedDBAdapter
-// ✅ PREPAYMENT: 3-60 days flexible payment
+// ✅ REFACTORED: IndexedDB-FIRST + Sync Queue (Fuel Screen Pattern)
+// ✅ FLEXIBLE PREPAYMENT: 3-60 days with immediate IndexedDB save
 // ============================================================================
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
-  ScrollView
+  ScrollView,
+  ActivityIndicator
 } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { getLocalRiderId } from '../../offline/db';
 
 const PrepayScreen = () => {
   const navigation = useNavigation();
@@ -27,11 +30,43 @@ const PrepayScreen = () => {
     dailyPrice: 34.5
   };
 
+  // ========================================================================
+  // STATE
+  // ========================================================================
   const [days, setDays] = useState(7);
   const [confirmed, setConfirmed] = useState(false);
+  const [localRiderId, setLocalRiderId] = useState(null);
+  const [loadingRiderId, setLoadingRiderId] = useState(true);
 
   const isMountedRef = useRef(true);
 
+  // ========================================================================
+  // LOAD RIDER ID (Local-First)
+  // ========================================================================
+  useEffect(() => {
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ PrepayScreen: Loaded local rider ID:', id);
+        } else if (state?.riderId) {
+          setLocalRiderId(state.riderId);
+          console.log('✅ PrepayScreen: Using context rider ID:', state.riderId);
+        }
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
+      } finally {
+        setLoadingRiderId(false);
+      }
+    };
+
+    loadRiderId();
+  }, [state?.riderId]);
+
+  // ========================================================================
+  // LIFECYCLE
+  // ========================================================================
   React.useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -42,7 +77,6 @@ const PrepayScreen = () => {
   // ========================================================================
   // CALCULATIONS
   // ========================================================================
-
   const adjustDays = (delta) => {
     setDays((d) => Math.max(3, Math.min(60, d + delta)));
   };
@@ -55,25 +89,91 @@ const PrepayScreen = () => {
   );
 
   // ========================================================================
-  // HANDLE CONTINUE
+  // HANDLE CONTINUE - Save to IndexedDB & Navigate
   // ========================================================================
-
-  const handleContinue = () => {
-    if (!confirmed || !isMountedRef.current) {
+  const handleContinue = async () => {
+    if (!confirmed || !isMountedRef.current || !localRiderId) {
       return;
     }
 
-    navigation.navigate('ConfirmPrepayScreen', {
-      days,
-      total,
-      newExpiryAt: newExpiry.toISOString(),
-      dailyPrice
-    });
+    try {
+      // ✅ Save prepay selection to IndexedDB immediately
+      const now = new Date().toISOString();
+      const prepayId = `prepay_${localRiderId}_${Date.now()}`;
+
+      const prepayRecord = {
+        id: prepayId,
+        rider_id: localRiderId,
+        days,
+        total,
+        daily_price: dailyPrice,
+        new_expiry_at: newExpiry.toISOString(),
+        current_expiry_at: currentExpiryAt,
+        confirmed_at: now,
+        status: 'pending_payment'
+      };
+
+      console.log('💾 Saving prepay record to IndexedDB:', prepayId);
+      await indexedDbAdapter.kvSet(
+        prepayId,
+        JSON.stringify(prepayRecord)
+      );
+
+      // Cache current prepay selection
+      await indexedDbAdapter.kvSet(
+        `prepay_pending_${localRiderId}`,
+        JSON.stringify({
+          days,
+          total,
+          newExpiryAt: newExpiry.toISOString(),
+          dailyPrice,
+          confirmed_at: now
+        })
+      );
+
+      console.log('✅ Saved prepay record to IndexedDB');
+
+      if (isMountedRef.current) {
+        navigation.navigate('ConfirmPrepayScreen', {
+          prepayId,
+          days,
+          total,
+          newExpiryAt: newExpiry.toISOString(),
+          dailyPrice,
+          currentExpiryAt
+        });
+      }
+    } catch (err) {
+      console.error('❌ Error saving prepay:', err);
+      // Still navigate but log error
+      if (isMountedRef.current) {
+        navigation.navigate('ConfirmPrepayScreen', {
+          days,
+          total,
+          newExpiryAt: newExpiry.toISOString(),
+          dailyPrice,
+          currentExpiryAt
+        });
+      }
+    }
   };
 
   // ========================================================================
   // RENDER
   // ========================================================================
+
+  if (loadingRiderId) {
+    return (
+      <ScrollView style={styles.container}>
+        <Text style={styles.title}>{t('subscription.pay_ahead')}</Text>
+        <ActivityIndicator
+          size="large"
+          color="#ff7a1a"
+          style={{ marginTop: 40 }}
+        />
+      </ScrollView>
+    );
+  }
 
   return (
     <ScrollView style={styles.container}>

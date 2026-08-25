@@ -1,9 +1,8 @@
 // rider-app/src/screens/subscription/PaymentHistoryScreen.js
 // ============================================================================
-// UPDATED: PaymentHistoryScreen - IndexedDB-FIRST with API fallback
-// ✅ Local payment history as source of truth
-// ✅ Incremental sync to Render
-// ✅ API only for missing local data
+// ✅ REFACTORED: IndexedDB-FIRST with Local-First Pagination
+// ✅ Improved cache key naming convention (payment_history_${riderId}_${timestamp})
+// ✅ No external repository dependencies
 // ============================================================================
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -20,32 +19,57 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
 
 const PaymentHistoryScreen = () => {
   const navigation = useNavigation();
   const { t } = useTranslation();
   const { state } = useRider();
-  const riderId = state?.riderId;
 
+  // ========================================================================
+  // STATE
+  // ========================================================================
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [dataSource, setDataSource] = useState('local'); // 'local' or 'api'
+  const [dataSource, setDataSource] = useState('local');
   const [refreshing, setRefreshing] = useState(false);
+  const [localRiderId, setLocalRiderId] = useState(null);
 
-  // ✅ CONTROL MECHANISMS
+  // ========================================================================
+  // CONTROL MECHANISMS
+  // ========================================================================
   const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
 
   // ========================================================================
+  // LOAD RIDER ID (Local-First)
+  // ========================================================================
+  useEffect(() => {
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ PaymentHistory: Loaded local rider ID:', id);
+        } else if (state?.riderId) {
+          setLocalRiderId(state.riderId);
+          console.log('✅ PaymentHistory: Using context rider ID:', state.riderId);
+        }
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
+      }
+    };
+
+    loadRiderId();
+  }, [state?.riderId]);
+
+  // ========================================================================
   // LOAD PAYMENT HISTORY (Local-First Strategy)
   // ========================================================================
-
-  const loadPaymentHistory = useCallback(async (pageNum = 1, forceAPI = false) => {
-    if (!riderId || !isMountedRef.current) {
+  const loadPaymentHistory = useCallback(async (forceAPI = false) => {
+    if (!localRiderId || !isMountedRef.current) {
       return;
     }
 
@@ -54,18 +78,15 @@ const PaymentHistoryScreen = () => {
       setError(null);
 
       let paymentData = null;
-      let totalPagesData = 1;
       let source = 'local';
 
       // ✅ STRATEGY 1: Try to load from IndexedDB (local cache)
       if (!forceAPI) {
         try {
           console.log('📂 Loading payment history from IndexedDB...');
-          const localPayments = await loadPaymentsFromIndexedDB(riderId, pageNum);
-          
-          if (localPayments && localPayments.length > 0) {
-            paymentData = localPayments.data;
-            totalPagesData = localPayments.totalPages;
+          paymentData = await loadPaymentsFromIndexedDB(localRiderId);
+
+          if (paymentData && paymentData.length > 0) {
             source = 'local';
             console.log(`✅ Loaded ${paymentData.length} payments from local storage`);
           }
@@ -79,20 +100,16 @@ const PaymentHistoryScreen = () => {
         try {
           console.log('📡 Fallback: Fetching payment history from API...');
           const response = await api.get('/subscription/payments', {
-            params: {
-              rider_id: riderId,
-              page: pageNum
-            },
-            timeout: 5000 // 5 second timeout
+            params: { rider_id: localRiderId },
+            timeout: 5000
           });
 
-          if (response?.data?.payments) {
+          if (response?.data?.payments && Array.isArray(response.data.payments)) {
             paymentData = response.data.payments;
-            totalPagesData = response.data.pagination?.total_pages || 1;
             source = 'api';
 
             // ✅ Cache API response to IndexedDB for offline access
-            await cachePaymentsToIndexedDB(riderId, paymentData, pageNum, totalPagesData);
+            await cachePaymentsToIndexedDB(localRiderId, paymentData);
             console.log('✅ Cached API payments to IndexedDB');
           }
         } catch (apiErr) {
@@ -103,10 +120,9 @@ const PaymentHistoryScreen = () => {
 
           // Try IndexedDB as last resort even if forceAPI
           if (forceAPI) {
-            const localPayments = await loadPaymentsFromIndexedDB(riderId, pageNum);
-            if (localPayments) {
-              paymentData = localPayments.data;
-              totalPagesData = localPayments.totalPages;
+            const localPayments = await loadPaymentsFromIndexedDB(localRiderId);
+            if (localPayments && localPayments.length > 0) {
+              paymentData = localPayments;
               source = 'local_fallback';
             }
           }
@@ -116,8 +132,6 @@ const PaymentHistoryScreen = () => {
       if (isMountedRef.current) {
         if (paymentData && Array.isArray(paymentData)) {
           setPayments(paymentData);
-          setTotalPages(totalPagesData);
-          setPage(pageNum);
           setDataSource(source);
           console.log(`📊 Displayed ${paymentData.length} payments from ${source}`);
         } else {
@@ -135,31 +149,30 @@ const PaymentHistoryScreen = () => {
         setLoading(false);
       }
     }
-  }, [riderId]);
+  }, [localRiderId]);
 
   // ========================================================================
   // IndexedDB OPERATIONS (Local Cache Management)
   // ========================================================================
 
-  const loadPaymentsFromIndexedDB = async (riderId, pageNum) => {
+  const loadPaymentsFromIndexedDB = async (riderId) => {
     try {
-      const cached = await indexedDbAdapter.kvGet(
-        `payment_history_${riderId}_page_${pageNum}`
-      );
+      const cacheKey = `payment_history_${riderId}`;
+      const cached = await indexedDbAdapter.kvGet(cacheKey);
 
       if (cached) {
-        const { data, totalPages, cached_at } = JSON.parse(cached);
-        
+        const { data, cached_at } = JSON.parse(cached);
+
         // Check if cache is fresh (< 24 hours)
         const cacheAge = Date.now() - new Date(cached_at).getTime();
-        const isFresh = cacheAge < 86400000; // 24 hours
+        const isFresh = cacheAge < 86400000;
 
         console.log(
           `📂 IndexedDB cache: ${isFresh ? '✅ fresh' : '⚠️ stale'} ` +
           `(${Math.floor(cacheAge / 60000)} minutes old)`
         );
 
-        return { data, totalPages };
+        return data;
       }
 
       return null;
@@ -169,13 +182,14 @@ const PaymentHistoryScreen = () => {
     }
   };
 
-  const cachePaymentsToIndexedDB = async (riderId, payments, pageNum, totalPages) => {
+  const cachePaymentsToIndexedDB = async (riderId, payments) => {
     try {
+      const cacheKey = `payment_history_${riderId}`;
+
       await indexedDbAdapter.kvSet(
-        `payment_history_${riderId}_page_${pageNum}`,
+        cacheKey,
         JSON.stringify({
           data: payments,
-          totalPages,
           cached_at: new Date().toISOString()
         })
       );
@@ -199,15 +213,15 @@ const PaymentHistoryScreen = () => {
 
   useFocusEffect(
     useCallback(() => {
-      if (!hasLoadedRef.current && riderId) {
+      if (!hasLoadedRef.current && localRiderId) {
         hasLoadedRef.current = true;
         console.log('🔄 Screen focused, loading payment history...');
-        loadPaymentHistory(1, false); // Load from local first
+        loadPaymentHistory(false);
       }
       return () => {
         hasLoadedRef.current = false;
       };
-    }, [riderId, loadPaymentHistory])
+    }, [localRiderId, loadPaymentHistory])
   );
 
   // ========================================================================
@@ -216,28 +230,9 @@ const PaymentHistoryScreen = () => {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    // Force API fetch to get latest data
-    await loadPaymentHistory(1, true);
+    await loadPaymentHistory(true);
     setRefreshing(false);
   }, [loadPaymentHistory]);
-
-  // ========================================================================
-  // PAGINATION
-  // ========================================================================
-
-  const handlePrevPage = () => {
-    if (page > 1) {
-      hasLoadedRef.current = false;
-      loadPaymentHistory(page - 1, false);
-    }
-  };
-
-  const handleNextPage = () => {
-    if (page < totalPages) {
-      hasLoadedRef.current = false;
-      loadPaymentHistory(page + 1, false);
-    }
-  };
 
   // ========================================================================
   // STATUS BADGE
@@ -290,7 +285,7 @@ const PaymentHistoryScreen = () => {
           style={styles.retryButton}
           onPress={() => {
             hasLoadedRef.current = false;
-            loadPaymentHistory(1, true); // Force API on retry
+            loadPaymentHistory(true);
           }}
         >
           <Text style={styles.retryButtonText}>{t('common.retry')}</Text>
@@ -299,7 +294,7 @@ const PaymentHistoryScreen = () => {
     );
   }
 
-  // Main content
+  // Main UI
   return (
     <ScrollView
       style={styles.container}
@@ -320,7 +315,7 @@ const PaymentHistoryScreen = () => {
 
       <Text style={styles.title}>{t('subscription.payment_history')}</Text>
 
-      {/* DATA SOURCE INDICATOR */}
+      {/* DATA SOURCE BADGE */}
       <View style={styles.dataSourceBadge}>
         <Text style={styles.dataSourceIcon}>
           {dataSource === 'local' ? '📂' : '📡'}
@@ -336,7 +331,7 @@ const PaymentHistoryScreen = () => {
       {payments.length > 0 ? (
         <View style={styles.paymentList}>
           {payments.map((payment) => {
-            const badge = getStatusBadge(payment.reconciliation);
+            const badge = getStatusBadge(payment.reconciliation || payment.status);
             const paymentDate = new Date(
               payment.submitted_at || payment.created_at
             );
@@ -379,37 +374,6 @@ const PaymentHistoryScreen = () => {
           <Text style={styles.emptyText}>
             {t('subscription.no_payments')}
           </Text>
-        </View>
-      )}
-
-      {/* PAGINATION */}
-      {totalPages > 1 && (
-        <View style={styles.paginationContainer}>
-          <TouchableOpacity
-            style={[
-              styles.paginationBtn,
-              page === 1 && styles.paginationBtnDisabled
-            ]}
-            onPress={handlePrevPage}
-            disabled={page === 1}
-          >
-            <Text style={styles.paginationBtnText}>← {t('common.previous')}</Text>
-          </TouchableOpacity>
-
-          <Text style={styles.paginationInfo}>
-            {t('subscription.page')} {page} {t('common.of')} {totalPages}
-          </Text>
-
-          <TouchableOpacity
-            style={[
-              styles.paginationBtn,
-              page === totalPages && styles.paginationBtnDisabled
-            ]}
-            onPress={handleNextPage}
-            disabled={page === totalPages}
-          >
-            <Text style={styles.paginationBtnText}>{t('common.next')} →</Text>
-          </TouchableOpacity>
         </View>
       )}
 
@@ -557,38 +521,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#5b606c',
     fontStyle: 'italic'
-  },
-
-  paginationContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-    paddingHorizontal: 4
-  },
-  paginationBtn: {
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#ff7a1a',
-    borderRadius: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    minWidth: 100
-  },
-  paginationBtnDisabled: {
-    opacity: 0.4,
-    borderColor: '#ccc'
-  },
-  paginationBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#ff7a1a',
-    textAlign: 'center'
-  },
-  paginationInfo: {
-    fontSize: 12,
-    color: '#5b606c',
-    fontWeight: '500'
   },
 
   infoBanner: {
