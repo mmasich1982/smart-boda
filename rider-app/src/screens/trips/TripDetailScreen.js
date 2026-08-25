@@ -357,11 +357,34 @@ export default function TripDetailScreen({ navigation, route }) {
   const isLipaLaterTrip = tripMethod === 'LipaLater';
 
   // ✅ CRITICAL: Pre-calculate dropdown items before render
-  // Follow pattern from tripUtils.js - never call .map() in JSX
-  const correctionReasonItems = CORRECTION_REASONS.map((r) => ({
-    label: r,
-    value: r,
-  }));
+  // Follow pattern from PAYMENT_METHODS - use 'key' and 'label' format
+  // Add defensive checks
+  let correctionReasonItems = [];
+  if (CORRECTION_REASONS && Array.isArray(CORRECTION_REASONS)) {
+    try {
+      correctionReasonItems = CORRECTION_REASONS.map((r) => ({
+        key: r,
+        label: r,
+      }));
+      console.log('✅ correctionReasonItems created:', correctionReasonItems.length, 'items');
+    } catch (err) {
+      console.error('❌ Error creating correctionReasonItems:', err);
+      correctionReasonItems = [
+        { key: 'Typo', label: 'Typo' },
+        { key: 'Wrong Payment Method Selected', label: 'Wrong Payment Method Selected' },
+        { key: 'Duplicate Entry', label: 'Duplicate Entry' },
+        { key: 'Other', label: 'Other' },
+      ];
+    }
+  } else {
+    console.warn('⚠️ CORRECTION_REASONS is not a valid array, using fallback');
+    correctionReasonItems = [
+      { key: 'Typo', label: 'Typo' },
+      { key: 'Wrong Payment Method Selected', label: 'Wrong Payment Method Selected' },
+      { key: 'Duplicate Entry', label: 'Duplicate Entry' },
+      { key: 'Other', label: 'Other' },
+    ];
+  }
 
   return (
     <ScrollView style={styles.container}>
@@ -430,13 +453,17 @@ export default function TripDetailScreen({ navigation, route }) {
         <Text style={styles.fieldLabel}>
           Correction Reason <Text style={styles.required}>*</Text>
         </Text>
-        <DropdownField
-          selectedValue={draftReason}
-          onValueChange={setDraftReason}
-          items={correctionReasonItems}
-          placeholder="Select..."
-          enabled={isEditable}
-        />
+        {correctionReasonItems && correctionReasonItems.length > 0 ? (
+          <DropdownField
+            selectedValue={draftReason}
+            onValueChange={(value) => setDraftReason(value)}
+            items={correctionReasonItems}
+            placeholder="Select..."
+            enabled={isEditable}
+          />
+        ) : (
+          <Text style={styles.loadingText}>Loading options...</Text>
+        )}
       </View>
 
       <PrimaryButton
