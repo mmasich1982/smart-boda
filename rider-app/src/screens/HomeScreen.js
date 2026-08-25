@@ -528,7 +528,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           
             <TouchableOpacity
               style={styles.homeTile}
-              onPress={() => navigation.navigate('MySubscriptions')}
+              onPress={() => navigation.navigate('Subscription')}
             >
               <Text style={styles.tileEmoji}>📲</Text>
               <Text style={styles.tileLabel}>{t('home.tile_my_subscription')}</Text>
