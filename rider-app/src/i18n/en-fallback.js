@@ -66,6 +66,7 @@ export default {
   "common.error_load_data": "Failed to load data",
   "common.initializing": "Initializing...",
   "common.logout": "Logout",
+  "common.loading": "Loading...",
   "common.rider_not_found": "Rider not found",
   "common.server_error": "Server error - Please try again",
   "confirmPayment": "Confirm Payment",
@@ -692,4 +693,5 @@ export default {
   "totalSpent": "Total Spent",
   "totalEntries": "Total Entries",
   "costPerEntry": "Cost per Entry",
+  
 };

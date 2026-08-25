@@ -70,6 +70,7 @@ export default {
   "common.error_load_data": "Kukamatia data kumekamatia",
   "common.initializing": "Kuanzishwa...",
   "common.logout": "Onekana",
+  "common.loading": "Inapakia...",
   "common.rider_not_found": "Bajaji haipatikani",
   "common.server_error": "Hitilafu ya seva - Tafadhali jaribu tena",
   "completed": "Ikakamiliwa",
