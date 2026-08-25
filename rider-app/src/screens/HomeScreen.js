@@ -261,164 +261,129 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       return total;
     } catch (err) {
       console.error('[HomeScreen] Error calculating yesterday total:', err);
-      return null;
+      return 0;
     }
   }, []);
 
-  const refresh = useCallback(async () => {
+  /**
+   * ✅ Load data from IndexedDB when riderId becomes available
+   * Called once on component mount + on focus
+   */
+  const loadData = useCallback(async () => {
+    if (!riderId) {
+      console.warn('[HomeScreen] ⚠️ No riderId available');
+      return;
+    }
+
+    if (hasLoadedRef.current) {
+      console.log('[HomeScreen] Data already loaded this session');
+      return;
+    }
+
+    console.log('[HomeScreen] 🔄 Loading data for rider:', riderId);
+    setRefreshing(true);
+
     try {
-      // ✅ Guard: Can't refresh without riderId
-      if (!riderId) {
-        console.warn('[HomeScreen] Cannot refresh - no riderId');
-        return;
-      }
+      // Load bike profile
+      const bikeData = await getActiveBikeProfile(riderId);
+      setBike(bikeData || null);
 
-      setRefreshing(true);
-      setHasError(false);
-      setErrorMsg(null);
+      // Load account summary
+      const accountData = await getRiderAccountSummary(riderId);
+      setAccount(accountData || null);
 
-      const activeBike = await getActiveBikeProfile();
-      if (activeBike) {
-        setBike(activeBike);
-      } else {
-        console.warn('[HomeScreen] No active bike profile found - using default');
-        setBike(null);
-      }
-
-      const accountSummary = await getRiderAccountSummary();
-      if (accountSummary) {
-        setAccount(accountSummary);
-      } else {
-        console.warn('[HomeScreen] No account summary found - using defaults');
-        setAccount(null);
-      }
-
-      // ✅ Load today's total from IndexedDB trip cache (fuel pattern)
+      // Calculate today's total
       const todayData = await calculateTodaysTotal(riderId);
       setRunningTotal(todayData.total);
       setTripsToday(todayData.count);
 
-      // ✅ Load yesterday's total from IndexedDB trip cache
-      const yest = await calculateYesterdaysTotal(riderId);
-      setYesterdayTotal(yest);
+      // Calculate yesterday's total
+      const yesterdayData = await calculateYesterdaysTotal(riderId);
+      setYesterdayTotal(yesterdayData);
 
+      // Load queued records count
       const queued = await getQueuedRecords();
-      setQueuedCount(queued?.length || 0);
+      setQueuedCount(queued.length);
 
+      // Calculate hours since last sync
       const hours = await hoursSinceLastSync();
-      setOfflineHours(Math.floor(hours) || 0);
+      setOfflineHours(hours);
 
-      if (!isInitialized) {
-        setIsInitialized(true);
-      }
-
-      console.log('[HomeScreen] ✅ Refresh completed:', {
-        runningTotal: todayData.total,
-        tripsToday: todayData.count,
-        yesterdayTotal: yest,
-      });
+      hasLoadedRef.current = true;
+      setIsInitialized(true);
+      console.log('[HomeScreen] ✅ Data loaded successfully');
     } catch (err) {
-      console.error('[HomeScreen] Refresh error:', err);
+      console.error('[HomeScreen] Error loading data:', err);
       setHasError(true);
-      setErrorMsg(err.message || 'Error loading home screen');
-      showToast('Error loading home screen', 'error');
-      if (!isInitialized) {
-        setIsInitialized(true);
-      }
+      setErrorMsg('Error loading home data: ' + err.message);
     } finally {
       setRefreshing(false);
     }
-  }, [riderId, isInitialized, showToast, calculateTodaysTotal, calculateYesterdaysTotal]);
+  }, [riderId, calculateTodaysTotal, calculateYesterdaysTotal]);
 
-  // ✅ Load data on mount
+  // ✅ Load data when riderId is available
   useEffect(() => {
-    if (!riderIdLoading && riderId && !hasLoadedRef.current) {
-      hasLoadedRef.current = true;
-      refresh();
+    if (riderId && !isInitialized) {
+      loadData();
     }
-  }, [riderIdLoading, riderId, refresh]);
+  }, [riderId, isInitialized, loadData]);
 
-  // ✅ CRITICAL: Auto-refresh when returning to HomeScreen
-  // Always refresh on focus to ensure Hero Fare Card reflects new trips
+  // ✅ Refresh on screen focus
   useFocusEffect(
     useCallback(() => {
-      if (!riderIdLoading && riderId && hasLoadedRef.current) {
-        console.log('[HomeScreen] 🔄 Refreshing on focus');
-        refresh();
+      if (riderId) {
+        console.log('[HomeScreen] Screen focused - refreshing data');
+        // Reset hasLoaded to force refresh
+        hasLoadedRef.current = false;
+        loadData();
       }
-    }, [riderIdLoading, riderId, refresh])
+    }, [riderId, loadData])
   );
 
-  const handleRecordTrip = useCallback(() => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate('NewTrip');
+  // ✅ Handlers for navigation
+  const handleDailyTradeSummary = () => {
+    if (!navigation) {
+      console.error('[HomeScreen] Navigation not available');
+      return;
     }
-  }, [navigation]);
-  
-  
-  const handleDailyTradeSummary = useCallback(() => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate('DailyTradeSummary');
+    navigation.navigate('DailyTradeSummary');
+  };
+
+  const handleViewFinancialHistory = () => {
+    if (!navigation) {
+      console.error('[HomeScreen] Navigation not available');
+      return;
     }
-  }, [navigation]);
+    navigation.navigate('FinancialHistory');
+  };
 
-  const handleLogout = useCallback(async () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', onPress: () => {} },
-      {
-        text: 'Logout',
-        onPress: async () => {
-          try {
-            await clearSession();
-            if (navigation && navigation.reset) {
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-              });
-            }
-          } catch (err) {
-            console.error('Logout error:', err);
-            showToast('Error logging out', 'error');
-          }
-        },
-      },
-    ]);
-  }, [navigation, showToast]);
-
-  const handleNavigateTile = useCallback((route) => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate(route);
-    }
-  }, [navigation]);
-
+  // ✅ Show loading state
   if (riderIdLoading || !isInitialized) {
-    return <LoadingSkeleton />;
-  }
-
-  if (hasError) {
     return (
-      <ErrorDisplay
-        error={errorMsg}
-        onRetry={() => {
-          setHasError(false);
-          setErrorMsg(null);
-          if (riderId) {
-            refresh();
-          }
-        }}
-      />
+      <HomeScreenErrorBoundary>
+        <LoadingSkeleton />
+      </HomeScreenErrorBoundary>
     );
   }
 
-  const handleViewFinancialHistory = () => {
-    navigation.navigate('FinancialHistory');
-  };
-  
-  const energyTile = bike?.fuel_type_code ? ENERGY_TILE_BY_FUEL[bike.fuel_type_code] : null;
+  // ✅ Show error state
+  if (hasError) {
+    return (
+      <HomeScreenErrorBoundary>
+        <ErrorDisplay error={errorMsg} onRetry={() => {
+          setHasError(false);
+          setErrorMsg(null);
+          hasLoadedRef.current = false;
+          loadData();
+        }} />
+      </HomeScreenErrorBoundary>
+    );
+  }
 
   return (
-    <HomeScreenErrorBoundary onRetry={() => refresh()}>
+    <HomeScreenErrorBoundary>
       <ScrollView style={styles.container}>
+        {/* Top Bar */}
         <View style={styles.topBar}>
           <View style={styles.brand}>
             <View style={styles.logo}>
@@ -426,110 +391,113 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </View>
             <Text style={styles.brandName}>Smart Boda</Text>
           </View>
-          <TouchableOpacity
-            style={styles.notifBell}
-            onPress={() => handleNavigateTile('Notifications')}
-          >
-            <Text style={styles.bellIcon}>🔔</Text>
-            {queuedCount > 0 && (
-              <View style={styles.notifBadge}>
-                <Text style={styles.badgeText}>{Math.min(queuedCount, 9)}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
         </View>
 
         <View style={styles.screenBody}>
-          {/* ✅ HERO FARE CARD - Updates instantly when trip is recorded */}
-          <HeroFareCard
-            totalFare={runningTotal}
-            onOpenDailySummary={handleDailyTradeSummary}
-            onNewTrip={handleRecordTrip}
-          />
+          {/* Row 0: Hero Fare Card */}
+          <HeroFareCard riderId={riderId} />
 
-          {/* Yesterday's Total */}
+          {/* Row 1: Yesterday's Total */}
           {yesterdayTotal !== null && (
             <View style={styles.yesterdayCard}>
               <View style={styles.yesterdayHeader}>
-                <Text style={styles.yesterdayLabel}>Yesterday's Total</Text>
-                <TouchableOpacity onPress={handleDailyTradeSummary}>
-                  <Text style={styles.viewBreakdownLink}>View →</Text>
-                </TouchableOpacity>
+                <Text style={styles.yesterdayLabel}>📅 Yesterday</Text>
+                <Text style={styles.yesterdayAmount}>
+                  {typeof yesterdayTotal === 'number' ? `KES ${yesterdayTotal.toFixed(2)}` : 'KES 0.00'}
+                </Text>
               </View>
-              <Text style={styles.yesterdayAmount}>KSh {(yesterdayTotal || 0).toLocaleString()}</Text>
+              <TouchableOpacity onPress={handleViewFinancialHistory}>
+                <Text style={styles.viewBreakdownLink}>View breakdown →</Text>
+              </TouchableOpacity>
             </View>
           )}
 
-          {/* Offline Warning */}
-          {offlineHours > 0 && (
+          {/* Row 2: Home Tiles Grid */}
+          {bike && bike.fuelType && (
             <View style={styles.warningBox}>
               <Text style={styles.warningText}>
-                📡 Last sync {offlineHours} hour{offlineHours === 1 ? '' : 's'} ago
+                ℹ️ Your {bike.fuelType === 'petrol' ? 'fuel' : 'battery'} status is monitored. Keep it charged!
               </Text>
             </View>
           )}
 
-          {/* Tiles Grid - Aligned with cleaned.html */}
-          {/* Row 1: Fuel/Charge + Service */}
+          <View style={styles.energyTile}>
+            <TouchableOpacity
+              onPress={() => {
+                const fuelType = bike?.fuelType || 'petrol';
+                const route = ENERGY_TILE_BY_FUEL[fuelType]?.route || 'FuelHub';
+                navigation.navigate(route);
+              }}
+              style={{ width: '100%' }}
+            >
+              <Text style={styles.tileEmoji}>
+                {bike?.fuelType === 'electric' ? '🔋' : '⛽'}
+              </Text>
+              <Text style={styles.tileLabel}>
+                {bike?.fuelType === 'electric' ? 'Charge Battery' : 'Fuel & Maintenance'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           <View style={styles.tileRow}>
-            {energyTile && (
+            {HOME_TILES.slice(0, 2).map((tile, index) => (
               <TouchableOpacity
+                key={index}
                 style={styles.homeTile}
-                onPress={() => {
-                  try {
-                    // Try direct navigation first (MainNavigator context)
-                    navigation.navigate(energyTile.route);
-                  } catch (err) {
-                    console.error('[HomeScreen] Navigation error:', err);
-                    // Fallback: try navigating through parent if nested
-                    try {
-                      navigation.navigate('Home', { screen: energyTile.route });
-                    } catch (fallbackErr) {
-                      console.error('[HomeScreen] Fallback navigation failed:', fallbackErr);
-                    }
-                  }
-                }}
+                onPress={() => navigation.navigate(tile.route)}
               >
-                <Text style={styles.tileEmoji}>{energyTile.emoji}</Text>
-                <Text style={styles.tileLabel}>{t(energyTile.label)}</Text>
+                <Text style={styles.tileEmoji}>{tile.emoji}</Text>
+                <Text style={styles.tileLabel}>{t(tile.label)}</Text>
               </TouchableOpacity>
-            )}
+            ))}
+          </View>
+
+          <View style={styles.tileRow}>
+            {HOME_TILES.slice(2, 4).map((tile, index) => (
+              <TouchableOpacity
+                key={index}
+                style={styles.homeTile}
+                onPress={() => navigation.navigate(tile.route)}
+              >
+                <Text style={styles.tileEmoji}>{tile.emoji}</Text>
+                <Text style={styles.tileLabel}>{t(tile.label)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={styles.tileRow}>
+            {HOME_TILES.slice(4, 6).map((tile, index) => (
+              <TouchableOpacity
+                key={index}
+                style={styles.homeTile}
+                onPress={() => navigation.navigate(tile.route)}
+              >
+                <Text style={styles.tileEmoji}>{tile.emoji}</Text>
+                <Text style={styles.tileLabel}>{t(tile.label)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={styles.tileRow}>
+            {HOME_TILES.slice(6, 8).map((tile, index) => (
+              <TouchableOpacity
+                key={index}
+                style={styles.homeTile}
+                onPress={() => navigation.navigate(tile.route)}
+              >
+                <Text style={styles.tileEmoji}>{tile.emoji}</Text>
+                <Text style={styles.tileLabel}>{t(tile.label)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
           <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => {
-                console.log('[HomeScreen] Navigating to MaintenanceHub');
-                try {
-                  navigation.navigate('MaintenanceHub');
-                } catch (err) {
-                  console.error('[HomeScreen] MaintenanceHub navigation error:', err);
-                  showToast('Navigation failed', 'error');
-                }
-              }}
-            >
-              <Text style={styles.tileEmoji}>🔧</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_service_motorcycle')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Row 2: Financial Performance + My Subscription */}
-          <View style={styles.tileRow}>
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('MoneyMastery')}
-            >
-              <Text style={styles.tileEmoji}>💰</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_financial_performance')}</Text>
-            </TouchableOpacity>
-          
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('MySubscriptions')}
-            >
-              <Text style={styles.tileEmoji}>📲</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_my_subscription')}</Text>
-            </TouchableOpacity>
-          </View>
+            style={[styles.homeTile, styles.fullWidth]}
+            onPress={() => navigation.navigate(HOME_TILES[8].route)}
+          >
+            <Text style={styles.tileEmoji}>{HOME_TILES[8].emoji}</Text>
+            <Text style={styles.tileLabel}>{t(HOME_TILES[8].label)}</Text>
+          </TouchableOpacity>
 
           {/* Row 3: Sync Status Card (Clickable) */}
           <TouchableOpacity 
@@ -556,7 +524,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </Text>
           </TouchableOpacity>
           
-		  
+
           {/* Account Card */}
           <View style={styles.cardContainer}>
             <View style={styles.kvRow}>
@@ -564,10 +532,10 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.kvValue}>{tripsToday}</Text>
             </View>
           </View>
-		  
-		  
-		  
-		  /* Settings List Items */}
+          
+          
+          
+          {/* Settings List Items */}
           <View style={styles.settingsListContainer}>
             <TouchableOpacity 
               style={styles.settingsListItem}
@@ -795,5 +763,91 @@ const styles = StyleSheet.create({
   },
   heroFare: {
     height: 140,
+  },
+  cardContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#e7e4db',
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 8,
+  },
+  cardStatusEmoji: {
+    fontSize: 18,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1a1c20',
+    flex: 1,
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeAmber: {
+    backgroundColor: '#fff3e0',
+  },
+  badgeGreen: {
+    backgroundColor: '#e8f5e9',
+  },
+  cardHint: {
+    fontSize: 12,
+    color: '#5b606c',
+    marginLeft: 30,
+  },
+  kvRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  kvKey: {
+    fontSize: 13,
+    color: '#5b606c',
+    fontWeight: '500',
+  },
+  kvValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1a1c20',
+  },
+  settingsListContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e7e4db',
+    overflow: 'hidden',
+  },
+  settingsListItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7e4db',
+  },
+  logoutListItem: {
+    borderBottomWidth: 0,
+  },
+  settingsListLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1a1c20',
+  },
+  logoutText: {
+    color: '#e0453f',
+    fontWeight: '600',
+  },
+  settingsListArrow: {
+    fontSize: 16,
+    color: '#5b606c',
   },
 });
