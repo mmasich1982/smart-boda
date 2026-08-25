@@ -163,6 +163,13 @@ export default function TripDetailScreen({ navigation, route }) {
   const isEditable = trip ? hoursSinceTrip() < CORRECTION_WINDOW_HOURS : false;
   const remainingHours = trip ? Math.max(0, CORRECTION_WINDOW_HOURS - hoursSinceTrip()) : 0;
 
+  // ✅ CRITICAL: Pre-calculate dropdown items before render (matches index.html pattern line 4787)
+  // This prevents "Cannot read properties of undefined (reading 'map')" error
+  const correctionReasonItems = CORRECTION_REASONS.map(reason => ({
+    label: reason,
+    value: reason,
+  }));
+
   /**
    * ✅ UPDATE CACHE: Update trip in trip_history cache
    * Ensures DailyTradeSummaryScreen sees the updated trip
