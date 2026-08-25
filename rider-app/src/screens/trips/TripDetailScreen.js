@@ -26,8 +26,9 @@ const PAYMENT_METHODS = [
   { key: 'MPesa', label: 'M-Pesa', emoji: '📱' },
 ];
 
-// ✅ FALLBACK: Default correction reasons if import fails
-const DEFAULT_CORRECTION_REASONS = [
+// ✅ CORRECTION REASONS: Defined inline to avoid import failures
+// These are the only reasons available for correcting or voiding trips
+const CORRECTION_REASONS = [
   'Wrong amount entered',
   'Duplicate trip',
   'Wrong payment method',
@@ -35,17 +36,11 @@ const DEFAULT_CORRECTION_REASONS = [
   'Other',
 ];
 
-// ✅ SAFE IMPORT: Try to import CORRECTION_REASONS, fallback to default
-let CORRECTION_REASONS = DEFAULT_CORRECTION_REASONS;
-try {
-  const tripConstants = require('../../constants/tripConstants');
-  if (tripConstants?.CORRECTION_REASONS && Array.isArray(tripConstants.CORRECTION_REASONS)) {
-    CORRECTION_REASONS = tripConstants.CORRECTION_REASONS;
-    console.log('✅ Loaded CORRECTION_REASONS from tripConstants');
-  }
-} catch (err) {
-  console.warn('⚠️ Could not load CORRECTION_REASONS from tripConstants, using fallback:', err.message);
-}
+// ✅ Convert to dropdown items format at module level (safe, not in render)
+const CORRECTION_REASON_ITEMS = CORRECTION_REASONS.map((reason) => ({
+  label: reason,
+  value: reason,
+}));
 
 /**
  * ✅ REFACTORED: Trip Detail Screen for correction/void (RA-04-B)
@@ -387,7 +382,6 @@ export default function TripDetailScreen({ navigation, route }) {
   const originalAmount = trip?.originalAmount || trip?.amount || 0;
   const tripMethod = trip?.paymentMethod || trip?.method || 'Unknown';
   const isLipaLaterTrip = tripMethod === 'LipaLater';
-  const correctionReasonsArray = Array.isArray(CORRECTION_REASONS) ? CORRECTION_REASONS : DEFAULT_CORRECTION_REASONS;
 
   return (
     <ScrollView style={styles.container}>
@@ -459,7 +453,7 @@ export default function TripDetailScreen({ navigation, route }) {
         <DropdownField
           selectedValue={draftReason}
           onValueChange={setDraftReason}
-          items={correctionReasonsArray.map((r) => ({ label: r, value: r }))}
+          items={CORRECTION_REASON_ITEMS}
           placeholder="Select..."
           enabled={isEditable}
         />
