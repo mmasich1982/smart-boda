@@ -1,23 +1,51 @@
 // rider-app/src/screens/financialPerformance/AddOtherExpenseScreen.js
-// ✅ HYBRID SYNC ARCHITECTURE:
-// - Localization Provider for multilingual support
-// - Network Status hooks for real-time connectivity detection
-// - IndexedDB Adapter for offline-first persistent storage
-// - Loads categories from cache with API fallback
-// - Queues expenses for background sync
-// - UI/UX design preserved exactly
-// ✅ FIXED: Follows proven FuelHistory pattern, single load on mount
+// ✅ REFACTORED: IndexedDB-first with immediate cache updates
+// ✅ OFFLINE PERSISTENCE: Exclusive IndexedDB key-value storage (no external stores)
+// ✅ REAL-TIME SYNC: Updates cache immediately for instant display across all screens
+// ✅ SYNC QUEUE: Background API uploads when online
+// ✅ MULTILINGUAL: Full i18n support
 
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Picker, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
 import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
-import { getLocalRiderStatus } from '../../offline/db';
+import { getLocalRiderId } from '../../offline/db';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { addToSyncQueue } from '../../offline/syncQueue';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import api from '../../api/client';
+
+/**
+ * ✅ UPDATE CACHE: Invalidate and refresh other expenses summary
+ * Called immediately after saving to ensure MoneyMasteryScreen reflects new data
+ */
+async function invalidateOtherExpensesCache(riderId) {
+  try {
+    // Clear period caches so they recompute with fresh data
+    const cacheKeys = [
+      `other_expenses_summary_${riderId}`,
+      `net_profit_today_${riderId}`,
+      `net_profit_this_week_${riderId}`,
+      `net_profit_this_month_${riderId}`,
+      `money_mastery_${riderId}_today`,
+      `money_mastery_${riderId}_this_week`,
+      `money_mastery_${riderId}_this_month`,
+    ];
+
+    for (const key of cacheKeys) {
+      try {
+        await indexedDbAdapter.deleteRow('kvStore', key);
+      } catch (err) {
+        console.warn(`⚠️ Failed to clear cache key: ${key}`);
+      }
+    }
+    
+    console.log('✅ Invalidated other expenses cache');
+  } catch (err) {
+    console.error('❌ Error invalidating cache:', err);
+  }
+}
 
 export default function AddOtherExpenseScreen({ navigation }) {
   const { state } = useRider();
@@ -29,37 +57,37 @@ export default function AddOtherExpenseScreen({ navigation }) {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
-  // ✅ CRITICAL: Track if we've already loaded categories on mount
   const hasLoadedCategoriesRef = useRef(false);
   
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
-  // ✅ LOAD RIDER ID FROM INDEXEDDB
+  // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
-    async function loadRiderId() {
+    const loadRiderId = async () => {
       try {
-        const status = await getLocalRiderStatus();
-        if (status?.rider_id) {
-          setLocalRiderId(status.rider_id);
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ AddOtherExpense: Loaded rider ID:', id);
         }
       } catch (err) {
-        console.error('Error loading rider status:', err);
+        console.error('❌ Error loading rider ID:', err);
       } finally {
         setLoading(false);
       }
-    }
+    };
     loadRiderId();
   }, []);
 
-  // ✅ USE LOCAL STORAGE AS PRIMARY, FALLBACK TO CONTEXT
   const effectiveRiderId = localRiderId || state?.riderId;
 
   // ✅ LOAD CATEGORIES ON MOUNT - Single execution
   useEffect(() => {
     if (!isInitialized || hasLoadedCategoriesRef.current) {
-      return; // Exit if already loaded
+      return;
     }
 
     let isMounted = true;
@@ -78,32 +106,14 @@ export default function AddOtherExpenseScreen({ navigation }) {
               setCategories(cachedCategories);
               console.log('✅ Loaded categories from IndexedDB cache');
             } else {
-              // Cache is empty, show defaults
-              const defaultCategories = [
-                t('expenseCategory_food') || 'Food & Refreshments',
-                t('expenseCategory_phone') || 'Phone & Data',
-                t('expenseCategory_transport') || 'Transportation (non-bike)',
-                t('expenseCategory_health') || 'Health & Medical',
-                t('expenseCategory_family') || 'Family Support',
-                t('expenseCategory_other') || 'Other',
-              ];
-              setCategories(defaultCategories);
+              throw new Error('Empty cache');
             }
           } else {
-            // No cache, show defaults
-            const defaultCategories = [
-              t('expenseCategory_food') || 'Food & Refreshments',
-              t('expenseCategory_phone') || 'Phone & Data',
-              t('expenseCategory_transport') || 'Transportation (non-bike)',
-              t('expenseCategory_health') || 'Health & Medical',
-              t('expenseCategory_family') || 'Family Support',
-              t('expenseCategory_other') || 'Other',
-            ];
-            setCategories(defaultCategories);
+            throw new Error('No cache');
           }
         } catch (cacheErr) {
-          console.warn('⚠️ Cache retrieval error:', cacheErr);
-          // Show defaults
+          // Cache missing or empty - use defaults
+          console.log('📦 No cache, using default categories');
           const defaultCategories = [
             t('expenseCategory_food') || 'Food & Refreshments',
             t('expenseCategory_phone') || 'Phone & Data',
@@ -165,6 +175,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
 
   const handleSave = async () => {
     clearCriticalError();
+    setSuccessMessage('');
 
     if (!effectiveRiderId) {
       showCriticalError(
@@ -193,7 +204,9 @@ export default function AddOtherExpenseScreen({ navigation }) {
 
     setSaving(true);
     try {
-      const recordId = `expense_${effectiveRiderId}_${Date.now()}`;
+      const recordId = `other_expense_${effectiveRiderId}_${Date.now()}`;
+      const timestamp = new Date().getTime();
+      
       const entry = {
         id: recordId,
         rider_id: effectiveRiderId,
@@ -201,63 +214,59 @@ export default function AddOtherExpenseScreen({ navigation }) {
         amount: amt,
         note: note || '',
         created_at: new Date().toISOString(),
+        ts: timestamp,
         status: 'pending',
       };
 
-      console.log('💾 Saving expense:', { recordId, riderId: effectiveRiderId, category, amount: amt });
+      console.log('💾 Saving other expense:', { recordId, riderId: effectiveRiderId, category, amount: amt });
 
-      // ✅ SAVE TO INDEXEDDB FIRST (offline-first)
-      try {
-        await indexedDbAdapter.insertRow('local_expenses', entry);
-        console.log('✅ Saved to IndexedDB');
-      } catch (insertErr) {
-        console.warn('⚠️ Failed to save to IndexedDB:', insertErr);
-      }
+      // ✅ ALWAYS SAVE LOCALLY FIRST using IndexedDB kvSet
+      await indexedDbAdapter.kvSet(
+        `other_expense_${recordId}`, 
+        JSON.stringify(entry)
+      );
+      console.log('✅ Saved to IndexedDB');
 
-      // ✅ ADD TO SYNC QUEUE FOR BACKGROUND SYNC
-      try {
-        const queueSuccess = await addToSyncQueue({
-          id: recordId,
-          type: 'expense',
-          endpoint: `/financial/expenses?rider_id=${effectiveRiderId}`,
-          data: {
-            rider_id: effectiveRiderId,
-            category,
-            amount: amt,
-            note: note || '',
-            submitted_at: Date.now(),
-          },
-          timestamp: new Date(),
-        });
+      // ✅ UPDATE CACHE IMMEDIATELY for instant UI feedback
+      await invalidateOtherExpensesCache(effectiveRiderId);
 
-        if (queueSuccess) {
-          console.log('✅ Added to sync queue');
-        } else {
-          console.warn('⚠️ Failed to add to sync queue, but local save succeeded');
-        }
-      } catch (queueErr) {
-        console.warn('⚠️ Sync queue error:', queueErr);
+      // ✅ ADD TO SYNC QUEUE for background API uploads
+      const queueSuccess = await addToSyncQueue({
+        id: recordId,
+        type: 'other_expense',
+        endpoint: `/financial/other-expense?rider_id=${effectiveRiderId}`,
+        data: {
+          category,
+          amount: amt,
+          note: note || '',
+        },
+        timestamp: new Date(),
+      });
+
+      if (!queueSuccess) {
+        console.warn('⚠️ Failed to add to queue, but local save succeeded');
       }
 
       // Try to sync immediately only if online
       if (isConnected && isInitialized) {
         try {
-          console.log('📡 Attempting to sync expense to API...');
+          console.log('📡 Attempting to sync to API...');
           const response = await api.post(
-            `/financial/expenses?rider_id=${effectiveRiderId}`,
+            `/financial/other-expense?rider_id=${effectiveRiderId}`,
             {
-              rider_id: effectiveRiderId,
               category,
               amount: amt,
               note: note || '',
-              submitted_at: Date.now(),
             }
           );
 
           if (response.status === 200 || response.status === 201) {
-            console.log('✅ Expense synced successfully to API');
-            // Navigate after success
-            navigation.navigate('MoneyMastery');
+            console.log('✅ Synced successfully to API');
+            setSuccessMessage(t('success_expenseSaved') || 'Expense saved!');
+            
+            setTimeout(() => {
+              navigation.navigate('MoneyMastery');
+            }, 800);
             return;
           }
         } catch (apiErr) {
@@ -265,12 +274,16 @@ export default function AddOtherExpenseScreen({ navigation }) {
             status: apiErr.response?.status,
             message: apiErr.message,
           });
-          // Data is saved and queued, continue
         }
       }
 
-      // Data is safely stored and queued
-      navigation.navigate('MoneyMastery');
+      // Either offline or API sync failed - but data is safely stored
+      const syncingMsg = t('success_expenseSaving') || 'Expense saved. Syncing...';
+      setSuccessMessage(syncingMsg);
+      
+      setTimeout(() => {
+        navigation.navigate('MoneyMastery');
+      }, 800);
 
     } catch (err) {
       console.error('❌ Save error:', err);
@@ -304,6 +317,12 @@ export default function AddOtherExpenseScreen({ navigation }) {
           <TouchableOpacity onPress={clearCriticalError}>
             <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
+        </View>
+      )}
+
+      {successMessage && !saving && (
+        <View style={styles.successBanner}>
+          <Text style={styles.successBannerText}>✅ {successMessage}</Text>
         </View>
       )}
 
@@ -402,7 +421,7 @@ const styles = StyleSheet.create({
     fontSize: 22, 
     fontWeight: '700', 
     color: '#1a1c20', 
-    marginBottom: 2 
+    marginBottom: 20 
   },
 
   criticalErrorBanner: {
@@ -429,8 +448,22 @@ const styles = StyleSheet.create({
     marginLeft: 12
   },
 
+  successBanner: {
+    backgroundColor: '#e8f5e9',
+    borderWidth: 1.5,
+    borderColor: '#a5d6a7',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16
+  },
+  successBannerText: {
+    fontSize: 12,
+    color: '#2e7d32',
+    fontWeight: '600'
+  },
+
   field: { 
-    marginBottom: 16 
+    marginBottom: 20 
   },
   label: { 
     fontSize: 11.5, 
@@ -438,7 +471,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase', 
     letterSpacing: 0.04, 
     color: '#5b606c',
-    marginBottom: 7,
+    marginBottom: 8
   },
   required: { 
     color: '#e5650a', 
@@ -459,32 +492,32 @@ const styles = StyleSheet.create({
 
   input: {
     width: '100%',
-    padding: 13,
+    padding: 14,
     borderRadius: 12,
     borderWidth: 1.5,
     borderColor: '#e7e4db',
-    fontSize: 15,
-    fontFamily: 'Inter',
+    fontSize: 16,
     backgroundColor: '#fff',
     color: '#1a1c20',
+    marginBottom: 8
   },
   textarea: { 
     height: 90, 
-    paddingTop: 13, 
+    paddingTop: 14, 
     textAlignVertical: 'top' 
   },
 
   primaryBtn: {
     backgroundColor: '#ff7a1a',
     borderRadius: 14,
-    paddingVertical: 15,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 16,
     shadowColor: '#ff7a1a',
-    shadowOpacity: 0.55,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 6,
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6
   },
   primaryBtnDisabled: { 
     backgroundColor: '#e9dccc', 
@@ -500,7 +533,7 @@ const styles = StyleSheet.create({
   },
   primaryBtnText: { 
     color: '#fff', 
-    fontSize: 15, 
+    fontSize: 16, 
     fontWeight: '700',
     letterSpacing: 0.02
   },

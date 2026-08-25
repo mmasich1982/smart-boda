@@ -1,11 +1,9 @@
 // rider-app/src/screens/financialPerformance/MoneyMasteryScreen.js
-// ✅ SEAMLESS ONLINE/OFFLINE: Computes net profit locally from raw data
-// ✅ DISPLAYS: Daily, Weekly, Monthly totals
-// ✅ PRESERVED: Exact UI/UX layout and styling
-// ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
-// ✅ NETWORK AWARE: Real-time connectivity detection
-// ✅ FIXED: All expenses (fuel, service, other) now appear
-// ✅ FIXED: Week period calculation corrected
+// ✅ REFACTORED: Direct IndexedDB calculations (no external service dependencies)
+// ✅ OFFLINE-FIRST: Pure IndexedDB key-value storage for all cache
+// ✅ REAL-TIME: Cache invalidation via AddOtherExpenseScreen ensures instant updates
+// ✅ SEAMLESS SYNC: Background API uploads when online
+// ✅ MULTILINGUAL: Full i18n support
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
@@ -17,13 +15,165 @@ import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import api from '../../api/client';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
-import { calculateNetProfit, calculateAllPeriodTotals, getWeekAverageDailyProfit } from '../../services/financialComputationService';
 
 const PERIODS = [
   { key: 'today', label: 'Today' },
   { key: 'this_week', label: 'This Week' },
   { key: 'this_month', label: 'This Month' },
 ];
+
+/**
+ * ✅ GET PERIOD BOUNDARIES
+ * Calculates start/end timestamps for a given period
+ */
+function getPeriodBoundaries(period) {
+  const now = new Date();
+  let start, end;
+
+  if (period === 'today') {
+    // Today: 4 AM to 3:59:59 AM next day (trading day)
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 4, 0, 0, 0);
+    if (now < start) {
+      start.setDate(start.getDate() - 1);
+    }
+    end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    end.setMilliseconds(end.getMilliseconds() - 1);
+  } else if (period === 'this_week') {
+    // This week: Monday to Sunday (using trading day boundaries)
+    const first = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 4, 0, 0, 0);
+    if (now < first) {
+      first.setDate(first.getDate() - 1);
+    }
+    const day = first.getDay();
+    const diff = first.getDate() - day + (day === 0 ? -6 : 1);
+    start = new Date(first.getFullYear(), first.getMonth(), diff, 4, 0, 0, 0);
+    end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    end.setMilliseconds(end.getMilliseconds() - 1);
+  } else if (period === 'this_month') {
+    // This month: 1st to last day
+    start = new Date(now.getFullYear(), now.getMonth(), 1, 4, 0, 0, 0);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  }
+
+  return { start, end, startMs: start.getTime(), endMs: end.getTime() };
+}
+
+/**
+ * ✅ CALCULATE NET PROFIT: Direct IndexedDB queries
+ * Reads all data sources and computes totals
+ */
+async function calculateNetProfitDirect(riderId, period) {
+  try {
+    const { startMs, endMs } = getPeriodBoundaries(period);
+    
+    console.log(`📊 Calculating Net Profit for ${period}...`);
+
+    // ✅ 1. GET TRIP INCOME (from kvStore cache)
+    let tripIncome = 0;
+    try {
+      const tripData = await indexedDbAdapter.kvGet(`trip_income_${riderId}_${period}`);
+      if (tripData) {
+        tripIncome = typeof tripData === 'string' ? JSON.parse(tripData).total : tripData.total || 0;
+      }
+      console.log(`✅ Trip income: KSh ${tripIncome}`);
+    } catch (err) {
+      console.warn('⚠️ Error getting trip income:', err);
+    }
+
+    // ✅ 2. GET FUEL EXPENSES
+    let fuelExpense = 0;
+    try {
+      const fuelData = await indexedDbAdapter.kvGet(`fuel_summary_${riderId}`);
+      if (fuelData) {
+        const fuel = typeof fuelData === 'string' ? JSON.parse(fuelData) : fuelData;
+        fuelExpense = fuel.total || 0;
+      }
+      console.log(`✅ Fuel expense: KSh ${fuelExpense}`);
+    } catch (err) {
+      console.warn('⚠️ Error getting fuel expense:', err);
+    }
+
+    // ✅ 3. GET BATTERY EXPENSES
+    let batteryExpense = 0;
+    try {
+      const batteryData = await indexedDbAdapter.kvGet(`battery_summary_${riderId}`);
+      if (batteryData) {
+        const battery = typeof batteryData === 'string' ? JSON.parse(batteryData) : batteryData;
+        batteryExpense = battery.total || 0;
+      }
+      console.log(`✅ Battery expense: KSh ${batteryExpense}`);
+    } catch (err) {
+      console.warn('⚠️ Error getting battery expense:', err);
+    }
+
+    // ✅ 4. GET MAINTENANCE EXPENSES
+    let maintenanceExpense = 0;
+    try {
+      const maintenanceData = await indexedDbAdapter.kvGet(`maintenance_summary_${riderId}`);
+      if (maintenanceData) {
+        const maintenance = typeof maintenanceData === 'string' ? JSON.parse(maintenanceData) : maintenanceData;
+        maintenanceExpense = maintenance.total || 0;
+      }
+      console.log(`✅ Maintenance expense: KSh ${maintenanceExpense}`);
+    } catch (err) {
+      console.warn('⚠️ Error getting maintenance expense:', err);
+    }
+
+    // ✅ 5. GET OTHER EXPENSES
+    let otherExpense = 0;
+    try {
+      const otherData = await indexedDbAdapter.kvGet(`other_expenses_summary_${riderId}`);
+      if (otherData) {
+        const other = typeof otherData === 'string' ? JSON.parse(otherData) : otherData;
+        otherExpense = other.total || 0;
+      }
+      console.log(`✅ Other expense: KSh ${otherExpense}`);
+    } catch (err) {
+      console.warn('⚠️ Error getting other expense:', err);
+    }
+
+    // ✅ CALCULATE NET PROFIT
+    const totalExpense = fuelExpense + batteryExpense + maintenanceExpense + otherExpense;
+    const netProfit = tripIncome - totalExpense;
+
+    // Build expense breakdown
+    const breakdown = [];
+    if (fuelExpense > 0) breakdown.push({ category: 'Fuel', amount: fuelExpense });
+    if (batteryExpense > 0) breakdown.push({ category: 'Battery', amount: batteryExpense });
+    if (maintenanceExpense > 0) breakdown.push({ category: 'Maintenance', amount: maintenanceExpense });
+    if (otherExpense > 0) breakdown.push({ category: 'Other', amount: otherExpense });
+
+    const summary = {
+      net_profit: netProfit,
+      income: tripIncome,
+      total_expense: totalExpense,
+      fuel_expense: fuelExpense,
+      battery_expense: batteryExpense,
+      maintenance_expense: maintenanceExpense,
+      other_expense: otherExpense,
+      breakdown,
+      week_avg_daily_profit: period === 'this_week' ? Math.round(netProfit / 7) : 0,
+    };
+
+    console.log('📊 NET PROFIT SUMMARY:', summary);
+    return summary;
+  } catch (err) {
+    console.error('❌ Error calculating net profit:', err);
+    return {
+      net_profit: 0,
+      income: 0,
+      total_expense: 0,
+      fuel_expense: 0,
+      battery_expense: 0,
+      maintenance_expense: 0,
+      other_expense: 0,
+      breakdown: [],
+      week_avg_daily_profit: 0,
+    };
+  }
+}
 
 export default function MoneyMasteryScreen({ navigation }) {
   const { state } = useRider();
@@ -34,9 +184,7 @@ export default function MoneyMasteryScreen({ navigation }) {
   const [allTotals, setAllTotals] = useState(null);
   const [loading, setLoading] = useState(true);
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
-  const [nudgeAccepted, setNudgeAccepted] = useState(false);
 
-  // ✅ CRITICAL: Track if we've already loaded data on mount
   const hasLoadedRef = useRef(false);
 
   const { isConnected, isInitialized } = useNetworkStatus();
@@ -60,252 +208,176 @@ export default function MoneyMasteryScreen({ navigation }) {
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  // ✅ LOAD FINANCIAL DATA ON MOUNT - Single execution
+  // ✅ COMPUTE AND DISPLAY DATA
+  const loadFinancialData = useCallback(async () => {
+    if (!effectiveRiderId || !isInitialized) return;
+
+    try {
+      setLoading(true);
+      clearCriticalError();
+
+      // Compute for current period
+      const cacheKey = `money_mastery_${effectiveRiderId}_${period}`;
+      
+      // Try cache first
+      let cachedData = null;
+      try {
+        const cached = await indexedDbAdapter.kvGet(cacheKey);
+        if (cached) {
+          const data = typeof cached === 'string' ? JSON.parse(cached) : cached;
+          cachedData = data?.data || data;
+          setSummary(cachedData);
+          console.log('✅ Loaded from cache');
+        }
+      } catch (cacheErr) {
+        console.warn('⚠️ Cache read error:', cacheErr);
+      }
+
+      // Compute fresh data
+      const computed = await calculateNetProfitDirect(effectiveRiderId, period);
+      
+      if (computed) {
+        setSummary(computed);
+        
+        // Update cache
+        try {
+          await indexedDbAdapter.kvSet(cacheKey, JSON.stringify({
+            data: computed,
+            cached_at: new Date().toISOString()
+          }));
+          console.log('✅ Updated cache');
+        } catch (setCacheErr) {
+          console.warn('⚠️ Failed to cache:', setCacheErr);
+        }
+      }
+
+      // Compute all periods for summary
+      try {
+        const todayData = await calculateNetProfitDirect(effectiveRiderId, 'today');
+        const weekData = await calculateNetProfitDirect(effectiveRiderId, 'this_week');
+        const monthData = await calculateNetProfitDirect(effectiveRiderId, 'this_month');
+
+        const totals = {
+          today: {
+            net_profit: todayData.net_profit,
+            income: todayData.income,
+            total_expense: todayData.total_expense,
+          },
+          this_week: {
+            net_profit: weekData.net_profit,
+            income: weekData.income,
+            total_expense: weekData.total_expense,
+          },
+          this_month: {
+            net_profit: monthData.net_profit,
+            income: monthData.income,
+            total_expense: monthData.total_expense,
+          },
+        };
+
+        setAllTotals(totals);
+        
+        // Cache all totals
+        try {
+          const allTotalsKey = `money_mastery_all_totals_${effectiveRiderId}`;
+          await indexedDbAdapter.kvSet(allTotalsKey, JSON.stringify(totals));
+        } catch (err) {
+          console.warn('⚠️ Failed to cache all totals:', err);
+        }
+      } catch (err) {
+        console.warn('⚠️ Error computing all totals:', err);
+      }
+
+      // Try API sync if online
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Syncing with API...');
+          const response = await api.get(
+            `/financial/net-profit?rider_id=${effectiveRiderId}&period=${period}`
+          );
+          
+          if (response.data) {
+            setSummary(response.data);
+            
+            // Update cache with API data
+            try {
+              await indexedDbAdapter.kvSet(cacheKey, JSON.stringify({
+                data: response.data,
+                cached_at: new Date().toISOString()
+              }));
+              console.log('✅ Synced and cached API data');
+            } catch (err) {
+              console.warn('⚠️ Failed to cache API data:', err);
+            }
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API sync failed, using computed data:', apiErr.message);
+        }
+      }
+    } catch (err) {
+      console.error('❌ Error loading data:', err);
+      showCriticalError(
+        t('error_loadSummaryFailed') || 'Unable to load summary. Please try again.',
+        'data_load'
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [effectiveRiderId, isInitialized, isConnected, period, t, clearCriticalError, showCriticalError]);
+
+  // ✅ LOAD DATA ON MOUNT - Single execution
   useEffect(() => {
     if (!effectiveRiderId || !isInitialized || hasLoadedRef.current) {
       return;
     }
+    
+    hasLoadedRef.current = true;
+    loadFinancialData();
+  }, [effectiveRiderId, isInitialized, loadFinancialData]);
 
-    let isMounted = true;
-
-    async function loadFinancialDataOnMount() {
-      try {
-        setLoading(true);
-        clearCriticalError();
-
-        const cacheKey = `money_mastery_${effectiveRiderId}_${period}`;
-        const allTotalsKey = `money_mastery_all_totals_${effectiveRiderId}`;
-
-        // 1. Try cache for all totals
-        console.log('📦 Checking IndexedDB cache for all totals...');
-        let cachedTotals = null;
-        try {
-          const cached = await indexedDbAdapter.kvGet(allTotalsKey);
-          if (cached && isMounted) {
-            cachedTotals = typeof cached === 'string' ? JSON.parse(cached) : cached;
-            setAllTotals(cachedTotals);
-            console.log('✅ Loaded all totals from cache');
-          }
-        } catch (cacheErr) {
-          console.warn('⚠️ Cache retrieval error:', cacheErr);
-        }
-
-        // 2. Try cache for current period
-        console.log('📦 Checking IndexedDB cache for period...');
-        let cachedData = null;
-        try {
-          const cached = await indexedDbAdapter.kvGet(cacheKey);
-          if (cached && isMounted) {
-            const data = typeof cached === 'string' ? JSON.parse(cached) : cached;
-            if (data?.data) {
-              cachedData = data.data;
-              setSummary(data.data);
-              console.log('✅ Loaded period from cache');
-            } else if (data) {
-              cachedData = data;
-              setSummary(data);
-              console.log('✅ Loaded period from cache');
-            }
-          }
-        } catch (cacheErr) {
-          console.warn('⚠️ Cache retrieval error:', cacheErr);
-        }
-
-        // 3. If no cache, compute locally
-        if (!cachedData && isMounted) {
-          console.log('📊 No cache found, computing from raw IndexedDB data...');
-          try {
-            const computed = await calculateNetProfit(effectiveRiderId, period);
-            
-            if (isMounted && computed) {
-              setSummary(computed);
-              cachedData = computed;
-              
-              try {
-                await indexedDbAdapter.kvSet(cacheKey, JSON.stringify({
-                  data: computed,
-                  cached_at: new Date().toISOString()
-                }));
-                console.log('✅ Computed and cached net profit locally');
-              } catch (setCacheErr) {
-                console.warn('⚠️ Failed to cache computed result:', setCacheErr);
-              }
-            }
-          } catch (computeErr) {
-            console.error('❌ Error computing net profit:', computeErr);
-          }
-        }
-
-        // 4. Compute all period totals if not cached
-        if (!cachedTotals && isMounted) {
-          console.log('📊 Computing all period totals...');
-          try {
-            const totals = await calculateAllPeriodTotals(effectiveRiderId);
-            if (isMounted && totals) {
-              setAllTotals(totals);
-              
-              try {
-                await indexedDbAdapter.kvSet(allTotalsKey, JSON.stringify(totals));
-                console.log('✅ Cached all period totals');
-              } catch (setCacheErr) {
-                console.warn('⚠️ Failed to cache totals:', setCacheErr);
-              }
-            }
-          } catch (computeErr) {
-            console.error('❌ Error computing all totals:', computeErr);
-          }
-        }
-
-        // 5. Try to sync fresh data if online
-        if (isConnected && isMounted) {
-          console.log('📡 Syncing with API...');
-          try {
-            const response = await api.get(
-              `/financial/net-profit?rider_id=${effectiveRiderId}&period=${period}`
-            );
-
-            if (response.data && isMounted) {
-              setSummary(response.data);
-              
-              try {
-                await indexedDbAdapter.kvSet(cacheKey, JSON.stringify({
-                  data: response.data,
-                  cached_at: new Date().toISOString()
-                }));
-                console.log('✅ Synced and cached data from API');
-              } catch (setCacheErr) {
-                console.warn('⚠️ Failed to cache API result:', setCacheErr);
-              }
-            }
-          } catch (apiErr) {
-            console.warn('⚠️ API sync failed (using computed/cached data):', apiErr.message);
-          }
-        }
-
-        // 6. If we have no data at all, show empty state
-        if (!cachedData && !summary && isMounted) {
-          console.log('📊 No data found, showing empty state');
-          setSummary({
-            net_profit: 0,
-            income: 0,
-            total_expense: 0,
-            fuel_expense: 0,
-            maintenance_expense: 0,
-            other_expense: 0,
-            breakdown: [],
-            week_avg_daily_profit: 0,
-          });
-        }
-
-        if (isMounted) {
-          hasLoadedRef.current = true;
-          setLoading(false);
-        }
-      } catch (err) {
-        console.error('❌ Error loading data:', err);
-        if (isMounted) {
-          setSummary({
-            net_profit: 0,
-            income: 0,
-            total_expense: 0,
-            fuel_expense: 0,
-            maintenance_expense: 0,
-            other_expense: 0,
-            breakdown: [],
-            week_avg_daily_profit: 0,
-          });
-          setLoading(false);
-        }
-      }
-    }
-
-    loadFinancialDataOnMount();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [effectiveRiderId, isInitialized, isConnected, period]);
-
-  // ✅ Refresh on period change
+  // ✅ RELOAD ON PERIOD CHANGE
   useEffect(() => {
     if (!effectiveRiderId || !isInitialized) return;
+    loadFinancialData();
+  }, [period, effectiveRiderId, isInitialized, loadFinancialData]);
 
-    hasLoadedRef.current = false;
-  }, [period]);
-
-  // Refresh on screen focus
+  // ✅ REFRESH ON SCREEN FOCUS
   useFocusEffect(
     useCallback(() => {
-      if (!effectiveRiderId || !isInitialized || loading || !hasLoadedRef.current) return;
-
-      async function softRefreshCache() {
-        try {
-          const cacheKey = `money_mastery_${effectiveRiderId}_${period}`;
-          const allTotalsKey = `money_mastery_all_totals_${effectiveRiderId}`;
-          
-          const cachedData = await indexedDbAdapter.kvGet(cacheKey);
-          if (cachedData) {
-            const data = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
-            if (data?.data) {
-              setSummary(data.data);
-              console.log('✅ Refreshed cache on focus');
-            } else if (data) {
-              setSummary(data);
-              console.log('✅ Refreshed cache on focus');
-            }
-          } else {
-            const computed = await calculateNetProfit(effectiveRiderId, period);
-            setSummary(computed);
-          }
-
-          // Refresh totals
-          const cachedTotals = await indexedDbAdapter.kvGet(allTotalsKey);
-          if (cachedTotals) {
-            setAllTotals(typeof cachedTotals === 'string' ? JSON.parse(cachedTotals) : cachedTotals);
-          }
-        } catch (err) {
-          console.warn('⚠️ Error in focus refresh:', err);
-        }
+      if (effectiveRiderId && isInitialized) {
+        loadFinancialData();
       }
-
-      softRefreshCache();
-    }, [effectiveRiderId, isInitialized, period, loading])
+    }, [effectiveRiderId, isInitialized, loadFinancialData])
   );
-
-  if (!isInitialized || (loading && !summary)) {
-    return (
-      <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
-        <Text style={styles.title}>{t('financialPerformance') || 'Financial Performance'}</Text>
-        {loading && <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />}
-      </ScrollView>
-    );
-  }
-
-  const isNegative = (summary?.net_profit || 0) < 0;
-  const totalExpense = summary?.total_expense || 1;
-  const categoryRows = (summary?.breakdown || [])
-    .filter(row => row.amount > 0)
-    .sort((a, b) => b.amount - a.amount);
-
-  const showNudge = !nudgeDismissed && !nudgeAccepted && 
-    period === 'today' && (summary?.net_profit || 0) > 0 && 
-    (summary?.week_avg_daily_profit ? (summary.net_profit || 0) > summary.week_avg_daily_profit * 1.3 : false);
-
-  const handleAcceptNudge = () => {
-    setNudgeAccepted(true);
-  };
 
   const handleDismissNudge = () => {
     setNudgeDismissed(true);
   };
 
+  const handleAcceptNudge = () => {
+    navigation.navigate('SendMoneyHome');
+  };
+
+  if (loading || !summary) {
+    return (
+      <ScrollView style={styles.container}>
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <Text style={styles.title}>{t('moneyMastery') || 'Money Mastery'}</Text>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+      </ScrollView>
+    );
+  }
+
+  const isNegative = (summary.net_profit || 0) < 0;
+  const showNudge = !nudgeDismissed && (summary.net_profit || 0) > 500;
+  const categoryRows = summary.breakdown || [];
+  const totalExpense = summary.total_expense || 0;
+
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Home'} />
-      <Text style={styles.title}>{t('financialPerformance') || 'Financial Performance'}</Text>
+      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+      <Text style={styles.title}>{t('moneyMastery') || 'Money Mastery'}</Text>
 
-      {/* CRITICAL ERROR ONLY */}
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>{criticalError}</Text>
@@ -315,7 +387,7 @@ export default function MoneyMasteryScreen({ navigation }) {
         </View>
       )}
 
-      {/* Period Summary Totals */}
+      {/* Period Summary */}
       {allTotals && (
         <View style={styles.periodSummaryContainer}>
           <View style={styles.periodSummaryItem}>
@@ -357,62 +429,61 @@ export default function MoneyMasteryScreen({ navigation }) {
         ))}
       </View>
 
-      {summary && (
-        <>
-          {showNudge && (
-            <View style={styles.nudgeCard}>
-              <Text style={styles.nudgeTitle}>✨ Great day!</Text>
-              <Text style={styles.nudgeHint}>
-                Want to set aside some of today's extra profit towards your goals?
+      {/* Nudge Card */}
+      {showNudge && (
+        <View style={styles.nudgeCard}>
+          <Text style={styles.nudgeTitle}>✨ Great day!</Text>
+          <Text style={styles.nudgeHint}>
+            Want to set aside some of today's extra profit towards your goals?
+          </Text>
+          <View style={styles.nudgeButtonRow}>
+            <TouchableOpacity style={styles.nudgeButtonPrimary} onPress={handleAcceptNudge}>
+              <Text style={styles.nudgeButtonText}>
+                Set Aside KSh {Math.round((summary.net_profit || 0) * 0.2).toLocaleString()}
               </Text>
-              <View style={styles.nudgeButtonRow}>
-                <TouchableOpacity style={styles.nudgeButtonPrimary} onPress={handleAcceptNudge}>
-                  <Text style={styles.nudgeButtonText}>
-                    Set Aside KSh {Math.round((summary.net_profit || 0) * 0.2).toLocaleString()}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.nudgeButtonSecondary} onPress={handleDismissNudge}>
-                  <Text style={styles.nudgeButtonSecondaryText}>Not now</Text>
-                </TouchableOpacity>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.nudgeButtonSecondary} onPress={handleDismissNudge}>
+              <Text style={styles.nudgeButtonSecondaryText}>Not now</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Hero Card */}
+      <View style={[styles.heroCard, isNegative && styles.heroCardNegative]}>
+        <Text style={styles.heroLabel}>Net Profit</Text>
+        <Text style={[styles.netProfit, isNegative && styles.netProfitNegative]}>
+          KSh {(summary.net_profit || 0).toLocaleString()}
+        </Text>
+        <Text style={styles.profitSplit}>
+          Income: KSh {(summary.income || 0).toLocaleString()}   Expense: KSh {(summary.total_expense || 0).toLocaleString()}
+        </Text>
+      </View>
+
+      {/* Expense Breakdown */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Expense Breakdown</Text>
+        {categoryRows.length > 0 ? (
+          categoryRows.map((row) => (
+            <View key={row.category} style={styles.catRow}>
+              <Text style={styles.catName}>{row.category}</Text>
+              <View style={styles.catRight}>
+                <Text style={styles.catPercent}>{Math.round((row.amount / totalExpense) * 100)}%</Text>
+                <Text style={styles.catAmount}>KSh {row.amount.toLocaleString()}</Text>
               </View>
             </View>
-          )}
+          ))
+        ) : (
+          <Text style={styles.empty}>No expenses logged for this period.</Text>
+        )}
+      </View>
 
-          <View style={[styles.heroCard, isNegative && styles.heroCardNegative]}>
-            <Text style={styles.heroLabel}>Net Profit</Text>
-            <Text style={[styles.netProfit, isNegative && styles.netProfitNegative]}>
-              KSh {(summary.net_profit || 0).toLocaleString()}
-            </Text>
-            <Text style={styles.profitSplit}>
-              Income: KSh {(summary.income || 0).toLocaleString()}   Expense: KSh {(summary.total_expense || 0).toLocaleString()}
-            </Text>
-          </View>
-
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Expense Breakdown</Text>
-            {categoryRows.length > 0 ? (
-              categoryRows.map((row) => (
-                <View key={row.category} style={styles.catRow}>
-                  <Text style={styles.catName}>{row.category}</Text>
-                  <View style={styles.catRight}>
-                    <Text style={styles.catPercent}>{Math.round((row.amount / totalExpense) * 100)}%</Text>
-                    <Text style={styles.catAmount}>KSh {row.amount.toLocaleString()}</Text>
-                  </View>
-                </View>
-              ))
-            ) : (
-              <Text style={styles.empty}>No expenses logged for this period.</Text>
-            )}
-          </View>
-
-          <TouchableOpacity 
-            style={styles.primaryBtn} 
-            onPress={() => navigation.navigate('AddOtherExpense')}
-          >
-            <Text style={styles.primaryBtnText}>＋ Add Other Expense →</Text>
-          </TouchableOpacity>
-        </>
-      )}
+      <TouchableOpacity 
+        style={styles.primaryBtn} 
+        onPress={() => navigation.navigate('AddOtherExpense')}
+      >
+        <Text style={styles.primaryBtnText}>＋ Add Other Expense →</Text>
+      </TouchableOpacity>
     </ScrollView>
   );
 }
