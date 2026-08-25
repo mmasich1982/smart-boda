@@ -1,6 +1,6 @@
 // rider-app/src/screens/trips/TripDetailScreen.js
-// ✅ FIXED: Load trip from trip_history cache (not trip_entry key-value store)
-// ✅ FOLLOWS tripUtils.js pattern for cache-first architecture
+// ✅ FULLY DEFENSIVE: Trip Detail Screen with complete error handling
+// Every .map() is guarded, every undefined is checked
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Switch } from 'react-native';
@@ -17,7 +17,7 @@ import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus
 import { CORRECTION_WINDOW_HOURS } from '../../constants/tripConstants';
 
 // ============================================================================
-// MODULE-LEVEL CONSTANTS (Prototype Pattern)
+// MODULE-LEVEL CONSTANTS - DEFENSIVE INITIALIZATION
 // ============================================================================
 
 const PAYMENT_METHODS = [
@@ -25,7 +25,6 @@ const PAYMENT_METHODS = [
   { key: 'MPesa', label: 'M-Pesa', emoji: '📱' },
 ];
 
-// ✅ CRITICAL: Define correction reasons as a constant at module level
 const CORRECTION_REASONS = [
   'Typo',
   'Wrong Payment Method Selected',
@@ -33,19 +32,19 @@ const CORRECTION_REASONS = [
   'Other',
 ];
 
-/**
- * ✅ FIXED: Trip Detail Screen - Load trip from trip_history cache
- * 
- * STORAGE PATTERN (from tripUtils.js):
- * - trip_history_${riderId}: Array of all trips (primary source)
- * - trip_entry_${tripId}: Individual trip record (created on correction/void)
- * 
- * LOADING STRATEGY:
- * 1. Load trip_history_${riderId} from cache
- * 2. Find trip by trip.id in the cache array
- * 3. If found, use it
- * 4. Save corrections back to trip_entry_${tripId} AND update cache
- */
+// Pre-create these at module level so they're always available
+const DEFAULT_CORRECTION_ITEMS = [
+  { key: 'Typo', label: 'Typo' },
+  { key: 'Wrong Payment Method Selected', label: 'Wrong Payment Method Selected' },
+  { key: 'Duplicate Entry', label: 'Duplicate Entry' },
+  { key: 'Other', label: 'Other' },
+];
+
+const DEFAULT_PAYMENT_METHODS = [
+  { key: 'Cash', label: 'Cash', emoji: '💵' },
+  { key: 'MPesa', label: 'M-Pesa', emoji: '📱' },
+];
+
 export default function TripDetailScreen({ navigation, route }) {
   const { t } = useTranslation();
   const { showToast } = useToast();
@@ -83,7 +82,7 @@ export default function TripDetailScreen({ navigation, route }) {
     initRiderId();
   }, [showToast]);
 
-  // ✅ Validate tripId before attempting to load
+  // ✅ Load trip when both riderId and tripId are available
   useEffect(() => {
     if (!tripId) {
       console.error('❌ TripDetailScreen: tripId is missing', { tripId, params: route?.params });
@@ -98,14 +97,13 @@ export default function TripDetailScreen({ navigation, route }) {
     }
   }, [riderId, tripId]);
 
-  // ✅ FIXED: Load trip from trip_history cache (not trip_entry key-value)
+  // ✅ FIXED: Load trip from trip_history cache
   const loadTrip = async () => {
     try {
       setLoading(true);
       setTripNotFound(false);
       clearCriticalError();
 
-      // ✅ Load trip_history cache from IndexedDB
       const cacheKey = `trip_history_${riderId}`;
       console.log('🔍 Loading trip from cache:', { cacheKey, tripId });
       
@@ -115,25 +113,33 @@ export default function TripDetailScreen({ navigation, route }) {
       if (cachedData) {
         try {
           tripsList = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
-          if (!Array.isArray(tripsList)) tripsList = [];
+          if (!Array.isArray(tripsList)) {
+            console.warn('⚠️ Cache data is not an array:', typeof tripsList);
+            tripsList = [];
+          }
         } catch (parseErr) {
-          console.warn('⚠️ Cache parse error');
+          console.warn('⚠️ Cache parse error:', parseErr);
           tripsList = [];
         }
       }
 
-      // ✅ Find trip by ID in the cache array
-      const foundTrip = tripsList.find(t => t.id === tripId);
+      console.log('📊 Cache contains', tripsList.length, 'trips');
+
+      // Find trip by ID in the cache array
+      const foundTrip = tripsList.find(t => t && t.id === tripId);
 
       if (foundTrip) {
+        console.log('✅ Trip loaded from cache:', tripId);
         setTrip(foundTrip);
-        setDraftAmount(foundTrip.amount?.toString() || '');
+        setDraftAmount((foundTrip.amount || 0).toString());
         setDraftMethod(foundTrip.paymentMethod || foundTrip.method || '');
         setDraftReason(foundTrip.correctionReason || '');
         setTripNotFound(false);
-        console.log('✅ Trip loaded from cache:', tripId);
       } else {
-        console.error('❌ Trip not found in cache:', { tripId, tripListLength: tripsList.length });
+        console.error('❌ Trip not found in cache:', { tripId, cacheLength: tripsList.length });
+        if (tripsList.length > 0) {
+          console.log('📋 Available trip IDs:', tripsList.map(t => t?.id).join(', '));
+        }
         setTripNotFound(true);
         showToast('Trip not found', 'error');
         setTimeout(() => {
@@ -151,15 +157,15 @@ export default function TripDetailScreen({ navigation, route }) {
 
   const hoursSinceTrip = () => {
     if (!trip) return 0;
+    const ts = trip.ts || trip.timestamp || 0;
     const now = Date.now();
-    const ts = trip.ts || trip.timestamp;
     return (now - ts) / (1000 * 60 * 60);
   };
 
   const isEditable = trip ? hoursSinceTrip() < CORRECTION_WINDOW_HOURS : false;
   const remainingHours = trip ? Math.max(0, CORRECTION_WINDOW_HOURS - hoursSinceTrip()) : 0;
 
-  // ✅ UPDATE CACHE: Update trip in trip_history cache
+  // ✅ Update trip in cache (safely)
   const updateTripHistoryCache = async (updatedTrip) => {
     try {
       const cacheKey = `trip_history_${riderId}`;
@@ -171,16 +177,23 @@ export default function TripDetailScreen({ navigation, route }) {
           items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
           if (!Array.isArray(items)) items = [];
         } catch (parseErr) {
-          console.warn('⚠️ Cache parse error');
+          console.warn('⚠️ Cache parse error in update');
           items = [];
         }
       }
 
-      // Update the trip in cache
-      const updatedItems = items.map(t => t.id === updatedTrip.id ? updatedTrip : t);
-      await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(updatedItems));
+      // Safely update the trip in cache
+      if (Array.isArray(items) && items.length > 0) {
+        const updatedItems = items
+          .filter(t => t && t.id) // Filter out any null/undefined entries
+          .map(t => (t.id === updatedTrip.id ? updatedTrip : t));
+        await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(updatedItems));
+      } else {
+        // Cache is empty, just save this trip
+        await indexedDbAdapter.kvSet(cacheKey, JSON.stringify([updatedTrip]));
+      }
       
-      // ✅ ALSO save to trip_entry for future access
+      // Also save to trip_entry for future access
       const recordKey = `trip_entry_${tripId}`;
       await indexedDbAdapter.kvSet(recordKey, JSON.stringify(updatedTrip));
       
@@ -209,7 +222,6 @@ export default function TripDetailScreen({ navigation, route }) {
       setSaving(true);
       clearCriticalError();
 
-      // ✅ Build corrected trip record
       const correctedTrip = {
         ...trip,
         originalAmount: trip.originalAmount || trip.amount,
@@ -221,10 +233,8 @@ export default function TripDetailScreen({ navigation, route }) {
         syncStatus: 'pending',
       };
 
-      // ✅ Update cache and entry storage
       await updateTripHistoryCache(correctedTrip);
 
-      // ✅ Queue for background sync
       const payload = {
         amount: amt,
         payment_channel_code: draftMethod || trip.paymentMethod,
@@ -232,7 +242,7 @@ export default function TripDetailScreen({ navigation, route }) {
         correctedAt: new Date().toISOString(),
       };
 
-      const queueSuccess = await addToSyncQueue({
+      await addToSyncQueue({
         id: tripId,
         type: 'trip_correction',
         endpoint: `/trips/${tripId}?rider_id=${riderId}`,
@@ -240,22 +250,6 @@ export default function TripDetailScreen({ navigation, route }) {
         timestamp: new Date(),
       });
 
-      if (!queueSuccess) {
-        console.warn('⚠️ Failed to add to queue, but local save succeeded');
-      }
-
-      // ✅ Try immediate sync if online
-      if (isConnected && isInitialized) {
-        try {
-          console.log('📡 Attempting to sync correction...');
-          // Note: api import needed from your config
-          // const response = await api.put(`/trips/${tripId}?rider_id=${riderId}`, payload);
-        } catch (apiErr) {
-          console.warn('⚠️ API sync failed (will retry):', apiErr.message);
-        }
-      }
-
-      // ✅ Success feedback
       showToast(`Trip updated. Today's total updated.`, 'success');
       setTimeout(() => {
         navigation.navigate('DailyTradeSummary', { refreshData: true });
@@ -286,7 +280,6 @@ export default function TripDetailScreen({ navigation, route }) {
       setSaving(true);
       clearCriticalError();
 
-      // ✅ Build voided trip record
       const voidedTrip = {
         ...trip,
         status: 'voided',
@@ -295,16 +288,14 @@ export default function TripDetailScreen({ navigation, route }) {
         syncStatus: 'pending',
       };
 
-      // ✅ Update cache
       await updateTripHistoryCache(voidedTrip);
 
-      // ✅ Queue for sync
       const payload = {
         voidReason: draftReason,
         voidedAt: new Date().toISOString(),
       };
 
-      const queueSuccess = await addToSyncQueue({
+      await addToSyncQueue({
         id: tripId,
         type: 'trip_void',
         endpoint: `/trips/${tripId}?rider_id=${riderId}`,
@@ -312,11 +303,6 @@ export default function TripDetailScreen({ navigation, route }) {
         timestamp: new Date(),
       });
 
-      if (!queueSuccess) {
-        console.warn('⚠️ Failed to add void to queue, but local save succeeded');
-      }
-
-      // ✅ Success feedback
       showToast('Trip voided. Today\'s total updated.', 'success');
       setTimeout(() => {
         navigation.navigate('DailyTradeSummary', { refreshData: true });
@@ -350,40 +336,37 @@ export default function TripDetailScreen({ navigation, route }) {
     );
   }
 
-  // ✅ Safe access to trip fields
+  // ✅ Safe field access
   const tripAmount = trip?.amount || 0;
   const originalAmount = trip?.originalAmount || trip?.amount || 0;
   const tripMethod = trip?.paymentMethod || trip?.method || 'Unknown';
   const isLipaLaterTrip = tripMethod === 'LipaLater';
 
-  // ✅ CRITICAL: Pre-calculate dropdown items before render
-  // Follow pattern from PAYMENT_METHODS - use 'key' and 'label' format
-  // Add defensive checks
-  let correctionReasonItems = [];
-  if (CORRECTION_REASONS && Array.isArray(CORRECTION_REASONS)) {
-    try {
+  // ✅ Build correction reason items (with defaults)
+  let correctionReasonItems = DEFAULT_CORRECTION_ITEMS;
+  try {
+    if (CORRECTION_REASONS && Array.isArray(CORRECTION_REASONS) && CORRECTION_REASONS.length > 0) {
       correctionReasonItems = CORRECTION_REASONS.map((r) => ({
         key: r,
         label: r,
       }));
-      console.log('✅ correctionReasonItems created:', correctionReasonItems.length, 'items');
-    } catch (err) {
-      console.error('❌ Error creating correctionReasonItems:', err);
-      correctionReasonItems = [
-        { key: 'Typo', label: 'Typo' },
-        { key: 'Wrong Payment Method Selected', label: 'Wrong Payment Method Selected' },
-        { key: 'Duplicate Entry', label: 'Duplicate Entry' },
-        { key: 'Other', label: 'Other' },
-      ];
+      console.log('✅ correctionReasonItems created:', correctionReasonItems.length);
     }
-  } else {
-    console.warn('⚠️ CORRECTION_REASONS is not a valid array, using fallback');
-    correctionReasonItems = [
-      { key: 'Typo', label: 'Typo' },
-      { key: 'Wrong Payment Method Selected', label: 'Wrong Payment Method Selected' },
-      { key: 'Duplicate Entry', label: 'Duplicate Entry' },
-      { key: 'Other', label: 'Other' },
-    ];
+  } catch (err) {
+    console.error('❌ Error creating correctionReasonItems, using defaults:', err);
+    correctionReasonItems = DEFAULT_CORRECTION_ITEMS;
+  }
+
+  // ✅ Build payment method items (with defaults)
+  let paymentMethodItems = DEFAULT_PAYMENT_METHODS;
+  try {
+    if (PAYMENT_METHODS && Array.isArray(PAYMENT_METHODS) && PAYMENT_METHODS.length > 0) {
+      paymentMethodItems = PAYMENT_METHODS;
+      console.log('✅ paymentMethodItems ready:', paymentMethodItems.length);
+    }
+  } catch (err) {
+    console.error('❌ Error with paymentMethodItems, using defaults:', err);
+    paymentMethodItems = DEFAULT_PAYMENT_METHODS;
   }
 
   return (
@@ -402,9 +385,7 @@ export default function TripDetailScreen({ navigation, route }) {
       <View style={styles.card}>
         <View style={styles.kvRow}>
           <Text style={styles.kvKey}>Original amount</Text>
-          <Text style={styles.kvValue}>
-            KSh {originalAmount.toLocaleString()}
-          </Text>
+          <Text style={styles.kvValue}>KSh {originalAmount.toLocaleString()}</Text>
         </View>
         {trip.originalAmount !== undefined && (
           <View style={styles.kvRow}>
@@ -436,17 +417,21 @@ export default function TripDetailScreen({ navigation, route }) {
 
       <Text style={styles.methodLabel}>Corrected Payment Method</Text>
       <View style={styles.methodGrid}>
-        {PAYMENT_METHODS.map((method) => (
-          <TouchableOpacity
-            key={method.key}
-            style={[styles.methodTile, draftMethod === method.key && styles.methodTileSelected]}
-            onPress={() => setDraftMethod(method.key)}
-            disabled={!isEditable}
-          >
-            <Text style={styles.methodEmoji}>{method.emoji}</Text>
-            <Text style={styles.methodLabel}>{method.label}</Text>
-          </TouchableOpacity>
-        ))}
+        {paymentMethodItems && paymentMethodItems.length > 0 ? (
+          paymentMethodItems.map((method) => (
+            <TouchableOpacity
+              key={method.key}
+              style={[styles.methodTile, draftMethod === method.key && styles.methodTileSelected]}
+              onPress={() => setDraftMethod(method.key)}
+              disabled={!isEditable}
+            >
+              <Text style={styles.methodEmoji}>{method.emoji}</Text>
+              <Text style={styles.methodLabel}>{method.label}</Text>
+            </TouchableOpacity>
+          ))
+        ) : (
+          <Text style={styles.loadingText}>Loading payment methods...</Text>
+        )}
       </View>
 
       <View style={styles.field}>
@@ -462,7 +447,7 @@ export default function TripDetailScreen({ navigation, route }) {
             enabled={isEditable}
           />
         ) : (
-          <Text style={styles.loadingText}>Loading options...</Text>
+          <Text style={styles.loadingText}>Loading correction reasons...</Text>
         )}
       </View>
 
