@@ -32,6 +32,10 @@ const HOME_TILES = [
   { emoji: '🏡', label: 'home.tile_send_money_home', route: 'SendMoneyHome' },
   { emoji: '🏆', label: 'home.tile_my_goals', route: 'Goals' },
   { emoji: '💡', label: 'home.tile_suggestions_feedback', route: 'SuggestionsFeedback' },
+  { emoji: '📲', label: 'home.tile_my_subscription', route: 'MySubscriptions' },
+  
+  
+  
 ];
 
 function LoadingSkeleton() {
