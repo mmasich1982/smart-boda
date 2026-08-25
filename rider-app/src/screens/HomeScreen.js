@@ -15,11 +15,11 @@ import {
   RefreshControl
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import { useTranslation } from '../../i18n/LocalizationProvider';
-import { useRider } from '../../rider/RiderContext';
-import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
-import { getLocalRiderId } from '../../offline/db';
-import api from '../../api/client';
+import { useTranslation } from '../i18n/LocalizationProvider';
+import { useRider } from '../rider/RiderContext';
+import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
+import { getLocalRiderId } from '../offline/db';
+import api from '../api/client';
 
 // ✅ NEW IMPORT: Subscription Banners
 import SubscriptionBanners from '../../components/SubscriptionBanners';
