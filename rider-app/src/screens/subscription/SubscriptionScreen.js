@@ -1,12 +1,13 @@
 // rider-app/src/screens/subscription/SubscriptionScreen.js
 // ============================================================================
-// ✅ FIXED: Dependency Management & Infinite Loop Resolution
+// ✅ COMPREHENSIVE FIX: Error logging, API response validation, timeout handling
 // ============================================================================
-// CRITICAL FIXES:
-// 1. Removed loadSubscription from useFocusEffect dependencies
-// 2. Moved loadSubscription logic to a stable, memoized function
-// 3. Used refs to track initialization state instead of relying on effect dependencies
-// 4. Separated concerns: data loading vs UI lifecycle
+// FIXES:
+// 1. Added detailed error logging to diagnose API failures
+// 2. Better API response validation (checks for nested subscription data)
+// 3. Added request timeout to prevent infinite loading
+// 4. Improved offline fallback logic
+// 5. Better state synchronization with rider context changes
 // ============================================================================
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -26,6 +27,8 @@ import { useRider } from '../../rider/RiderContext';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import api from '../../api/client';
 
+const REQUEST_TIMEOUT_MS = 10000; // 10 second timeout
+
 export const SubscriptionScreen = () => {
   const navigation = useNavigation();
   const { t } = useTranslation();
@@ -42,12 +45,13 @@ export const SubscriptionScreen = () => {
   const [error, setError] = useState(null);
 
   // ========================================================================
-  // CONTROL MECHANISMS: Prevent infinite loops and double-initialization
+  // CONTROL MECHANISMS
   // ========================================================================
   const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
   const lastFetchRef = useRef(0);
-  const riderIdRef = useRef(riderId); // Track riderId separately
+  const riderIdRef = useRef(riderId);
+  const abortControllerRef = useRef(null);
   
   // Update rider ID ref when it changes
   useEffect(() => {
@@ -57,13 +61,27 @@ export const SubscriptionScreen = () => {
   // ========================================================================
   // LOAD SUBSCRIPTION DATA
   // ========================================================================
-  // ✅ FIXED: This function is NOT included in useFocusEffect dependencies
-  // It only depends on riderIdRef, which is stable
   const loadSubscription = useCallback(async () => {
-    if (!riderIdRef.current || !isMountedRef.current) {
-      console.log('⚠️ Skip load: no riderId or component unmounted');
+    // ✅ CRITICAL FIX: Check if component is mounted and riderId exists
+    if (!riderIdRef.current) {
+      console.warn('⚠️ SubscriptionScreen: riderId is not available in RiderContext');
+      if (isMountedRef.current) {
+        setError('no_rider_id');
+        setLoading(false);
+      }
       return;
     }
+
+    if (!isMountedRef.current) {
+      console.log('⚠️ SubscriptionScreen: Component unmounted, skipping load');
+      return;
+    }
+
+    // Cancel previous request if still pending
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
 
     try {
       setLoading(true);
@@ -73,57 +91,105 @@ export const SubscriptionScreen = () => {
 
       // Try API first
       try {
-        console.log('📡 Fetching subscription from API...');
+        console.log('📡 SubscriptionScreen: Fetching subscription from API for rider:', riderIdRef.current);
+        
+        const controller = abortControllerRef.current;
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
         const response = await api.get('/subscription', {
-          params: { rider_id: riderIdRef.current }
+          params: { rider_id: riderIdRef.current },
+          signal: controller.signal
         });
 
-        if (response?.data?.subscription) {
-          subscriptionData = response.data.subscription;
+        clearTimeout(timeoutId);
 
-          // ✅ Cache in IndexedDB
-          await indexedDbAdapter.kvSet(
-            `subscription_${riderIdRef.current}`,
-            JSON.stringify({
-              data: subscriptionData,
-              cached_at: new Date().toISOString()
-            })
-          );
+        console.log('✅ SubscriptionScreen: API response received:', response.data);
 
-          setIsOffline(false);
-          console.log('✅ Subscription loaded from API and cached');
+        // ✅ FIXED: Better API response validation
+        // The API returns: { rider_id, subscription: {...}, available_plans, frequencies, metadata }
+        if (response?.data) {
+          // Try to extract subscription data
+          subscriptionData = response.data?.subscription;
+
+          if (!subscriptionData) {
+            console.warn('⚠️ SubscriptionScreen: API response missing subscription field');
+            console.log('📊 SubscriptionScreen: Full API response structure:', Object.keys(response.data));
+          } else {
+            console.log('✅ SubscriptionScreen: Extracted subscription data:', subscriptionData);
+
+            // ✅ Cache in IndexedDB
+            try {
+              await indexedDbAdapter.kvSet(
+                `subscription_${riderIdRef.current}`,
+                JSON.stringify({
+                  data: subscriptionData,
+                  cached_at: new Date().toISOString()
+                })
+              );
+              console.log('✅ SubscriptionScreen: Data cached successfully');
+            } catch (cacheErr) {
+              console.warn('⚠️ SubscriptionScreen: Failed to cache data:', cacheErr.message);
+            }
+
+            setIsOffline(false);
+          }
+        } else {
+          console.warn('⚠️ SubscriptionScreen: API response has no data field');
         }
       } catch (apiErr) {
-        console.warn('⚠️ API fetch failed:', apiErr.message);
-        setIsOffline(true);
+        if (apiErr.name === 'AbortError') {
+          console.error('❌ SubscriptionScreen: API request timeout after', REQUEST_TIMEOUT_MS, 'ms');
+          if (isMountedRef.current) {
+            setError('api_timeout');
+          }
+        } else {
+          console.warn('⚠️ SubscriptionScreen: API fetch failed:', {
+            message: apiErr.message,
+            status: apiErr.response?.status,
+            statusText: apiErr.response?.statusText,
+            data: apiErr.response?.data
+          });
+          if (isMountedRef.current) {
+            setIsOffline(true);
+          }
+        }
       }
 
-      // Fallback to cache if API failed or returned nothing
-      if (!subscriptionData) {
+      // ✅ IMPROVED: Fallback to cache if API failed
+      if (!subscriptionData && isMountedRef.current) {
         try {
+          console.log('📂 SubscriptionScreen: Attempting to load from cache');
           const cached = await indexedDbAdapter.kvGet(
             `subscription_${riderIdRef.current}`
           );
           if (cached) {
-            subscriptionData = JSON.parse(cached).data;
-            console.log('✅ Loaded subscription from cache');
+            const parsedCache = JSON.parse(cached);
+            subscriptionData = parsedCache.data;
+            console.log('✅ SubscriptionScreen: Loaded from cache:', subscriptionData);
+            if (isMountedRef.current) {
+              setIsOffline(true);
+            }
+          } else {
+            console.warn('⚠️ SubscriptionScreen: No cached subscription data available');
           }
         } catch (cacheErr) {
-          console.warn('⚠️ Cache load failed:', cacheErr.message);
+          console.error('❌ SubscriptionScreen: Cache load error:', cacheErr.message);
         }
       }
 
       // Set state only if component is still mounted
       if (isMountedRef.current) {
         if (subscriptionData) {
+          console.log('✅ SubscriptionScreen: Setting subscription state');
           setSubscription(subscriptionData);
           lastFetchRef.current = Date.now();
         } else {
+          console.error('❌ SubscriptionScreen: No subscription data available from API or cache');
           setError('no_subscription_data');
         }
       }
     } catch (err) {
-      console.error('❌ Error loading subscription:', err);
+      console.error('❌ SubscriptionScreen: Unexpected error:', err);
       if (isMountedRef.current) {
         setError('error_loading_subscription');
       }
@@ -132,7 +198,7 @@ export const SubscriptionScreen = () => {
         setLoading(false);
       }
     }
-  }, []); // ✅ FIXED: Empty dependency array since we use riderIdRef
+  }, []);
 
   // ========================================================================
   // EFFECTS & LIFECYCLE
@@ -141,32 +207,37 @@ export const SubscriptionScreen = () => {
   // ✅ Initialize mount/unmount state
   useEffect(() => {
     isMountedRef.current = true;
+    console.log('✅ SubscriptionScreen: Component mounted');
     return () => {
       isMountedRef.current = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      console.log('ℹ️ SubscriptionScreen: Component unmounted');
     };
   }, []);
 
-  // ✅ FIXED: Load on screen focus (avoid infinite loops)
-  // Only riderId is in the dependency array, not loadSubscription
+  // ✅ Load on screen focus
   useFocusEffect(
     useCallback(() => {
-      // Only load if we haven't loaded yet for this rider
+      console.log('📌 SubscriptionScreen: Screen focused, riderId:', riderIdRef.current);
+      
+      // Reset and reload if riderId changed
       if (!hasLoadedRef.current && riderIdRef.current) {
-        console.log('📌 Screen focused, loading subscription...');
         hasLoadedRef.current = true;
         loadSubscription();
       }
 
-      // Cleanup: Allow reload on next focus if rider ID changes
       return () => {
+        // Allow reload on next focus if rider ID changes
         if (riderIdRef.current !== riderId) {
           hasLoadedRef.current = false;
         }
       };
-    }, [riderId, loadSubscription]) // loadSubscription is stable now
+    }, [riderId, loadSubscription])
   );
 
-  // ✅ FIXED: Reset loading flag when rider ID changes
+  // ✅ Reset loading flag when rider ID changes
   useEffect(() => {
     hasLoadedRef.current = false;
   }, [riderId]);
@@ -188,6 +259,7 @@ export const SubscriptionScreen = () => {
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#ff7a1a" />
         <Text style={styles.loadingText}>{t('common.loading')}</Text>
+        <Text style={styles.debugText}>rider_id: {riderId || 'NOT SET'}</Text>
       </View>
     );
   }
@@ -197,8 +269,13 @@ export const SubscriptionScreen = () => {
     return (
       <View style={styles.centered}>
         <Text style={styles.errorText}>
-          {t(`common.${error || 'error_loading'}`)}
+          {error === 'no_rider_id' 
+            ? 'Rider ID not found in context'
+            : error === 'api_timeout'
+            ? 'Request timed out. Please try again.'
+            : t(`common.${error || 'error_loading'}`)}
         </Text>
+        <Text style={styles.debugText}>Error: {error}</Text>
         <TouchableOpacity
           style={styles.retryButton}
           onPress={() => {
@@ -295,7 +372,7 @@ export const SubscriptionScreen = () => {
                 : t('subscription.expiring_soon')}
             </Text>
             <Text style={styles.warningMessage}>
-              {t('subscription.renew_before_expiry')}
+              {t('subscription.renew_now_to_continue')}
             </Text>
           </View>
         </View>
@@ -310,56 +387,67 @@ export const SubscriptionScreen = () => {
               {t('subscription.account_locked')}
             </Text>
             <Text style={styles.lockedMessage}>
-              {t('subscription.renew_to_unlock')}
+              {subscription.lock_reason || t('subscription.subscription_expired')}
             </Text>
           </View>
         </View>
       )}
 
-      {/* ACTION BUTTONS */}
+      {/* ACTIONS */}
       <View style={styles.actionsContainer}>
-        <TouchableOpacity
-          style={[
-            styles.buttonPrimary,
-            subscription.locked && styles.buttonDisabled
-          ]}
-          onPress={() => navigation.navigate('FrequencySelectScreen')}
-          disabled={subscription.locked}
-        >
-          <Text style={styles.buttonText}>
-            {subscription.has_ever_paid
-              ? t('subscription.renew_now')
-              : t('subscription.select_plan')}
-          </Text>
-        </TouchableOpacity>
-
-        {subscription.has_ever_paid && !subscription.locked && (
+        {subscription.locked ? (
           <TouchableOpacity
-            style={styles.buttonSecondary}
-            onPress={() => navigation.navigate('PrepayScreen', {
-              currentExpiryAt: subscription.expiry_at
-            })}
+            style={styles.buttonPrimary}
+            onPress={() => navigation.navigate('FrequencySelectScreen')}
           >
-            <Text style={styles.buttonSecondaryText}>
-              {t('subscription.pay_ahead')}
+            <Text style={styles.buttonText}>
+              {t('subscription.renew_subscription')} →
             </Text>
           </TouchableOpacity>
-        )}
+        ) : (
+          <>
+            <TouchableOpacity
+              style={styles.buttonPrimary}
+              onPress={() => navigation.navigate('FrequencySelectScreen')}
+            >
+              <Text style={styles.buttonText}>
+                {subscription.has_ever_paid
+                  ? t('subscription.renew_subscription')
+                  : t('subscription.select_plan')} →
+              </Text>
+            </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.buttonGhost}
-          onPress={() => navigation.navigate('PaymentHistoryScreen')}
-        >
-          <Text style={styles.buttonGhostText}>
-            {t('subscription.view_payment_history')} →
-          </Text>
-        </TouchableOpacity>
+            {subscription.has_ever_paid && (
+              <TouchableOpacity
+                style={styles.buttonSecondary}
+                onPress={() => navigation.navigate('PrepayScreen', {
+                  currentExpiryAt: subscription.expiry_at,
+                  dailyPrice: 34.5
+                })}
+              >
+                <Text style={styles.buttonSecondaryText}>
+                  {t('subscription.pay_ahead')} →
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {subscription.has_ever_paid && (
+              <TouchableOpacity
+                style={styles.buttonGhost}
+                onPress={() => navigation.navigate('PaymentHistoryScreen')}
+              >
+                <Text style={styles.buttonGhostText}>
+                  {t('subscription.payment_history')} →
+                </Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
       </View>
 
       {/* PRICING SECTION */}
       <View style={styles.pricingSection}>
         <Text style={styles.pricingTitle}>{t('subscription.available_plans')}</Text>
-
         <View style={styles.planCard}>
           <View style={styles.planHeader}>
             <Text style={styles.planName}>📆 {t('subscription.biweekly_plan')}</Text>
@@ -369,7 +457,6 @@ export const SubscriptionScreen = () => {
             {t('subscription.biweekly_description')}
           </Text>
         </View>
-
         <View style={styles.planCard}>
           <View style={styles.planHeader}>
             <Text style={styles.planName}>📆 {t('subscription.monthly_plan')}</Text>
@@ -412,6 +499,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#5b606c',
     marginTop: 12,
+  },
+  debugText: {
+    fontSize: 11,
+    color: '#999',
+    marginTop: 8,
   },
   errorText: {
     fontSize: 14,
