@@ -1,16 +1,15 @@
 // rider-app/src/screens/subscription/SubscriptionScreen.js
-// ============================================================================
-// ✅ REFACTORED: IndexedDB-FIRST + Sync Queue (Fuel Screen Pattern)
-// ✅ MIGRATION: LocalStore → IndexedDB kvSet/kvGet
-// ✅ No external repository dependencies
-// ============================================================================
+// ✅ REFACTORED: IndexedDB-FIRST + subscriptionUtils alignment
+// ✅ BUSINESS LOGIC: Free Trial, Renewal, Prepay, Payment History
+// ✅ UI/UX: Matches index.html design system (hero-band, cards, banners)
+// ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
+  ScrollView,
   View,
   Text,
   TouchableOpacity,
-  ScrollView,
   StyleSheet,
   ActivityIndicator,
   RefreshControl
@@ -21,6 +20,17 @@ import { useRider } from '../../rider/RiderContext';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
+import {
+  getActiveSubscription,
+  getSubscriptionState,
+  isFreTrialActive,
+  isSubscriptionExpired,
+  createSubscription,
+  lockAccount,
+  unlockAccount,
+  getSubscriptionHistory,
+  SUBSCRIPTION_PLANS
+} from '../../offline/subscriptionUtils';
 
 const SubscriptionScreen = () => {
   const navigation = useNavigation();
@@ -30,19 +40,18 @@ const SubscriptionScreen = () => {
   // ========================================================================
   // STATE
   // ========================================================================
+  const [localRiderId, setLocalRiderId] = useState(null);
   const [subscription, setSubscription] = useState(null);
+  const [subState, setSubState] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [isOffline, setIsOffline] = useState(false);
   const [error, setError] = useState(null);
-  const [localRiderId, setLocalRiderId] = useState(null);
 
   // ========================================================================
-  // CONTROL MECHANISMS: Prevent infinite loops and double-initialization
+  // CONTROL MECHANISMS
   // ========================================================================
   const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
-  const lastFetchRef = useRef(0);
 
   // ========================================================================
   // LOAD RIDER ID (Local-First)
@@ -67,12 +76,27 @@ const SubscriptionScreen = () => {
   }, [state?.riderId]);
 
   // ========================================================================
+  // INITIALIZE COMPONENT MOUNT/UNMOUNT
+  // ========================================================================
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // ========================================================================
+  // RESET LOADED FLAG ON RIDER ID CHANGE
+  // ========================================================================
+  useEffect(() => {
+    hasLoadedRef.current = false;
+  }, [localRiderId]);
+
+  // ========================================================================
   // LOAD SUBSCRIPTION DATA
   // ========================================================================
-  // ✅ FIXED: Only depends on localRiderId, not included in useFocusEffect deps
-  const loadSubscription = useCallback(async () => {
+  const loadSubscriptionData = useCallback(async () => {
     if (!localRiderId || !isMountedRef.current) {
-      console.log('⚠️ Skip load: no localRiderId or component unmounted');
       return;
     }
 
@@ -80,59 +104,26 @@ const SubscriptionScreen = () => {
       setLoading(true);
       setError(null);
 
-      let subscriptionData = null;
+      // ✅ Load active subscription & state using subscriptionUtils
+      const sub = await getActiveSubscription(localRiderId);
+      const state = await getSubscriptionState(localRiderId);
 
-      // ✅ STRATEGY 1: Try IndexedDB first (offline-ready)
-      try {
-        console.log('📂 Loading subscription from IndexedDB...');
-        const cached = await indexedDbAdapter.kvGet(
-          `subscription_${localRiderId}`
-        );
-
-        if (cached) {
-          const parsedData = JSON.parse(cached);
-          subscriptionData = parsedData.data;
-          console.log('✅ Subscription loaded from IndexedDB');
-        }
-      } catch (cacheErr) {
-        console.warn('⚠️ IndexedDB load failed:', cacheErr.message);
-      }
-
-      // ✅ STRATEGY 2: Fallback to API if cache miss
-      if (!subscriptionData) {
-        try {
-          console.log('📡 Fallback: Fetching subscription from API...');
-          const response = await api.get('/subscription', {
-            params: { rider_id: localRiderId }
-          });
-
-          if (response?.data?.subscription) {
-            subscriptionData = response.data.subscription;
-
-            // ✅ Cache to IndexedDB for offline access
-            await indexedDbAdapter.kvSet(
-              `subscription_${localRiderId}`,
-              JSON.stringify({
-                data: subscriptionData,
-                cached_at: new Date().toISOString()
-              })
-            );
-
-            setIsOffline(false);
-            console.log('✅ Subscription loaded from API and cached');
-          }
-        } catch (apiErr) {
-          console.warn('⚠️ API fetch failed:', apiErr.message);
-          setIsOffline(true);
-        }
-      }
-
-      // Set state only if component is still mounted
       if (isMountedRef.current) {
-        if (subscriptionData) {
-          setSubscription(subscriptionData);
-          lastFetchRef.current = Date.now();
-        } else {
+        setSubscription(sub);
+        setSubState(state);
+
+        // ✅ Check if account should be locked (expiry without payment)
+        if (!state.lockedAt && sub === null && state.trialEndDate) {
+          const trialEndMs = new Date(state.trialEndDate).getTime();
+          if (trialEndMs <= Date.now()) {
+            // Trial expired, lock account
+            await lockAccount(localRiderId, 'Free trial expired');
+            const updatedState = await getSubscriptionState(localRiderId);
+            setSubState(updatedState);
+          }
+        }
+
+        if (!sub && !state.trialStarted) {
           setError('no_subscription_data');
         }
       }
@@ -146,103 +137,174 @@ const SubscriptionScreen = () => {
         setLoading(false);
       }
     }
-  }, [localRiderId]); // ✅ Only depends on localRiderId
-
-  // ========================================================================
-  // EFFECTS & LIFECYCLE
-  // ========================================================================
-
-  // ✅ Initialize mount/unmount state
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  // ✅ Reset loaded flag when rider ID changes
-  useEffect(() => {
-    hasLoadedRef.current = false;
   }, [localRiderId]);
 
-  // ✅ Load on screen focus (avoid infinite loops)
+  // ========================================================================
+  // FOCUS EFFECT: Load on screen focus
+  // ========================================================================
   useFocusEffect(
     useCallback(() => {
       if (!hasLoadedRef.current && localRiderId) {
-        console.log('📌 Screen focused, loading subscription...');
+        console.log('📌 SubscriptionScreen focused, loading data...');
         hasLoadedRef.current = true;
-        loadSubscription();
+        loadSubscriptionData();
       }
 
       return () => {
         // Keep loaded state on unfocus
       };
-    }, [loadSubscription, localRiderId])
+    }, [loadSubscriptionData, localRiderId])
   );
 
-  // ✅ Refresh handler
+  // ========================================================================
+  // REFRESH HANDLER
+  // ========================================================================
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadSubscription();
+    await loadSubscriptionData();
     setRefreshing(false);
-  }, [loadSubscription]);
+  }, [loadSubscriptionData]);
 
   // ========================================================================
   // HANDLE ACTIONS
   // ========================================================================
+  const handleSubscribeNow = () => {
+    navigation.navigate('FrequencySelectScreen');
+  };
 
-  const handleRenew = () => {
+  const handleRenewNow = () => {
     navigation.navigate('FrequencySelectScreen');
   };
 
   const handlePrepay = () => {
-    if (subscription) {
-      navigation.navigate('PrepayScreen', {
-        currentExpiryAt: subscription.expiry_at,
-        dailyPrice: subscription.daily_price || 34.5
-      });
-    }
+    navigation.navigate('PrepayScreen', {
+      currentExpiryAt: subscription?.expiryDate
+    });
   };
 
   const handlePaymentHistory = () => {
     navigation.navigate('PaymentHistoryScreen');
   };
 
-  // ========================================================================
-  // RENDER
-  // ========================================================================
+  const handleUnlock = () => {
+    navigation.navigate('FrequencySelectScreen');
+  };
 
-  // Loading state
+  // ========================================================================
+  // RENDER HELPERS
+  // ========================================================================
+  const daysUntilExpiry = () => {
+    if (!subscription?.expiryDate) return 0;
+    const expiryMs = new Date(subscription.expiryDate).getTime();
+    return Math.ceil((expiryMs - Date.now()) / (1000 * 60 * 60 * 24));
+  };
+
+  const daysOfTrialLeft = () => {
+    if (!subState?.trialEndDate) return 0;
+    const trialEndMs = new Date(subState.trialEndDate).getTime();
+    return Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60 * 24));
+  };
+
+  // ========================================================================
+  // ACCOUNT LOCKED STATE
+  // ========================================================================
+  if (subState?.lockedAt && !loading) {
+    return (
+      <ScrollView style={styles.container}>
+        <View style={styles.heroBand}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backLink}
+          >
+            <Text style={styles.backLinkText}>← {t('common.back') || 'Home'}</Text>
+          </TouchableOpacity>
+          <Text style={styles.heroEmoji}>👋</Text>
+          <Text style={styles.heroTitle}>We've Missed You!</Text>
+          <Text style={styles.heroSubtitle}>
+            {subState.lockReason || 'Subscription expired'} — but your data is safe.
+          </Text>
+        </View>
+
+        <View style={styles.bannerContainer}>
+          <View style={[styles.banner, styles.bannerWarn]}>
+            <Text style={styles.bannerText}>
+              👉 Good news — one payment to unlock and you're back to work instantly.
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.card}>
+          <View style={styles.kvRow}>
+            <Text style={styles.kvLabel}>Amount To Unlock</Text>
+            <Text style={styles.kvValue}>KSh {SUBSCRIPTION_PLANS.biweekly.amount}</Text>
+          </View>
+        </View>
+
+        <TouchableOpacity
+          style={styles.buttonPrimary}
+          onPress={handleUnlock}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.buttonPrimaryText}>🔓 Pay & Unlock Now →</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.buttonGhost}
+          onPress={() => navigation.navigate('FrequencySelectScreen')}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.buttonGhostText}>Choose a different plan</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    );
+  }
+
+  // ========================================================================
+  // LOADING STATE
+  // ========================================================================
   if (loading) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#ff7a1a" />
-        <Text style={styles.loadingText}>{t('common.loading')}</Text>
+        <Text style={styles.loadingText}>{t('common.loading') || 'Loading...'}</Text>
       </View>
     );
   }
 
-  // Error state
-  if (error || !subscription) {
+  // ========================================================================
+  // ERROR STATE
+  // ========================================================================
+  if (error) {
     return (
       <View style={styles.centered}>
         <Text style={styles.errorText}>
-          {t(`common.${error || 'error_loading'}`)}
+          {t(`common.${error}`) || 'Unable to load subscription'}
         </Text>
         <TouchableOpacity
           style={styles.retryButton}
           onPress={() => {
             hasLoadedRef.current = false;
-            loadSubscription();
+            loadSubscriptionData();
           }}
         >
-          <Text style={styles.retryButtonText}>{t('common.retry')}</Text>
+          <Text style={styles.retryButtonText}>{t('common.retry') || 'Retry'}</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  // Main UI
+  // ========================================================================
+  // DETERMINE SUBSCRIPTION STATUS
+  // ========================================================================
+  const isOnFreeTrial = subState?.trialStarted && !subscription;
+  const daysLeft = isOnFreeTrial ? daysOfTrialLeft() : daysUntilExpiry();
+  const statusWord = isOnFreeTrial ? '🎁 Your free trial' : '✅ You\'re all set';
+  const statusTitle = isOnFreeTrial ? 'Free Trial' : 'Active';
+  const isUrgent = daysLeft <= 2;
+
+  // ========================================================================
+  // MAIN UI
+  // ========================================================================
   return (
     <ScrollView
       style={styles.container}
@@ -254,167 +316,126 @@ const SubscriptionScreen = () => {
         />
       }
     >
-      {/* OFFLINE BANNER */}
-      {isOffline && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>
-            ⚠️ {t('common.offline_mode')}
+      {/* HERO BAND */}
+      <View style={styles.heroBand}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backLink}
+        >
+          <Text style={styles.backLinkText}>← {t('common.back') || 'Home'}</Text>
+        </TouchableOpacity>
+        <Text style={styles.heroEyebrow}>{statusWord}</Text>
+        <Text style={styles.heroTitle}>{statusTitle}</Text>
+        <View style={styles.heroCountdown}>
+          <Text style={styles.heroCountdownDays}>{Math.max(daysLeft, 0)}</Text>
+          <Text style={styles.heroCountdownLabel}>
+            day{daysLeft === 1 ? '' : 's'} left{isOnFreeTrial ? ' of your free trial' : ' on your plan'}
           </Text>
+        </View>
+      </View>
+
+      {/* URGENT BANNER */}
+      {isUrgent && (
+        <View style={styles.bannerContainer}>
+          <View
+            style={[
+              styles.banner,
+              daysLeft <= 1 ? styles.bannerError : styles.bannerWarn
+            ]}
+          >
+            <Text style={styles.bannerText}>
+              {daysLeft <= 1
+                ? '⏰ Today is your last day! Keep your tools running — subscribe now.'
+                : `⏰ Only ${daysLeft} days left. Subscribe now to stay active.`}
+            </Text>
+          </View>
         </View>
       )}
 
       {/* STATUS CARD */}
-      <View style={styles.statusCard}>
-        <View style={styles.statusHeader}>
-          <Text style={styles.statusTitle}>
-            {t('subscription.current_status')}
-          </Text>
-          <View
-            style={[
-              styles.statusBadge,
-              subscription.locked ? styles.statusBadgeLocked : styles.statusBadgeActive
-            ]}
-          >
-            <Text style={styles.statusBadgeText}>
-              {subscription.locked
-                ? t('subscription.locked')
-                : t('subscription.active')}
-            </Text>
-          </View>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Status Details</Text>
+        <View style={styles.kvRow}>
+          <Text style={styles.kvLabel}>Days Left</Text>
+          <Text style={styles.kvValue}>{Math.max(daysLeft, 0)}</Text>
         </View>
-
-        <View style={styles.statusDetails}>
-          <View style={styles.statusItem}>
-            <Text style={styles.statusLabel}>
-              {t('subscription.days_left')}
-            </Text>
-            <Text style={styles.statusValue}>
-              {subscription.days_left || 0}
+        {subscription?.expiryDate && (
+          <View style={styles.kvRow}>
+            <Text style={styles.kvLabel}>Expiry Date</Text>
+            <Text style={styles.kvValue}>
+              {new Date(subscription.expiryDate).toLocaleDateString('en-KE')}
             </Text>
           </View>
-
-          <View style={styles.statusItem}>
-            <Text style={styles.statusLabel}>
-              {t('subscription.expiry_date')}
-            </Text>
-            <Text style={styles.statusValue}>
-              {new Date(subscription.expiry_at).toLocaleDateString('en-KE')}
-            </Text>
-          </View>
-
-          <View style={styles.statusItem}>
-            <Text style={styles.statusLabel}>
-              {t('subscription.plan')}
-            </Text>
-            <Text style={styles.statusValue}>
-              {subscription.frequency === 'biweekly'
-                ? t('subscription.biweekly_plan')
-                : t('subscription.monthly_plan')}
+        )}
+        {subscription?.plan && (
+          <View style={styles.kvRow}>
+            <Text style={styles.kvLabel}>Current Plan</Text>
+            <Text style={styles.kvValue}>
+              {subscription.plan === 'biweekly'
+                ? '📆 Bi-Weekly (14 days)'
+                : '📆 Monthly (30 days)'}
             </Text>
           </View>
-        </View>
+        )}
       </View>
 
-      {/* WARNING BANNER - Last 2 days */}
-      {subscription.days_left <= 2 && !subscription.locked && (
-        <View style={styles.warningBanner}>
-          <Text style={styles.warningIcon}>⏰</Text>
-          <View style={styles.warningContent}>
-            <Text style={styles.warningTitle}>
-              {subscription.days_left === 0
-                ? t('subscription.expiring_today')
-                : t('subscription.expiring_soon')}
-            </Text>
-            <Text style={styles.warningMessage}>
-              {t('subscription.renew_now_to_avoid_lockout')}
-            </Text>
-          </View>
+      {/* WHY SUBSCRIBE CARD (TRIAL ONLY) */}
+      {isOnFreeTrial && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Why Subscribe?</Text>
+          <Text style={styles.cardSubtext}>
+            ✅ Keep tracking every trip, fuel cost, and service reminder{'\n'}
+            ✅ Stay connected to your SACCO{'\n'}
+            ✅ From just KSh 35/day — less than a cup of tea
+          </Text>
         </View>
       )}
 
-      {/* LOCKED BANNER */}
-      {subscription.locked && (
-        <View style={styles.lockedBanner}>
-          <Text style={styles.lockedIcon}>🔒</Text>
-          <View style={styles.lockedContent}>
-            <Text style={styles.lockedTitle}>
-              {t('subscription.subscription_locked')}
-            </Text>
-            <Text style={styles.lockedMessage}>
-              {t('subscription.renew_subscription_to_continue')}
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* ACTIONS CONTAINER */}
+      {/* ACTION BUTTONS */}
       <View style={styles.actionsContainer}>
-        {/* Renew / Unlock Button */}
         <TouchableOpacity
           style={styles.buttonPrimary}
-          onPress={handleRenew}
+          onPress={isOnFreeTrial ? handleSubscribeNow : handleRenewNow}
+          activeOpacity={0.8}
         >
-          <Text style={styles.buttonText}>
-            {subscription.locked ? t('subscription.unlock_now') : t('subscription.renew_subscription')} →
+          <Text style={styles.buttonPrimaryText}>
+            {isOnFreeTrial ? '🚀 Subscribe Now →' : '🔁 Renew Now →'}
           </Text>
         </TouchableOpacity>
 
-        {/* Prepay Button */}
-        {!subscription.locked && (
+        {subscription && (
           <TouchableOpacity
-            style={styles.buttonSecondary}
-            onPress={handlePrepay}
+            style={styles.buttonGhost}
+            onPress={() => navigation.navigate('FrequencySelectScreen')}
+            activeOpacity={0.7}
           >
-            <Text style={styles.buttonSecondaryText}>
-              {t('subscription.pay_ahead')} →
-            </Text>
+            <Text style={styles.buttonGhostText}>Change how often I pay</Text>
           </TouchableOpacity>
         )}
 
-        {/* Payment History Button */}
         <TouchableOpacity
           style={styles.buttonGhost}
-          onPress={handlePaymentHistory}
+          onPress={handlePrepay}
+          activeOpacity={0.7}
         >
-          <Text style={styles.buttonGhostText}>
-            {t('subscription.view_payment_history')} →
-          </Text>
+          <Text style={styles.buttonGhostText}>📅 Pay Ahead & Skip the Hassle →</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={handlePaymentHistory}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.linkText}>View Payment History →</Text>
         </TouchableOpacity>
       </View>
 
-      {/* PRICING SECTION */}
-      <View style={styles.pricingSection}>
-        <Text style={styles.pricingTitle}>
-          {t('subscription.available_plans')}
-        </Text>
-
-        <View style={styles.planCard}>
-          <View style={styles.planHeader}>
-            <Text style={styles.planName}>📆 {t('subscription.biweekly_plan')}</Text>
-            <Text style={styles.planPrice}>KES 500</Text>
-          </View>
-          <Text style={styles.planDetails}>
-            {t('subscription.biweekly_description')}
-          </Text>
-        </View>
-
-        <View style={styles.planCard}>
-          <View style={styles.planHeader}>
-            <Text style={styles.planName}>📆 {t('subscription.monthly_plan')}</Text>
-            <Text style={styles.planPrice}>KES 1,000</Text>
-          </View>
-          <Text style={styles.planDetails}>
-            {t('subscription.monthly_description')}
-          </Text>
-        </View>
-      </View>
-
       {/* INFO BANNER */}
-      <View style={styles.infoBanner}>
-        <Text style={styles.infoIcon}>ℹ️</Text>
-        <Text style={styles.infoText}>
-          {t('subscription.payment_via_mpesa')}
-        </Text>
+      <View style={styles.bannerContainer}>
+        <View style={[styles.banner, styles.bannerInfo]}>
+          <Text style={styles.bannerTextInfo}>
+            ℹ️ Payment via M-Pesa (Lipa na M-Pesa, Pochi la Biashara, or Send Money)
+          </Text>
+        </View>
       </View>
     </ScrollView>
   );
@@ -427,269 +448,214 @@ const SubscriptionScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f6f4ef'
+    backgroundColor: '#f6f4ef',
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#f6f4ef',
-    paddingHorizontal: 20
+    paddingHorizontal: 20,
   },
   loadingText: {
     fontSize: 14,
     color: '#5b606c',
-    marginTop: 12
+    marginTop: 12,
   },
   errorText: {
     fontSize: 14,
     color: '#a5312c',
     textAlign: 'center',
-    marginBottom: 20
+    marginBottom: 20,
   },
   retryButton: {
     backgroundColor: '#ff7a1a',
     paddingVertical: 12,
     paddingHorizontal: 24,
-    borderRadius: 8
+    borderRadius: 12,
   },
   retryButtonText: {
     color: '#fff',
-    fontWeight: '600',
-    fontSize: 14
+    fontWeight: '700',
+    fontSize: 14,
   },
 
-  offlineBanner: {
-    backgroundColor: '#fff3e0',
-    borderBottomWidth: 1,
-    borderBottomColor: '#ff9800',
-    paddingVertical: 12,
-    paddingHorizontal: 16
+  // Hero Band
+  heroBand: {
+    backgroundColor: '#1a1c20',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 24,
+    position: 'relative',
+    overflow: 'hidden',
   },
-  offlineBannerText: {
+  backLink: {
+    marginBottom: 16,
+  },
+  backLinkText: {
     fontSize: 13,
-    color: '#e65100',
-    fontWeight: '600'
+    color: '#fff',
+    opacity: 0.85,
+  },
+  heroEyebrow: {
+    fontSize: 12,
+    color: '#ff7a1a',
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  heroTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 12,
+  },
+  heroEmoji: {
+    fontSize: 34,
+    marginBottom: 8,
+  },
+  heroSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+  heroCountdown: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    marginTop: 12,
+  },
+  heroCountdownDays: {
+    fontSize: 34,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  heroCountdownLabel: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.85)',
   },
 
-  statusCard: {
-    backgroundColor: '#fff',
-    marginHorizontal: 16,
-    marginTop: 16,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#e7e4db'
+  // Banners
+  bannerContainer: {
+    marginHorizontal: 14,
+    marginTop: 14,
   },
-  statusHeader: {
+  banner: {
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    marginBottom: 14,
+  },
+  bannerWarn: {
+    backgroundColor: '#fdf3df',
+  },
+  bannerError: {
+    backgroundColor: '#fdecea',
+  },
+  bannerInfo: {
+    backgroundColor: '#eef3fb',
+  },
+  bannerText: {
+    fontSize: 12.5,
+    color: '#5b606c',
+    lineHeight: 18,
+  },
+  bannerTextInfo: {
+    fontSize: 12.5,
+    color: '#2c5182',
+    lineHeight: 18,
+  },
+
+  // Cards
+  card: {
+    backgroundColor: '#fff',
+    marginHorizontal: 14,
+    marginBottom: 14,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    padding: 16,
+  },
+  cardTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 12,
+  },
+  cardSubtext: {
+    fontSize: 12.5,
+    color: '#5b606c',
+    lineHeight: 19,
+  },
+
+  // Key-Value Row
+  kvRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0ede5',
   },
-  statusTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#1a1c20'
-  },
-  statusBadge: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 16
-  },
-  statusBadgeActive: {
-    backgroundColor: '#e8f5e9'
-  },
-  statusBadgeLocked: {
-    backgroundColor: '#fdecea'
-  },
-  statusBadgeText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1a1c20'
-  },
-
-  statusDetails: {
-    gap: 12
-  },
-  statusItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 8
-  },
-  statusLabel: {
+  kvLabel: {
     fontSize: 13,
     color: '#5b606c',
-    fontWeight: '500'
+    fontWeight: '500',
   },
-  statusValue: {
+  kvValue: {
     fontSize: 13,
+    fontWeight: '700',
     color: '#1a1c20',
-    fontWeight: '700'
   },
 
-  warningBanner: {
-    backgroundColor: '#fff3e0',
-    borderLeftWidth: 4,
-    borderLeftColor: '#ff9800',
-    marginHorizontal: 16,
-    marginTop: 16,
-    borderRadius: 8,
-    padding: 12,
-    flexDirection: 'row',
-    gap: 12
-  },
-  warningIcon: {
-    fontSize: 20
-  },
-  warningContent: {
-    flex: 1
-  },
-  warningTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#e65100',
-    marginBottom: 2
-  },
-  warningMessage: {
-    fontSize: 12,
-    color: '#bf360c',
-    lineHeight: 16
-  },
-
-  lockedBanner: {
-    backgroundColor: '#fdecea',
-    borderLeftWidth: 4,
-    borderLeftColor: '#ef5350',
-    marginHorizontal: 16,
-    marginTop: 16,
-    borderRadius: 8,
-    padding: 12,
-    flexDirection: 'row',
-    gap: 12
-  },
-  lockedIcon: {
-    fontSize: 20
-  },
-  lockedContent: {
-    flex: 1
-  },
-  lockedTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#c62828',
-    marginBottom: 2
-  },
-  lockedMessage: {
-    fontSize: 12,
-    color: '#b71c1c',
-    lineHeight: 16
-  },
-
+  // Actions Container
   actionsContainer: {
-    marginHorizontal: 16,
-    marginTop: 20,
-    gap: 12
+    marginHorizontal: 14,
+    marginBottom: 20,
+    gap: 8,
   },
+
+  // Primary Button
   buttonPrimary: {
     backgroundColor: '#ff7a1a',
-    paddingVertical: 14,
-    borderRadius: 8,
+    borderRadius: 14,
+    paddingVertical: 15,
+    paddingHorizontal: 16,
     alignItems: 'center',
     shadowColor: '#ff7a1a',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
   },
-  buttonSecondary: {
-    backgroundColor: '#fff',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#ff7a1a'
-  },
-  buttonGhost: {
-    paddingVertical: 12,
-    alignItems: 'center'
-  },
-  buttonText: {
+  buttonPrimaryText: {
+    fontSize: 15,
+    fontWeight: '700',
     color: '#fff',
-    fontSize: 15,
-    fontWeight: '700'
+    letterSpacing: 0.3,
   },
-  buttonSecondaryText: {
-    color: '#ff7a1a',
-    fontSize: 15,
-    fontWeight: '700'
+
+  // Ghost Button
+  buttonGhost: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#ff7a1a',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
   },
   buttonGhostText: {
+    fontSize: 15,
+    fontWeight: '700',
     color: '#ff7a1a',
-    fontSize: 15,
-    fontWeight: '600'
   },
 
-  pricingSection: {
-    marginHorizontal: 16,
-    marginTop: 24,
-    marginBottom: 12
-  },
-  pricingTitle: {
-    fontSize: 15,
+  // Link Text
+  linkText: {
+    fontSize: 13,
     fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 12
+    color: '#e5650a',
+    paddingVertical: 6,
   },
-  planCard: {
-    backgroundColor: '#fff8f0',
-    borderWidth: 1.5,
-    borderColor: '#ffb366',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 10
-  },
-  planHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8
-  },
-  planName: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1a1c20'
-  },
-  planPrice: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#ff7a1a'
-  },
-  planDetails: {
-    fontSize: 12,
-    color: '#5b606c'
-  },
-
-  infoBanner: {
-    backgroundColor: '#e3f2fd',
-    borderLeftWidth: 4,
-    borderLeftColor: '#1976d2',
-    marginHorizontal: 16,
-    marginTop: 16,
-    marginBottom: 24,
-    borderRadius: 8,
-    padding: 12,
-    flexDirection: 'row',
-    gap: 10
-  },
-  infoIcon: {
-    fontSize: 16
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#1a1c20',
-    lineHeight: 16
-  }
 });
 
 export default SubscriptionScreen;

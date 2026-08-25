@@ -1,9 +1,8 @@
 // rider-app/src/screens/subscription/FrequencySelectScreen.js
-// ============================================================================
-// ✅ REFACTORED: IndexedDB-FIRST Architecture (Fuel Screen Pattern)
-// ✅ MIGRATION: LocalStore → IndexedDB kvSet/kvGet
-// ✅ SYNC QUEUE: Background API sync for offline-first reliability
-// ============================================================================
+// ✅ REFACTORED: IndexedDB-FIRST + subscriptionUtils alignment
+// ✅ BUSINESS LOGIC: Frequency selection (Bi-Weekly 500, Monthly 1000)
+// ✅ UI/UX: Matches index.html design system (tiles, cards, buttons)
+// ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -14,52 +13,32 @@ import {
   StyleSheet,
   ActivityIndicator
 } from 'react-native';
-import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
+import { getActiveSubscription, SUBSCRIPTION_PLANS } from '../../offline/subscriptionUtils';
 
 const FrequencySelectScreen = () => {
   const navigation = useNavigation();
-  const route = useRoute();
   const { t } = useTranslation();
   const { state } = useRider();
 
   // ========================================================================
   // STATE
   // ========================================================================
-  const [selectedFrequency, setSelectedFrequency] = useState('biweekly');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [localRiderId, setLocalRiderId] = useState(null);
+  const [selectedFrequency, setSelectedFrequency] = useState('biweekly');
+  const [currentSubscription, setCurrentSubscription] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   // ========================================================================
-  // CONTROL MECHANISMS: Prevent infinite loops
+  // CONTROL MECHANISMS
   // ========================================================================
   const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
-
-  // ✅ ONLY TWO PLANS: Biweekly (500 KES) & Monthly (1000 KES)
-  const FREQUENCIES = [
-    {
-      key: 'biweekly',
-      label: t('subscription.biweekly_plan'),
-      emoji: '📆',
-      days: 14,
-      price: 500,
-      pricePerDay: 35.71
-    },
-    {
-      key: 'monthly',
-      label: t('subscription.monthly_plan'),
-      emoji: '📆',
-      days: 30,
-      price: 1000,
-      pricePerDay: 33.33
-    }
-  ];
 
   // ========================================================================
   // LOAD RIDER ID (Local-First)
@@ -84,78 +63,46 @@ const FrequencySelectScreen = () => {
   }, [state?.riderId]);
 
   // ========================================================================
-  // LOAD CURRENT FREQUENCY
+  // INITIALIZE COMPONENT MOUNT/UNMOUNT
   // ========================================================================
-  const loadCurrentFrequency = useCallback(async () => {
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // ========================================================================
+  // RESET LOADED FLAG ON RIDER ID CHANGE
+  // ========================================================================
+  useEffect(() => {
+    hasLoadedRef.current = false;
+  }, [localRiderId]);
+
+  // ========================================================================
+  // LOAD CURRENT SUBSCRIPTION
+  // ========================================================================
+  const loadCurrentSubscription = useCallback(async () => {
     if (!localRiderId || !isMountedRef.current) {
-      console.log('⚠️ Skip load: no localRiderId or component unmounted');
       return;
     }
 
     try {
       setLoading(true);
-      setError(null);
 
-      // ✅ STRATEGY 1: Try IndexedDB first (offline-ready)
-      let frequency = null;
+      // ✅ Use subscriptionUtils to get current subscription
+      const sub = await getActiveSubscription(localRiderId);
 
-      try {
-        console.log('📂 Loading frequency from IndexedDB...');
-        const cached = await indexedDbAdapter.kvGet(
-          `subscription_frequency_${localRiderId}`
-        );
-
-        if (cached) {
-          const data = JSON.parse(cached);
-          if (data.frequency && ['biweekly', 'monthly'].includes(data.frequency)) {
-            frequency = data.frequency;
-            console.log('✅ Loaded frequency from IndexedDB:', frequency);
-          }
-        }
-      } catch (cacheErr) {
-        console.warn('⚠️ IndexedDB load failed:', cacheErr.message);
-      }
-
-      // ✅ STRATEGY 2: Fallback to API if cache miss
-      if (!frequency) {
-        try {
-          console.log('📡 Fallback: Fetching frequency from API...');
-          const response = await api.get('/subscription/frequency', {
-            params: { rider_id: localRiderId }
-          });
-
-          if (response?.data?.frequency && ['biweekly', 'monthly'].includes(response.data.frequency)) {
-            frequency = response.data.frequency;
-            console.log('✅ Loaded frequency from API:', frequency);
-
-            // ✅ Cache to IndexedDB for offline access
-            await indexedDbAdapter.kvSet(
-              `subscription_frequency_${localRiderId}`,
-              JSON.stringify({
-                frequency,
-                cached_at: new Date().toISOString()
-              })
-            );
-          }
-        } catch (apiErr) {
-          console.warn('⚠️ API fetch failed:', apiErr.message);
-        }
-      }
-
-      // Update UI only if component is still mounted
       if (isMountedRef.current) {
-        if (frequency) {
-          setSelectedFrequency(frequency);
-        } else {
-          // No cached or API data - use default
-          setSelectedFrequency('biweekly');
+        setCurrentSubscription(sub);
+
+        // ✅ Pre-select current frequency if already subscribed
+        if (sub?.plan) {
+          setSelectedFrequency(sub.plan);
         }
       }
     } catch (err) {
-      console.error('❌ Error loading frequency:', err);
-      if (isMountedRef.current) {
-        setError('error_loading');
-      }
+      console.error('❌ Error loading subscription:', err);
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
@@ -164,84 +111,76 @@ const FrequencySelectScreen = () => {
   }, [localRiderId]);
 
   // ========================================================================
-  // EFFECTS & LIFECYCLE
+  // FOCUS EFFECT: Load on screen focus
   // ========================================================================
-
-  // ✅ Initialize mount/unmount state
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  // ✅ Reset loaded flag when rider ID changes
-  useEffect(() => {
-    hasLoadedRef.current = false;
-  }, [localRiderId]);
-
-  // ✅ Load on screen focus
   useFocusEffect(
     useCallback(() => {
       if (!hasLoadedRef.current && localRiderId) {
-        console.log('📌 Screen focused, loading frequency...');
+        console.log('📌 FrequencySelect focused, loading data...');
         hasLoadedRef.current = true;
-        loadCurrentFrequency();
+        loadCurrentSubscription();
       }
 
       return () => {
         // Keep loaded state on unfocus
       };
-    }, [loadCurrentFrequency, localRiderId])
+    }, [loadCurrentSubscription, localRiderId])
   );
 
   // ========================================================================
-  // HANDLE CONTINUE - Save selection & navigate
+  // HANDLE CONTINUE
   // ========================================================================
-  const handleContinue = async () => {
+  const handleContinue = () => {
     if (!selectedFrequency) {
-      setError('select_frequency');
+      console.warn('⚠️ No frequency selected');
       return;
     }
 
-    if (!localRiderId) {
-      setError('rider_id_missing');
-      return;
-    }
-
-    try {
-      // ✅ Save frequency selection to IndexedDB immediately
-      const now = new Date().toISOString();
-      await indexedDbAdapter.kvSet(
-        `subscription_frequency_${localRiderId}`,
-        JSON.stringify({
-          frequency: selectedFrequency,
-          selected_at: now,
-          cached_at: now
-        })
-      );
-
-      console.log('✅ Saved frequency selection to IndexedDB:', selectedFrequency);
-
-      const selectedFreq = FREQUENCIES.find(f => f.key === selectedFrequency);
-
-      navigation.navigate('ConfirmSubscriptionScreen', {
-        frequency: selectedFrequency,
-        label: selectedFreq.label,
-        days: selectedFreq.days,
-        price: selectedFreq.price,
-        isRenewal: state?.subscription?.has_ever_paid || false
-      });
-    } catch (err) {
-      console.error('❌ Error saving frequency:', err);
-      setError('error_saving');
-    }
+    // Pass selected frequency to confirmation screen
+    navigation.navigate('ConfirmSubscriptionScreen', {
+      selectedFrequency
+    });
   };
 
   // ========================================================================
-  // RENDER
+  // RENDER FREQUENCY TILE
   // ========================================================================
+  const renderFrequencyTile = (frequency) => {
+    const isSelected = selectedFrequency === frequency.key;
+    const savingsPercent = Math.round(
+      ((frequency.days * SUBSCRIPTION_PLANS[frequency.key].amount / frequency.days) -
+        (30 * SUBSCRIPTION_PLANS[frequency.key].amount / frequency.days)) /
+      (30 * SUBSCRIPTION_PLANS[frequency.key].amount / frequency.days) * 100
+    );
 
+    return (
+      <TouchableOpacity
+        key={frequency.key}
+        style={[
+          styles.tile,
+          isSelected && styles.tileSelected
+        ]}
+        onPress={() => setSelectedFrequency(frequency.key)}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.tileEmoji}>{frequency.emoji}</Text>
+        <Text style={styles.tileLabel}>{frequency.label}</Text>
+        <Text style={styles.tilePriceAmount}>
+          KSh {frequency.amount.toLocaleString()}
+        </Text>
+        <Text style={styles.tilePricePeriod}>
+          every {frequency.days} day{frequency.days > 1 ? 's' : ''}
+        </Text>
+        <Text style={styles.tilePricePerDay}>
+          ~ KSh {Math.round(frequency.amount / frequency.days)}/day
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  // ========================================================================
+  // LOADING STATE
+  // ========================================================================
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -250,114 +189,81 @@ const FrequencySelectScreen = () => {
     );
   }
 
+  // ========================================================================
+  // MAIN UI
+  // ========================================================================
+  const frequencies = [
+    {
+      key: 'biweekly',
+      label: '📆 Bi-Weekly',
+      emoji: '📆',
+      days: SUBSCRIPTION_PLANS.biweekly.days,
+      amount: SUBSCRIPTION_PLANS.biweekly.amount
+    },
+    {
+      key: 'monthly',
+      label: '📆 Monthly',
+      emoji: '📆',
+      days: SUBSCRIPTION_PLANS.monthly.days,
+      amount: SUBSCRIPTION_PLANS.monthly.amount
+    }
+  ];
+
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={{ paddingBottom: 60 }}
-    >
+    <ScrollView style={styles.container}>
+      {/* BACK LINK */}
       <TouchableOpacity
         onPress={() => navigation.goBack()}
         style={styles.backLink}
       >
-        <Text style={styles.backLinkText}>← {t('common.back')}</Text>
+        <Text style={styles.backLinkText}>← {t('common.back') || 'Back'}</Text>
       </TouchableOpacity>
 
-      <Text style={styles.title}>{t('subscription.select_frequency')}</Text>
+      {/* TITLE */}
+      <Text style={styles.title}>How Would You Like to Pay?</Text>
       <Text style={styles.subtitle}>
-        {t('subscription.choose_payment_plan')}
+        Pick what works best for you. {currentSubscription ? 'Change your plan anytime.' : 'Pay now to get started.'}
       </Text>
 
-      {/* ERROR BANNER */}
-      {error && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>
-            {t(`common.${error}`)}
+      {/* FREQUENCY TILES */}
+      <View style={styles.tileGrid}>
+        {frequencies.map(frequency => renderFrequencyTile(frequency))}
+      </View>
+
+      {/* INFO TEXT */}
+      <View style={styles.hintCard}>
+        <Text style={styles.hintTitle}>Daily Rate Breakdown</Text>
+        <Text style={styles.hintText}>
+          Bi-Weekly: KSh {Math.round(SUBSCRIPTION_PLANS.biweekly.amount / SUBSCRIPTION_PLANS.biweekly.days)}/day{'\n'}
+          Monthly: KSh {Math.round(SUBSCRIPTION_PLANS.monthly.amount / SUBSCRIPTION_PLANS.monthly.days)}/day
+        </Text>
+      </View>
+
+      {/* CURRENT PLAN DISPLAY */}
+      {currentSubscription && (
+        <View style={styles.currentPlanCard}>
+          <Text style={styles.currentPlanLabel}>Your Current Plan</Text>
+          <Text style={styles.currentPlanValue}>
+            {currentSubscription.plan === 'biweekly' ? 'Bi-Weekly' : 'Monthly'} - KSh {currentSubscription.amount}
           </Text>
-          <TouchableOpacity onPress={() => setError(null)}>
-            <Text style={styles.dismissText}>✕</Text>
-          </TouchableOpacity>
+          <Text style={styles.currentPlanNote}>
+            Expires: {new Date(currentSubscription.expiryDate).toLocaleDateString('en-KE')}
+          </Text>
         </View>
       )}
 
-      {/* FREQUENCY CARDS */}
-      <View style={styles.frequencyContainer}>
-        {FREQUENCIES.map((freq) => {
-          const isSelected = selectedFrequency === freq.key;
-
-          return (
-            <TouchableOpacity
-              key={freq.key}
-              style={[
-                styles.frequencyCard,
-                isSelected && styles.frequencyCardSelected
-              ]}
-              onPress={() => {
-                setSelectedFrequency(freq.key);
-                setError(null);
-              }}
-              activeOpacity={0.7}
-            >
-              <View style={styles.frequencyHeader}>
-                <Text style={styles.frequencyEmoji}>{freq.emoji}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.frequencyLabel}>{freq.label}</Text>
-                  <Text style={styles.frequencyDays}>
-                    {freq.days} {t('common.days')}
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.radioButton,
-                    isSelected && styles.radioButtonSelected
-                  ]}
-                >
-                  {isSelected && (
-                    <Text style={styles.radioButtonDot}>●</Text>
-                  )}
-                </View>
-              </View>
-
-              <View style={styles.frequencyPricing}>
-                <View style={styles.priceRow}>
-                  <Text style={styles.priceLabel}>
-                    {t('subscription.amount')}
-                  </Text>
-                  <Text style={styles.priceAmount}>
-                    KES {freq.price.toLocaleString()}
-                  </Text>
-                </View>
-                <Text style={styles.pricePerDay}>
-                  ≈ KES {freq.pricePerDay.toFixed(2)}/{t('common.day')}
-                </Text>
-              </View>
-
-              {isSelected && (
-                <View style={styles.selectedCheckmark}>
-                  <Text style={styles.checkmark}>✓</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* INFO BANNER */}
-      <View style={styles.infoBanner}>
-        <Text style={styles.infoIcon}>ℹ️</Text>
-        <Text style={styles.infoText}>
-          {t('subscription.payment_via_mpesa')}
-        </Text>
-      </View>
-
-      {/* CONTINUE BUTTON */}
+      {/* ACTION BUTTON */}
       <TouchableOpacity
-        style={styles.continueBtn}
+        style={[styles.buttonPrimary, !selectedFrequency && styles.buttonDisabled]}
         onPress={handleContinue}
+        disabled={!selectedFrequency}
+        activeOpacity={0.8}
       >
-        <Text style={styles.continueBtnText}>
-          {t('common.continue')} →
-        </Text>
+        <Text style={styles.buttonPrimaryText}>Continue →</Text>
       </TouchableOpacity>
+
+      {/* SPACER */}
+      <View style={{ height: 20 }} />
     </ScrollView>
   );
 };
@@ -370,200 +276,169 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f6f4ef',
-    padding: 16
+    paddingHorizontal: 14,
   },
   centered: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f6f4ef'
+    backgroundColor: '#f6f4ef',
   },
 
+  // Back Link
   backLink: {
-    marginBottom: 16
+    marginTop: 16,
+    marginBottom: 16,
   },
   backLinkText: {
-    fontSize: 14,
-    color: '#ff7a1a',
-    fontWeight: '600'
+    fontSize: 13,
+    color: '#1a1c20',
+    fontWeight: '600',
   },
 
+  // Title & Subtitle
   title: {
     fontSize: 24,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 6
+    marginBottom: 8,
   },
   subtitle: {
     fontSize: 13,
     color: '#5b606c',
-    marginBottom: 16,
-    lineHeight: 18
+    lineHeight: 19,
+    marginBottom: 20,
   },
 
-  errorBanner: {
-    backgroundColor: '#fdecea',
-    borderWidth: 1.5,
-    borderColor: '#f6cac7',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center'
-  },
-  errorText: {
-    fontSize: 12,
-    color: '#a5312c',
-    fontWeight: '600',
-    flex: 1
-  },
-  dismissText: {
-    fontSize: 16,
-    color: '#a5312c',
-    fontWeight: '700',
-    marginLeft: 12
-  },
-
-  frequencyContainer: {
-    gap: 12,
-    marginBottom: 24
-  },
-
-  frequencyCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#e7e4db',
-    padding: 14,
-    overflow: 'hidden'
-  },
-  frequencyCardSelected: {
-    backgroundColor: '#fff8f0',
-    borderColor: '#ff7a1a'
-  },
-
-  frequencyHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12
-  },
-  frequencyEmoji: {
-    fontSize: 24,
-    marginRight: 12
-  },
-  frequencyLabel: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1a1c20'
-  },
-  frequencyDays: {
-    fontSize: 12,
-    color: '#5b606c',
-    marginTop: 2
-  },
-
-  radioButton: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 2,
-    borderColor: '#e7e4db',
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  radioButtonSelected: {
-    borderColor: '#ff7a1a',
-    backgroundColor: '#ff7a1a'
-  },
-  radioButtonDot: {
-    fontSize: 11,
-    color: '#fff',
-    fontWeight: 'bold'
-  },
-
-  frequencyPricing: {
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#e7e4db'
-  },
-  priceRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 4
-  },
-  priceLabel: {
-    fontSize: 12,
-    color: '#5b606c',
-    fontWeight: '600'
-  },
-  priceAmount: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#ff7a1a'
-  },
-  pricePerDay: {
-    fontSize: 11,
-    color: '#5b606c',
-    fontStyle: 'italic'
-  },
-
-  selectedCheckmark: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#ff7a1a',
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
-  checkmark: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#fff'
-  },
-
-  infoBanner: {
-    backgroundColor: '#e3f2fd',
-    borderRadius: 8,
-    padding: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#1976d2',
+  // Tile Grid
+  tileGrid: {
     flexDirection: 'row',
     gap: 10,
-    marginBottom: 20
-  },
-  infoIcon: {
-    fontSize: 16
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#1a1c20',
-    lineHeight: 16
+    marginBottom: 14,
   },
 
-  continueBtn: {
-    backgroundColor: '#ff7a1a',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 8,
+  // Tile
+  tile: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    padding: 14,
     alignItems: 'center',
-    marginTop: 12,
+    justifyContent: 'center',
+  },
+  tileSelected: {
+    borderColor: '#ff7a1a',
+    backgroundColor: '#fff6ee',
     shadowColor: '#ff7a1a',
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.12,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
-    elevation: 4
+    elevation: 3,
   },
-  continueBtnText: {
-    color: '#fff',
+  tileEmoji: {
+    fontSize: 22,
+    marginBottom: 8,
+  },
+  tileLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  tilePriceAmount: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ff7a1a',
+    marginBottom: 2,
+  },
+  tilePricePeriod: {
+    fontSize: 11,
+    color: '#5b606c',
+    marginBottom: 4,
+  },
+  tilePricePerDay: {
+    fontSize: 10.5,
+    color: '#8b8c8e',
+    fontStyle: 'italic',
+  },
+
+  // Hint Card
+  hintCard: {
+    backgroundColor: '#eef3fb',
+    borderRadius: 14,
+    borderLeftWidth: 4,
+    borderLeftColor: '#1976d2',
+    padding: 14,
+    marginBottom: 14,
+  },
+  hintTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1976d2',
+    marginBottom: 6,
+  },
+  hintText: {
+    fontSize: 12,
+    color: '#2c5182',
+    lineHeight: 18,
+  },
+
+  // Current Plan Card
+  currentPlanCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    padding: 14,
+    marginBottom: 20,
+  },
+  currentPlanLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#5b606c',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  currentPlanValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 4,
+  },
+  currentPlanNote: {
+    fontSize: 11,
+    color: '#8b8c8e',
+  },
+
+  // Primary Button
+  buttonPrimary: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+    marginBottom: 20,
+  },
+  buttonDisabled: {
+    backgroundColor: '#e9dccc',
+    opacity: 0.6,
+    shadowOpacity: 0,
+  },
+  buttonPrimaryText: {
     fontSize: 15,
     fontWeight: '700',
-    letterSpacing: 0.2
-  }
+    color: '#fff',
+    letterSpacing: 0.3,
+  },
 });
 
 export default FrequencySelectScreen;

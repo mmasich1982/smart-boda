@@ -1,27 +1,33 @@
 // rider-app/src/screens/subscription/ConfirmSubscriptionScreen.js
-// ============================================================================
-// ✅ REFACTORED: IndexedDB-FIRST + Sync Queue (Fuel Screen Pattern)
-// ✅ Immediate UI updates on confirmation save
-// ✅ Background API sync via addToSyncQueue
-// ============================================================================
+// ✅ REFACTORED: IndexedDB-FIRST + subscriptionUtils alignment
+// ✅ BUSINESS LOGIC: Confirm subscription, capture M-Pesa code, create record
+// ✅ UI/UX: Matches index.html design system (cards, buttons, M-Pesa flow)
+// ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
+  ScrollView,
   View,
   Text,
   TouchableOpacity,
-  ScrollView,
   StyleSheet,
   ActivityIndicator,
+  TextInput,
   Alert
 } from 'react-native';
-import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
-import { addToSyncQueue } from '../../offline/syncQueue';
 import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
+import {
+  createSubscription,
+  unlockAccount,
+  SUBSCRIPTION_PLANS,
+  getSubscriptionState
+} from '../../offline/subscriptionUtils';
+import { addToSyncQueue } from '../../offline/syncQueue';
 
 const ConfirmSubscriptionScreen = () => {
   const navigation = useNavigation();
@@ -32,20 +38,17 @@ const ConfirmSubscriptionScreen = () => {
   // ========================================================================
   // STATE
   // ========================================================================
-  const [loading, setLoading] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [error, setError] = useState(null);
-  const [subscriptionDetails, setSubscriptionDetails] = useState(null);
   const [localRiderId, setLocalRiderId] = useState(null);
-
-  // Route params from FrequencySelectScreen
-  const { frequency, label, days, price, isRenewal } = route.params || {};
+  const [mpesaCode, setMpesaCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
 
   // ========================================================================
-  // CONTROL MECHANISMS
+  // GET SELECTED FREQUENCY FROM ROUTE
   // ========================================================================
-  const hasLoadedRef = useRef(false);
-  const isMountedRef = useRef(true);
+  const selectedFrequency = route.params?.selectedFrequency || 'biweekly';
+  const plan = SUBSCRIPTION_PLANS[selectedFrequency];
 
   // ========================================================================
   // LOAD RIDER ID (Local-First)
@@ -70,10 +73,31 @@ const ConfirmSubscriptionScreen = () => {
   }, [state?.riderId]);
 
   // ========================================================================
-  // LOAD SUBSCRIPTION DETAILS (Current subscription info for renewal context)
+  // VALIDATE M-PESA CODE
   // ========================================================================
-  const loadSubscriptionDetails = useCallback(async () => {
-    if (!localRiderId || !isMountedRef.current) {
+  const validateMpesaCode = () => {
+    setFieldErrors({});
+    const code = mpesaCode.trim().toUpperCase();
+
+    if (!code) {
+      setFieldErrors({ mpesaCode: 'M-Pesa confirmation code is required.' });
+      return null;
+    }
+
+    if (code.length < 8) {
+      setFieldErrors({ mpesaCode: 'Code too short — check the M-Pesa message and re-enter.' });
+      return null;
+    }
+
+    return code;
+  };
+
+  // ========================================================================
+  // HANDLE PAYMENT SUBMISSION
+  // ========================================================================
+  const handleSubmitPayment = useCallback(async () => {
+    const validatedCode = validateMpesaCode();
+    if (!validatedCode || !localRiderId) {
       return;
     }
 
@@ -81,372 +105,231 @@ const ConfirmSubscriptionScreen = () => {
       setLoading(true);
       setError(null);
 
-      let details = null;
+      console.log('📝 Submitting subscription payment...');
 
-      // ✅ STRATEGY 1: Try IndexedDB first
-      try {
-        console.log('📂 Loading subscription details from IndexedDB...');
-        const cached = await indexedDbAdapter.kvGet(
-          `subscription_details_${localRiderId}`
-        );
+      // ✅ Create subscription record via subscriptionUtils
+      const subscription = await createSubscription(localRiderId, selectedFrequency, 'mpesa');
 
-        if (cached) {
-          const data = JSON.parse(cached);
-          details = data.details;
-          console.log('✅ Loaded subscription details from IndexedDB');
-        }
-      } catch (cacheErr) {
-        console.warn('⚠️ IndexedDB load failed:', cacheErr.message);
+      if (!subscription) {
+        throw new Error('Failed to create subscription');
       }
 
-      // ✅ STRATEGY 2: Fallback to API
-      if (!details && isRenewal) {
-        try {
-          console.log('📡 Fallback: Fetching subscription details from API...');
-          const response = await api.get('/subscription/details', {
-            params: { rider_id: localRiderId }
-          });
-
-          if (response?.data) {
-            details = response.data;
-            console.log('✅ Loaded subscription details from API');
-
-            // Cache to IndexedDB
-            await indexedDbAdapter.kvSet(
-              `subscription_details_${localRiderId}`,
-              JSON.stringify({
-                details,
-                cached_at: new Date().toISOString()
-              })
-            );
-          }
-        } catch (apiErr) {
-          console.warn('⚠️ API fetch failed:', apiErr.message);
-        }
-      }
-
-      if (isMountedRef.current) {
-        setSubscriptionDetails(details);
-      }
-    } catch (err) {
-      console.error('❌ Error loading subscription details:', err);
-      if (isMountedRef.current) {
-        setError('error_loading');
-      }
-    } finally {
-      if (isMountedRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [localRiderId, isRenewal]);
-
-  // ========================================================================
-  // SUBMIT PAYMENT - Save to IndexedDB & Queue for Sync
-  // ========================================================================
-  const handleSubmitPayment = useCallback(async () => {
-    if (!localRiderId || !frequency || !price || processing) {
-      return;
-    }
-
-    try {
-      setProcessing(true);
-      setError(null);
-
-      const now = Date.now();
-      const paymentId = `subscription_payment_${localRiderId}_${now}`;
-
-      // ✅ STEP 1: Prepare payment record for IndexedDB storage
+      // ✅ Log the payment record with M-Pesa code
       const paymentRecord = {
-        id: paymentId,
-        rider_id: localRiderId,
-        frequency,
-        amount: price,
-        days,
-        isRenewal,
+        id: `payment_${localRiderId}_${Date.now()}`,
+        riderId: localRiderId,
+        type: 'subscription',
+        amount: plan.amount,
+        plan: selectedFrequency,
+        currency: 'KES',
         status: 'pending_verification',
+        channel: 'Manual (Lipa na M-Pesa / Pochi / Send Money)',
+        mpesaCode: validatedCode,
+        createdAt: new Date().toISOString(),
+        ts: Date.now(),
+        timestamp: Date.now(),
         syncStatus: 'pending',
-        ts: now,
-        timestamp: now,
-        created_at: new Date().toISOString(),
-        initiated_at: new Date().toISOString()
       };
 
-      // ✅ STEP 2: Save payment to IndexedDB FIRST (offline-first)
-      console.log('💾 Saving payment record to IndexedDB:', paymentId);
-      await indexedDbAdapter.kvSet(
-        paymentId,
-        JSON.stringify(paymentRecord)
-      );
+      // ✅ Save payment record to IndexedDB
+      const paymentKey = `payment_${localRiderId}_${paymentRecord.id}`;
+      await indexedDbAdapter.kvSet(paymentKey, JSON.stringify(paymentRecord));
 
-      // ✅ STEP 3: Update subscription_payment_pending cache
-      await indexedDbAdapter.kvSet(
-        `subscription_payment_pending_${localRiderId}`,
-        JSON.stringify({
-          paymentId,
-          frequency,
-          amount: price,
-          initiated_at: new Date().toISOString(),
-          status: 'pending_verification'
-        })
-      );
+      // ✅ Add to payment history
+      const historyKey = `payment_history_${localRiderId}`;
+      let history = [];
+      try {
+        const cached = await indexedDbAdapter.kvGet(historyKey);
+        if (cached) {
+          history = typeof cached === 'string' ? JSON.parse(cached) : cached;
+          if (!Array.isArray(history)) history = [];
+        }
+      } catch (err) {
+        console.warn('⚠️ Failed to load payment history:', err);
+      }
+      history.unshift(paymentRecord);
+      await indexedDbAdapter.kvSet(historyKey, JSON.stringify(history));
 
-      console.log('✅ Saved payment record to IndexedDB');
+      // ✅ Check if account was locked and unlock it
+      const subState = await getSubscriptionState(localRiderId);
+      if (subState?.lockedAt) {
+        await unlockAccount(localRiderId);
+        console.log('🔓 Account unlocked after payment');
+      }
 
-      // ✅ STEP 4: Add to sync queue for background API upload
-      const queueSuccess = await addToSyncQueue({
-        id: paymentId,
+      // ✅ Queue for backend sync
+      await addToSyncQueue({
+        id: paymentRecord.id,
         type: 'subscription_payment',
-        endpoint: `/subscription/initiate-payment?rider_id=${localRiderId}`,
-        data: {
-          frequency,
-          amount: price,
-          days,
-          isRenewal
-        },
-        timestamp: new Date()
+        endpoint: `/subscriptions/payment?rider_id=${localRiderId}`,
+        data: paymentRecord,
+        timestamp: new Date(),
       });
 
-      if (!queueSuccess) {
-        console.warn('⚠️ Failed to add to sync queue, but local save succeeded');
-      }
+      console.log('✅ Subscription created & payment logged');
 
-      // ✅ STEP 5: Try to sync immediately if online
-      let paymentCode = null;
-
-      if (navigator.onLine) {
-        try {
-          console.log('📡 Attempting immediate API sync...');
-          const response = await api.post('/subscription/initiate-payment', {
-            frequency,
-            amount: price,
-            days,
-            isRenewal
-          });
-
-          if (response?.data?.payment_code) {
-            paymentCode = response.data.payment_code;
-            console.log('✅ API sync successful, got payment code');
-
-            // Update payment record with payment code
-            await indexedDbAdapter.kvSet(
-              paymentId,
-              JSON.stringify({
-                ...paymentRecord,
-                payment_code: paymentCode,
-                status: 'awaiting_payment',
-                syncStatus: 'synced'
-              })
-            );
-          }
-        } catch (apiErr) {
-          console.warn('⚠️ API sync failed (will retry later):', apiErr.message);
-          // Data is safely stored and queued - that's okay
-        }
-      } else {
-        console.log('🔴 Offline: Payment queued for sync when online');
-      }
-
-      // ✅ STEP 6: Navigate to payment confirmation
-      if (isMountedRef.current) {
-        navigation.navigate('ConfirmPaymentScreen', {
-          paymentId,
-          paymentCode: paymentCode || 'PENDING_SYNC',
-          frequency,
-          amount: price,
-          days,
-          status: paymentCode ? 'awaiting_payment' : 'pending_sync'
-        });
-      }
-    } catch (err) {
-      console.error('❌ Payment submission error:', err);
-      setError('error_submitting_payment');
-
+      // ✅ Navigate to success state
       Alert.alert(
-        t('common.error'),
-        t('subscription.payment_initiation_failed'),
+        'Payment Received! 🎉',
+        'Your subscription is now active. Start tracking trips & fuel costs.',
         [
-          { text: t('common.retry'), onPress: handleSubmitPayment },
-          { text: t('common.cancel'), style: 'cancel' }
+          {
+            text: 'Continue',
+            onPress: () => {
+              setMpesaCode('');
+              navigation.navigate('Home');
+            },
+          },
         ]
       );
+    } catch (err) {
+      console.error('❌ Error submitting payment:', err);
+      setError('Failed to process payment. Please try again.');
     } finally {
-      if (isMountedRef.current) {
-        setProcessing(false);
-      }
+      setLoading(false);
     }
-  }, [localRiderId, frequency, price, days, isRenewal, navigation]);
+  }, [localRiderId, selectedFrequency, plan.amount, mpesaCode, navigation]);
 
   // ========================================================================
-  // EFFECTS & LIFECYCLE
+  // CALCULATE EXPIRY DATE
   // ========================================================================
-
-  // ✅ Initialize mount/unmount state
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
-
-  // ✅ Load on screen focus
-  useFocusEffect(
-    useCallback(() => {
-      if (!hasLoadedRef.current && localRiderId) {
-        hasLoadedRef.current = true;
-        loadSubscriptionDetails();
-      }
-
-      return () => {
-        // Keep loaded state on unfocus
-      };
-    }, [loadSubscriptionDetails, localRiderId])
+  const newExpiryDate = new Date(
+    Date.now() + plan.days * 24 * 60 * 60 * 1000
   );
 
   // ========================================================================
-  // RENDER
+  // MAIN UI
   // ========================================================================
-
-  if (!frequency || !price || !days) {
-    return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>{t('common.error')}</Text>
-        <TouchableOpacity
-          style={styles.retryButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.retryButtonText}>{t('common.go_back')}</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
   return (
     <ScrollView style={styles.container}>
+      {/* BACK LINK */}
       <TouchableOpacity
         onPress={() => navigation.goBack()}
         style={styles.backLink}
       >
-        <Text style={styles.backLinkText}>← {t('common.back')}</Text>
+        <Text style={styles.backLinkText}>← Change</Text>
       </TouchableOpacity>
 
-      <Text style={styles.title}>{t('subscription.confirm_purchase')}</Text>
+      {/* TITLE */}
+      <Text style={styles.title}>Confirm Your Plan</Text>
+      <Text style={styles.subtitle}>Review the breakdown before paying</Text>
 
-      {/* SELECTED PLAN CARD */}
-      <View style={styles.planCard}>
-        <View style={styles.planHeader}>
-          <Text style={styles.planLabel}>📦 {t('subscription.selected_plan')}</Text>
-        </View>
-
-        <View style={styles.planDetail}>
-          <Text style={styles.planDetailLabel}>{t('subscription.plan_type')}</Text>
-          <Text style={styles.planDetailValue}>{label}</Text>
-        </View>
-
-        <View style={styles.planDetail}>
-          <Text style={styles.planDetailLabel}>{t('subscription.duration')}</Text>
-          <Text style={styles.planDetailValue}>
-            {days} {t('common.days')}
+      {/* PLAN DETAILS CARD */}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <Text style={styles.cardTitle}>
+            {selectedFrequency === 'biweekly' ? '📆 Bi-Weekly Plan' : '📆 Monthly Plan'}
           </Text>
         </View>
 
-        <View style={[styles.planDetail, styles.planDetailHighlight]}>
-          <Text style={styles.planDetailLabelBold}>
-            {t('subscription.total_amount')}
-          </Text>
-          <Text style={styles.planDetailValueBold}>
-            KES {price.toLocaleString('en-KE')}
+        <View style={styles.kvRow}>
+          <Text style={styles.kvLabel}>Plan Duration</Text>
+          <Text style={styles.kvValue}>{plan.days} days</Text>
+        </View>
+
+        <View style={styles.kvRow}>
+          <Text style={styles.kvLabel}>Daily Rate</Text>
+          <Text style={styles.kvValue}>KSh {Math.round(plan.amount / plan.days)}</Text>
+        </View>
+
+        <View style={[styles.kvRow, styles.kvRowBold]}>
+          <Text style={styles.kvLabelBold}>Total to Pay</Text>
+          <Text style={styles.kvValueBold}>KSh {plan.amount.toLocaleString()}</Text>
+        </View>
+
+        <View style={styles.kvRow}>
+          <Text style={styles.kvLabel}>Keeps You Active Until</Text>
+          <Text style={styles.kvValue}>
+            {newExpiryDate.toLocaleDateString('en-KE')}
           </Text>
         </View>
       </View>
 
-      {/* CURRENT SUBSCRIPTION INFO */}
-      {isRenewal && subscriptionDetails && (
-        <View style={styles.infoCard}>
-          <Text style={styles.infoCardTitle}>
-            {t('subscription.current_subscription')}
-          </Text>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>
-              {t('subscription.expires_at')}
-            </Text>
-            <Text style={styles.infoValue}>
-              {subscriptionDetails.expiry_at
-                ? new Date(subscriptionDetails.expiry_at).toLocaleDateString('en-KE')
-                : 'N/A'}
-            </Text>
-          </View>
-
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>
-              {t('subscription.days_left')}
-            </Text>
-            <Text style={styles.infoValue}>
-              {subscriptionDetails.days_left || 0}
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* TERMS & CONDITIONS */}
-      <View style={styles.termsCard}>
-        <View style={styles.termsHeader}>
-          <Text style={styles.termsIcon}>⚖️</Text>
-          <Text style={styles.termsTitle}>{t('subscription.payment_terms')}</Text>
-        </View>
-
-        <Text style={styles.termsText}>
-          {t('subscription.payment_will_be_charged')}
+      {/* M-PESA PAYMENT CARD */}
+      <View style={styles.mpesaCard}>
+        <Text style={styles.mpesaCardTitle}>📲 Payment Instructions</Text>
+        <Text style={styles.mpesaCardText}>
+          Please use "Send Money" to the Safaricom number below.
         </Text>
 
-        <Text style={styles.termsText}>
-          {t('subscription.by_proceeding_you_agree')}
+        <View style={styles.paymentNumberBox}>
+          <View>
+            <Text style={styles.paymentNumberLabel}>Safaricom Number</Text>
+            <Text style={styles.paymentNumber}>0757 334 481</Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => {
+              // Copy to clipboard logic
+              console.log('📋 Copy number to clipboard');
+            }}
+          >
+            <Text style={styles.copyIcon}>📋</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.paymentAmountBox}>
+          <Text style={styles.paymentAmountLabel}>Amount To Send</Text>
+          <Text style={styles.paymentAmount}>KSh {plan.amount.toLocaleString()}</Text>
+        </View>
+
+        <Text style={styles.mpesaCardNote}>
+          ✅ Tap below once you've sent the payment and we'll activate your plan right away.
         </Text>
       </View>
 
-      {/* ERROR BANNER */}
+      {/* ERROR MESSAGE */}
       {error && (
         <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>
-            {t(`subscription.${error}`)}
-          </Text>
+          <Text style={styles.errorText}>⚠️ {error}</Text>
         </View>
       )}
 
-      {/* ACTION BUTTONS */}
-      <View style={styles.actionsContainer}>
-        <TouchableOpacity
-          style={[styles.confirmButton, processing && styles.buttonDisabled]}
-          onPress={handleSubmitPayment}
-          disabled={processing}
-        >
-          {processing ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={styles.confirmButtonText}>
-              {t('subscription.proceed_to_payment')} →
-            </Text>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.cancelButton}
-          onPress={() => navigation.goBack()}
-          disabled={processing}
-        >
-          <Text style={styles.cancelButtonText}>
-            {t('common.cancel')}
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* INFO BANNER */}
-      <View style={styles.infoBanner}>
-        <Text style={styles.infoIcon}>ℹ️</Text>
-        <Text style={styles.infoText}>
-          {t('subscription.payment_via_mpesa_secure')}
+      {/* M-PESA CODE INPUT */}
+      <View style={styles.fieldGroup}>
+        <Text style={styles.fieldLabel}>
+          M-Pesa Confirmation Code <Text style={styles.fieldRequired}>*</Text>
+        </Text>
+        <TextInput
+          style={[
+            styles.textInput,
+            fieldErrors.mpesaCode && styles.textInputError
+          ]}
+          placeholder="e.g. QK71X9Y2AB"
+          placeholderTextColor="#c9c2b6"
+          maxLength={15}
+          value={mpesaCode}
+          onChangeText={(text) => {
+            setMpesaCode(text.toUpperCase());
+            if (fieldErrors.mpesaCode) {
+              setFieldErrors({ ...fieldErrors, mpesaCode: null });
+            }
+          }}
+          editable={!loading}
+        />
+        {fieldErrors.mpesaCode && (
+          <Text style={styles.errorMessage}>{fieldErrors.mpesaCode}</Text>
+        )}
+        <Text style={styles.fieldHint}>
+          Enter the code from the M-Pesa message you received.
         </Text>
       </View>
+
+      {/* SUBMIT BUTTON */}
+      <TouchableOpacity
+        style={[styles.buttonPrimary, loading && styles.buttonDisabled]}
+        onPress={handleSubmitPayment}
+        disabled={loading}
+        activeOpacity={0.8}
+      >
+        {loading ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <Text style={styles.buttonPrimaryText}>I've Made This Payment ✅</Text>
+        )}
+      </TouchableOpacity>
+
+      {/* SPACER */}
+      <View style={{ height: 20 }} />
     </ScrollView>
   );
 };
@@ -459,229 +342,250 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f6f4ef',
-    padding: 16
-  },
-  centered: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f6f4ef',
-    paddingHorizontal: 20
+    paddingHorizontal: 14,
   },
 
+  // Back Link
   backLink: {
-    marginBottom: 16
+    marginTop: 16,
+    marginBottom: 16,
   },
   backLinkText: {
-    fontSize: 14,
-    color: '#ff7a1a',
-    fontWeight: '600'
+    fontSize: 13,
+    color: '#1a1c20',
+    fontWeight: '600',
   },
 
+  // Title & Subtitle
   title: {
     fontSize: 24,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 20
+    marginBottom: 8,
   },
-
-  planCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#ff7a1a',
-    padding: 16,
-    marginBottom: 16
-  },
-  planHeader: {
-    marginBottom: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db'
-  },
-  planLabel: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1a1c20'
-  },
-
-  planDetail: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10
-  },
-  planDetailHighlight: {
-    marginTop: 8,
-    paddingTop: 12,
-    paddingBottom: 12,
-    paddingHorizontal: 12,
-    backgroundColor: '#fff8f0',
-    borderRadius: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#e7e4db'
-  },
-  planDetailLabel: {
+  subtitle: {
     fontSize: 13,
     color: '#5b606c',
-    fontWeight: '500'
-  },
-  planDetailLabelBold: {
-    fontSize: 14,
-    color: '#ff7a1a',
-    fontWeight: '700'
-  },
-  planDetailValue: {
-    fontSize: 14,
-    color: '#1a1c20',
-    fontWeight: '600'
-  },
-  planDetailValueBold: {
-    fontSize: 18,
-    color: '#ff7a1a',
-    fontWeight: '700'
+    lineHeight: 19,
+    marginBottom: 20,
   },
 
-  infoCard: {
-    backgroundColor: '#e3f2fd',
-    borderLeftWidth: 4,
-    borderLeftColor: '#1976d2',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16
+  // Card
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    padding: 16,
+    marginBottom: 14,
   },
-  infoCardTitle: {
-    fontSize: 13,
+  cardHeader: {
+    marginBottom: 12,
+  },
+  cardTitle: {
+    fontSize: 14,
     fontWeight: '700',
-    color: '#1565c0',
-    marginBottom: 10
+    color: '#1a1c20',
   },
-  infoRow: {
+
+  // Key-Value Row
+  kvRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 8
+    alignItems: 'center',
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0ede5',
   },
-  infoLabel: {
+  kvRowBold: {
+    paddingVertical: 13,
+    marginTop: 4,
+    borderBottomWidth: 0,
+    borderTopWidth: 1,
+    borderTopColor: '#e7e4db',
+  },
+  kvLabel: {
     fontSize: 12,
+    color: '#5b606c',
+    fontWeight: '500',
+  },
+  kvLabelBold: {
+    fontSize: 13,
     color: '#1a1c20',
-    fontWeight: '500'
+    fontWeight: '700',
   },
-  infoValue: {
+  kvValue: {
     fontSize: 12,
-    color: '#1565c0',
-    fontWeight: '600'
+    fontWeight: '700',
+    color: '#1a1c20',
+  },
+  kvValueBold: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ff7a1a',
   },
 
-  termsCard: {
-    backgroundColor: '#fff3e0',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
+  // M-Pesa Card
+  mpesaCard: {
+    backgroundColor: '#e6f5ef',
+    borderRadius: 14,
     borderLeftWidth: 4,
-    borderLeftColor: '#ff9800'
+    borderLeftColor: '#1e9e6f',
+    padding: 16,
+    marginBottom: 20,
   },
-  termsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12
-  },
-  termsIcon: {
-    fontSize: 16,
-    marginRight: 8
-  },
-  termsTitle: {
+  mpesaCardTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#e65100'
+    color: '#1e9e6f',
+    marginBottom: 8,
   },
-  termsText: {
-    fontSize: 12,
-    color: '#1a1c20',
+  mpesaCardText: {
+    fontSize: 12.5,
+    color: '#146142',
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  paymentNumberBox: {
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#1e9e6f',
+    borderStyle: 'dashed',
+    padding: 14,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  paymentNumberLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#146142',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  paymentNumber: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1e9e6f',
+    letterSpacing: 0.5,
+  },
+  copyIcon: {
+    fontSize: 20,
+  },
+  paymentAmountBox: {
+    backgroundColor: 'rgba(30, 158, 111, 0.1)',
+    borderRadius: 12,
+    padding: 12,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  paymentAmountLabel: {
+    fontSize: 10.5,
+    fontWeight: '600',
+    color: '#146142',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  paymentAmount: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#1e9e6f',
+  },
+  mpesaCardNote: {
+    fontSize: 11.5,
+    color: '#146142',
+    textAlign: 'center',
     lineHeight: 16,
-    marginBottom: 8
   },
 
+  // Error Banner
   errorBanner: {
     backgroundColor: '#fdecea',
-    borderWidth: 1.5,
-    borderColor: '#f6cac7',
-    borderRadius: 8,
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#e0453f',
     padding: 12,
-    marginBottom: 16
+    marginBottom: 14,
   },
   errorText: {
     fontSize: 12,
     color: '#a5312c',
-    fontWeight: '600'
+    fontWeight: '600',
   },
 
-  actionsContainer: {
-    gap: 12,
-    marginBottom: 16
+  // Field Group
+  fieldGroup: {
+    marginBottom: 20,
   },
-  confirmButton: {
-    backgroundColor: '#ff7a1a',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    shadowColor: '#ff7a1a',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1a1c20',
+    marginBottom: 8,
   },
-  cancelButton: {
+  fieldRequired: {
+    color: '#e0453f',
+    fontWeight: '700',
+  },
+  textInput: {
     backgroundColor: '#fff',
-    paddingVertical: 14,
-    borderRadius: 8,
-    alignItems: 'center',
+    borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#e7e4db'
+    borderColor: '#e7e4db',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#1a1c20',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  textInputError: {
+    borderColor: '#e0453f',
+    backgroundColor: '#fff9f8',
+  },
+  errorMessage: {
+    fontSize: 11.5,
+    color: '#a5312c',
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  fieldHint: {
+    fontSize: 11.5,
+    color: '#8b8c8e',
+    lineHeight: 16,
+  },
+
+  // Primary Button
+  buttonPrimary: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+    minHeight: 50,
   },
   buttonDisabled: {
-    opacity: 0.6
+    backgroundColor: '#e9dccc',
+    opacity: 0.6,
+    shadowOpacity: 0,
   },
-  confirmButtonText: {
-    color: '#fff',
+  buttonPrimaryText: {
     fontSize: 15,
-    fontWeight: '700'
-  },
-  cancelButtonText: {
-    color: '#1a1c20',
-    fontSize: 15,
-    fontWeight: '600'
-  },
-
-  infoBanner: {
-    backgroundColor: '#e3f2fd',
-    borderRadius: 8,
-    padding: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: '#1976d2',
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 24
-  },
-  infoIcon: {
-    fontSize: 16
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 12,
-    color: '#1a1c20',
-    lineHeight: 16
-  },
-  retryButton: {
-    backgroundColor: '#ff7a1a',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8
-  },
-  retryButtonText: {
+    fontWeight: '700',
     color: '#fff',
-    fontWeight: '600',
-    fontSize: 14
-  }
+    letterSpacing: 0.3,
+  },
 });
 
 export default ConfirmSubscriptionScreen;
