@@ -237,6 +237,7 @@ export default {
   "home.tile_lipa_later": "Lipa Later",
   "home.tile_service_motorcycle": "Service Motorcycle",
   "home.tile_statement": "My Statement",
+  "home.tile_my_subscription": "My Subscription",
   "home.trips": "Trips",
   "home.view_breakdown": "View Breakdown",
   "home.yesterday_total": "Yesterday's Total",

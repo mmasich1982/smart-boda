@@ -247,6 +247,7 @@ export default {
   "home.trips": "Safari",
   "home.view_breakdown": "Tazama Muundo",
   "home.yesterday_total": "Jumla ya Jana",
+  "home.tile_my_subscription": "Usajili Wangu",
   "info": "Habari",
   "info_email": "Habari: Barua Pepe",
   "info_mpesaCode": "Habari: Kanuni ya M-Pesa",
