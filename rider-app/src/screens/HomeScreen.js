@@ -464,6 +464,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </View>
           )}
 
+          <View style={styles.tileRow}>
           {energyTile && (
               <TouchableOpacity
                 style={styles.homeTile}
