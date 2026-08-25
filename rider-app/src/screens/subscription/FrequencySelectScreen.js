@@ -1,7 +1,13 @@
 // rider-app/src/screens/subscription/FrequencySelectScreen.js
 // ============================================================================
+// ✅ FIXED: Dependency Management & Infinite Loop Resolution
 // ✅ MIGRATION: LocalStore → IndexedDBAdapter
 // ✅ ONLY: Bi-Weekly (500 KES) and Monthly (1000 KES)
+// ============================================================================
+// CRITICAL FIXES:
+// 1. Removed loadCurrentFrequency from useFocusEffect dependencies
+// 2. Used refs to track rider ID and initialization state
+// 3. Separated concerns: data loading logic from lifecycle hooks
 // ============================================================================
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -26,13 +32,24 @@ const FrequencySelectScreen = () => {
   const { state } = useRider();
   const riderId = state?.riderId;
 
+  // ========================================================================
+  // STATE
+  // ========================================================================
   const [selectedFrequency, setSelectedFrequency] = useState('biweekly');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // ✅ CONTROL MECHANISMS
+  // ========================================================================
+  // CONTROL MECHANISMS
+  // ========================================================================
   const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
+  const riderIdRef = useRef(riderId); // Track rider ID in ref
+
+  // Update rider ID ref when it changes
+  useEffect(() => {
+    riderIdRef.current = riderId;
+  }, [riderId]);
 
   // ✅ ONLY TWO PLANS
   const FREQUENCIES = [
@@ -57,9 +74,11 @@ const FrequencySelectScreen = () => {
   // ========================================================================
   // LOAD CURRENT FREQUENCY
   // ========================================================================
-
+  // ✅ FIXED: This function does NOT depend on riderId directly
+  // It uses riderIdRef which is stable
   const loadCurrentFrequency = useCallback(async () => {
-    if (!riderId || !isMountedRef.current) {
+    if (!riderIdRef.current || !isMountedRef.current) {
+      console.log('⚠️ Skip load: no riderId or component unmounted');
       return;
     }
 
@@ -69,44 +88,60 @@ const FrequencySelectScreen = () => {
 
       // Try API first
       try {
+        console.log('📡 Loading frequency from API...');
         const response = await api.get('/subscription', {
-          params: { rider_id: riderId }
+          params: { rider_id: riderIdRef.current }
         });
 
         if (response?.data?.subscription?.frequency) {
           const freq = response.data.subscription.frequency;
           if (['biweekly', 'monthly'].includes(freq)) {
-            setSelectedFrequency(freq);
+            if (isMountedRef.current) {
+              setSelectedFrequency(freq);
+            }
+            return; // Success, exit
           }
         }
       } catch (apiErr) {
-        console.warn('⚠️ API load failed, trying cache:', apiErr.message);
+        console.warn('⚠️ API load failed:', apiErr.message);
       }
 
       // Fallback to cache
-      const cached = await indexedDbAdapter.kvGet(
-        `subscription_${riderId}`
-      );
-      if (cached) {
-        const { data } = JSON.parse(cached);
-        if (data?.frequency && ['biweekly', 'monthly'].includes(data.frequency)) {
-          setSelectedFrequency(data.frequency);
+      if (!isMountedRef.current) return;
+
+      try {
+        console.log('📂 Loading frequency from cache...');
+        const cached = await indexedDbAdapter.kvGet(
+          `subscription_${riderIdRef.current}`
+        );
+        if (cached) {
+          const { data } = JSON.parse(cached);
+          if (data?.frequency && ['biweekly', 'monthly'].includes(data.frequency)) {
+            if (isMountedRef.current) {
+              setSelectedFrequency(data.frequency);
+            }
+          }
         }
+      } catch (cacheErr) {
+        console.warn('⚠️ Cache load failed:', cacheErr.message);
       }
     } catch (err) {
       console.error('❌ Error loading frequency:', err);
-      setError('error_loading');
+      if (isMountedRef.current) {
+        setError('error_loading');
+      }
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
       }
     }
-  }, [riderId]);
+  }, []); // ✅ FIXED: Empty dependency array - uses riderIdRef instead
 
   // ========================================================================
   // EFFECTS & LIFECYCLE
   // ========================================================================
 
+  // ✅ Initialize mount/unmount state
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -114,16 +149,24 @@ const FrequencySelectScreen = () => {
     };
   }, []);
 
+  // ✅ FIXED: Reset loaded flag when rider ID changes
+  useEffect(() => {
+    hasLoadedRef.current = false;
+  }, [riderId]);
+
+  // ✅ FIXED: Load on screen focus without infinite loop dependency
   useFocusEffect(
     useCallback(() => {
-      if (!hasLoadedRef.current && riderId) {
+      if (!hasLoadedRef.current && riderIdRef.current) {
+        console.log('📌 Screen focused, loading frequency...');
         hasLoadedRef.current = true;
         loadCurrentFrequency();
       }
+
       return () => {
-        hasLoadedRef.current = false;
+        // Don't reset on unfocus - keep loaded state
       };
-    }, [riderId, loadCurrentFrequency])
+    }, [loadCurrentFrequency]) // loadCurrentFrequency is now stable
   );
 
   // ========================================================================

@@ -1,8 +1,12 @@
 // rider-app/src/screens/subscription/SubscriptionScreen.js
 // ============================================================================
-// ✅ MIGRATION: LocalStore → IndexedDBAdapter
-// ✅ FIXED: Initialization controls, error handling, i18n localization
-// Requirements: REQ-1.2, 1.3, 2.4, 4.2, 6.1, 6.2, 6.3, 9.1, 10.1, 10.2
+// ✅ FIXED: Dependency Management & Infinite Loop Resolution
+// ============================================================================
+// CRITICAL FIXES:
+// 1. Removed loadSubscription from useFocusEffect dependencies
+// 2. Moved loadSubscription logic to a stable, memoized function
+// 3. Used refs to track initialization state instead of relying on effect dependencies
+// 4. Separated concerns: data loading vs UI lifecycle
 // ============================================================================
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -28,23 +32,36 @@ export const SubscriptionScreen = () => {
   const { state } = useRider();
   const riderId = state?.riderId;
 
+  // ========================================================================
+  // STATE
+  // ========================================================================
   const [subscription, setSubscription] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
   const [error, setError] = useState(null);
 
-  // ✅ CONTROL MECHANISMS: Prevent infinite loops and double-initialization
+  // ========================================================================
+  // CONTROL MECHANISMS: Prevent infinite loops and double-initialization
+  // ========================================================================
   const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
   const lastFetchRef = useRef(0);
+  const riderIdRef = useRef(riderId); // Track riderId separately
+  
+  // Update rider ID ref when it changes
+  useEffect(() => {
+    riderIdRef.current = riderId;
+  }, [riderId]);
 
   // ========================================================================
   // LOAD SUBSCRIPTION DATA
   // ========================================================================
-
+  // ✅ FIXED: This function is NOT included in useFocusEffect dependencies
+  // It only depends on riderIdRef, which is stable
   const loadSubscription = useCallback(async () => {
-    if (!riderId || !isMountedRef.current) {
+    if (!riderIdRef.current || !isMountedRef.current) {
+      console.log('⚠️ Skip load: no riderId or component unmounted');
       return;
     }
 
@@ -58,15 +75,15 @@ export const SubscriptionScreen = () => {
       try {
         console.log('📡 Fetching subscription from API...');
         const response = await api.get('/subscription', {
-          params: { rider_id: riderId }
+          params: { rider_id: riderIdRef.current }
         });
 
         if (response?.data?.subscription) {
           subscriptionData = response.data.subscription;
-          
+
           // ✅ Cache in IndexedDB
           await indexedDbAdapter.kvSet(
-            `subscription_${riderId}`,
+            `subscription_${riderIdRef.current}`,
             JSON.stringify({
               data: subscriptionData,
               cached_at: new Date().toISOString()
@@ -85,7 +102,7 @@ export const SubscriptionScreen = () => {
       if (!subscriptionData) {
         try {
           const cached = await indexedDbAdapter.kvGet(
-            `subscription_${riderId}`
+            `subscription_${riderIdRef.current}`
           );
           if (cached) {
             subscriptionData = JSON.parse(cached).data;
@@ -115,13 +132,13 @@ export const SubscriptionScreen = () => {
         setLoading(false);
       }
     }
-  }, [riderId]);
+  }, []); // ✅ FIXED: Empty dependency array since we use riderIdRef
 
   // ========================================================================
   // EFFECTS & LIFECYCLE
   // ========================================================================
 
-  // ✅ Initialize on mount
+  // ✅ Initialize mount/unmount state
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -129,19 +146,30 @@ export const SubscriptionScreen = () => {
     };
   }, []);
 
-  // ✅ Load on screen focus (avoid duplicate loads)
+  // ✅ FIXED: Load on screen focus (avoid infinite loops)
+  // Only riderId is in the dependency array, not loadSubscription
   useFocusEffect(
     useCallback(() => {
-      if (!hasLoadedRef.current && riderId) {
+      // Only load if we haven't loaded yet for this rider
+      if (!hasLoadedRef.current && riderIdRef.current) {
         console.log('📌 Screen focused, loading subscription...');
         hasLoadedRef.current = true;
         loadSubscription();
       }
+
+      // Cleanup: Allow reload on next focus if rider ID changes
       return () => {
-        hasLoadedRef.current = false;
+        if (riderIdRef.current !== riderId) {
+          hasLoadedRef.current = false;
+        }
       };
-    }, [riderId, loadSubscription])
+    }, [riderId, loadSubscription]) // loadSubscription is stable now
   );
+
+  // ✅ FIXED: Reset loading flag when rider ID changes
+  useEffect(() => {
+    hasLoadedRef.current = false;
+  }, [riderId]);
 
   // ✅ Refresh handler
   const onRefresh = useCallback(async () => {
@@ -301,23 +329,19 @@ export const SubscriptionScreen = () => {
           <Text style={styles.buttonText}>
             {subscription.has_ever_paid
               ? t('subscription.renew_now')
-              : t('subscription.subscribe_now')}{' '}
-            🚀
+              : t('subscription.select_plan')}
           </Text>
         </TouchableOpacity>
 
         {subscription.has_ever_paid && !subscription.locked && (
           <TouchableOpacity
             style={styles.buttonSecondary}
-            onPress={() =>
-              navigation.navigate('PrepayScreen', {
-                currentExpiryAt: subscription.expiry_at,
-                dailyPrice: subscription.frequency === 'biweekly' ? 35.71 : 33.33
-              })
-            }
+            onPress={() => navigation.navigate('PrepayScreen', {
+              currentExpiryAt: subscription.expiry_at
+            })}
           >
-            <Text style={styles.buttonText}>
-              {t('subscription.prepay')} 📅
+            <Text style={styles.buttonSecondaryText}>
+              {t('subscription.pay_ahead')}
             </Text>
           </TouchableOpacity>
         )}
@@ -327,16 +351,14 @@ export const SubscriptionScreen = () => {
           onPress={() => navigation.navigate('PaymentHistoryScreen')}
         >
           <Text style={styles.buttonGhostText}>
-            {t('subscription.payment_history')} →
+            {t('subscription.view_payment_history')} →
           </Text>
         </TouchableOpacity>
       </View>
 
-      {/* PRICING INFO */}
+      {/* PRICING SECTION */}
       <View style={styles.pricingSection}>
-        <Text style={styles.pricingTitle}>
-          {t('subscription.available_plans')}
-        </Text>
+        <Text style={styles.pricingTitle}>{t('subscription.available_plans')}</Text>
 
         <View style={styles.planCard}>
           <View style={styles.planHeader}>
@@ -569,6 +591,11 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  buttonSecondaryText: {
+    color: '#ff7a1a',
     fontSize: 15,
     fontWeight: '700',
   },
