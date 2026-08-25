@@ -5,7 +5,7 @@
 // ✅ INSTANT UPDATES: Corrections saved to IndexedDB with immediate UI feedback
 // ✅ NETWORK AWARE: Real-time connectivity detection
 // ✅ UI/UX: 100% preserved from original
-// ✅ FIX: Defensive null checks and fallback constants to prevent .map() errors
+// ✅ FIX: Following prototype pattern - constants at module level, pre-calculated options before render
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Switch } from 'react-native';
@@ -21,33 +21,33 @@ import { addToSyncQueue } from '../../offline/syncQueue';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import { CORRECTION_WINDOW_HOURS } from '../../constants/tripConstants';
 
+// ============================================================================
+// MODULE-LEVEL CONSTANTS (Prototype Pattern)
+// ============================================================================
+// These MUST be defined at module level, NOT inside components or try/catch blocks
+// This ensures they're always available and never undefined during render
+
 const PAYMENT_METHODS = [
   { key: 'Cash', label: 'Cash', emoji: '💵' },
   { key: 'MPesa', label: 'M-Pesa', emoji: '📱' },
 ];
 
-// ✅ CORRECTION REASONS: Defined inline to avoid import failures
-// These are the only reasons available for correcting or voiding trips
+// ✅ CRITICAL: Define correction reasons as a constant at module level
+// This is the source of truth - same pattern as prototype (line 1193 of index.html)
+// Do NOT try to import this dynamically or conditionally
 const CORRECTION_REASONS = [
-  'Wrong amount entered',
-  'Duplicate trip',
-  'Wrong payment method',
-  'Trip cancelled',
+  'Typo',
+  'Wrong Payment Method Selected',
+  'Duplicate Entry',
   'Other',
 ];
-
-// ✅ Convert to dropdown items format at module level (safe, not in render)
-const CORRECTION_REASON_ITEMS = CORRECTION_REASONS.map((reason) => ({
-  label: reason,
-  value: reason,
-}));
 
 /**
  * ✅ REFACTORED: Trip Detail Screen for correction/void (RA-04-B)
  * ✅ UNIFIED ARCHITECTURE: IndexedDB-first with no repository dependencies
  * ✅ INSTANT UPDATES: Corrections saved to IndexedDB with cache updates
  * ✅ OFFLINE PERSISTENCE: All changes stored locally first
- * ✅ FIX: Defensive null/undefined checks prevent .map() errors
+ * ✅ FIX: Following prototype pattern
  *
  * KEY CHANGES FROM ORIGINAL:
  * • Removed all tripsRepository imports and dependencies
@@ -56,9 +56,9 @@ const CORRECTION_REASON_ITEMS = CORRECTION_REASONS.map((reason) => ({
  * • Uses addToSyncQueue() for background API sync
  * • Trip cache automatically updated via DailyTradeSummaryScreen's focus refresh
  * • Void operations persist to IndexedDB immediately
- * • ✅ Added fallback CORRECTION_REASONS constant
- * • ✅ Added safe guards for undefined values
- * • ✅ Improved error handling for missing trip data
+ * • ✅ CORRECTION_REASONS defined at module level (not imported)
+ * • ✅ Dropdown items pre-calculated before render (no .map() on undefined)
+ * • ✅ All field access uses safe defaults
  *
  * STORAGE PATTERN:
  * - trip_entry_${tripId}: Individual trip record
@@ -164,7 +164,7 @@ export default function TripDetailScreen({ navigation, route }) {
   const remainingHours = trip ? Math.max(0, CORRECTION_WINDOW_HOURS - hoursSinceTrip()) : 0;
 
   /**
-   * ✅ UPDATE CACHE: Add new trip to trip_history cache
+   * ✅ UPDATE CACHE: Update trip in trip_history cache
    * Ensures DailyTradeSummaryScreen sees the updated trip
    */
   const updateTripHistoryCache = async (updatedTrip) => {
@@ -383,6 +383,14 @@ export default function TripDetailScreen({ navigation, route }) {
   const tripMethod = trip?.paymentMethod || trip?.method || 'Unknown';
   const isLipaLaterTrip = tripMethod === 'LipaLater';
 
+  // ✅ PROTOTYPE PATTERN: Pre-calculate dropdown items BEFORE return statement
+  // This matches the prototype's approach (line 4787 of index.html)
+  // Never call .map() directly in JSX - always pre-calculate
+  const correctionReasonItems = CORRECTION_REASONS.map((r) => ({
+    label: r,
+    value: r,
+  }));
+
   return (
     <ScrollView style={styles.container}>
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
@@ -453,7 +461,7 @@ export default function TripDetailScreen({ navigation, route }) {
         <DropdownField
           selectedValue={draftReason}
           onValueChange={setDraftReason}
-          items={CORRECTION_REASON_ITEMS}
+          items={correctionReasonItems}
           placeholder="Select..."
           enabled={isEditable}
         />
