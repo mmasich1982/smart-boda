@@ -608,24 +608,22 @@ const styles = StyleSheet.create({
   },
   errorContainer: {
     flex: 1,
+    backgroundColor: '#f6f4ef',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    backgroundColor: '#f6f4ef',
+    padding: 20,
   },
   errorTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#e0453f',
-    marginBottom: 12,
-    textAlign: 'center',
+    color: '#d32f2f',
+    marginBottom: 8,
   },
   errorMessage: {
     fontSize: 14,
-    color: '#5b606c',
+    color: '#666',
     textAlign: 'center',
     marginBottom: 20,
-    lineHeight: 20,
   },
   retryButton: {
     backgroundColor: '#ff7a1a',
@@ -795,5 +793,102 @@ const styles = StyleSheet.create({
   },
   heroFare: {
     height: 140,
+  },
+  // Card Styles
+  cardContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#e7e4db',
+  },
+  cardTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  cardStatusEmoji: {
+    fontSize: 16,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1c20',
+    flex: 1,
+  },
+  cardHint: {
+    fontSize: 12,
+    color: '#5b606c',
+    lineHeight: 18,
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeGreen: {
+    backgroundColor: '#e6f5ef',
+  },
+  badgeAmber: {
+    backgroundColor: '#fdf3df',
+  },
+  // Key-Value Row Styles
+  kvRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#e7e4db',
+  },
+  kvKey: {
+    fontSize: 12,
+    color: '#5b606c',
+    fontWeight: '500',
+  },
+  kvValue: {
+    fontSize: 12,
+    color: '#1a1c20',
+    fontWeight: '600',
+  },
+  // Settings List Styles
+  settingsListContainer: {
+    marginTop: 6,
+    marginBottom: 20,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e7e4db',
+    overflow: 'hidden',
+  },
+  settingsListItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7e4db',
+  },
+  settingsListItemLast: {
+    borderBottomWidth: 0,
+  },
+  settingsListLabel: {
+    fontSize: 13,
+    color: '#1a1c20',
+    fontWeight: '500',
+  },
+  settingsListArrow: {
+    fontSize: 16,
+    color: '#5b606c',
+    marginLeft: 8,
+  },
+  logoutListItem: {
+    borderBottomWidth: 0,
+  },
+  logoutText: {
+    color: '#e0453f',
   },
 });
