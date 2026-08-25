@@ -409,7 +409,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     );
   }
 
-  const energyRoute = ENERGY_TILE_BY_FUEL[bike?.fuelType || 'petrol'];
+  const energyTile = bike?.fuel_type_code ? ENERGY_TILE_BY_FUEL[bike.fuel_type_code] : null;
 
   return (
     <HomeScreenErrorBoundary onRetry={() => refresh()}>
