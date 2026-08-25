@@ -22,7 +22,7 @@ import { getLocalRiderId } from '../offline/db';
 import api from '../api/client';
 
 // ✅ NEW IMPORT: Subscription Banners
-import SubscriptionBanners from '../../components/SubscriptionBanners';
+import SubscriptionBanners from '../components/SubscriptionBanners';
 
 const HomeScreen = () => {
   const navigation = useNavigation();
