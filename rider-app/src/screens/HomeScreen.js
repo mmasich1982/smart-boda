@@ -601,262 +601,62 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f6f4ef',
-  },
-  errorContainer: {
-    flex: 1,
-    backgroundColor: '#f6f4ef',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#d32f2f',
-    marginBottom: 8,
-  },
-  errorMessage: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  retryButton: {
-    backgroundColor: '#ff7a1a',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db',
-  },
-  brand: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  logo: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#ff7a1a',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  logoText: {
-    fontSize: 16,
-  },
-  brandName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  notifBell: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  bellIcon: {
-    fontSize: 20,
-  },
-  notifBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#ff7a1a',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  screenBody: {
-    padding: 20,
-  },
-  energyTile: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    alignItems: 'center',
-  },
-  yesterdayCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-  },
-  yesterdayHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  yesterdayLabel: {
-    fontSize: 12,
-    color: '#5b606c',
-    fontWeight: '600',
-  },
-  yesterdayAmount: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  viewBreakdownLink: {
-    color: '#ff7a1a',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  warningBox: {
-    backgroundColor: '#fff3e0',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#ff9800',
-  },
-  warningText: {
-    color: '#e65100',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  tileRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  homeTile: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    minHeight: 100,
-  },
-  fullWidth: {
-    flex: 1,
-  },
-  logoutTile: {
-    backgroundColor: '#fce4e1',
-    borderColor: '#e0453f',
-  },
-  tileEmoji: {
-    fontSize: 32,
-    marginBottom: 8,
-  },
-  tileLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1a1c20',
-    textAlign: 'center',
-  },
-  settingsRow: {
-    gap: 12,
-    marginBottom: 20,
-  },
-  skeleton: {
-    backgroundColor: '#e0e0e0',
-    opacity: 0.5,
-  },
-  skeletonGrid: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  heroFare: {
-    height: 140,
-  },
-  // Card Styles
+// ✅ ADD THESE MISSING STYLES:
   cardContainer: {
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: '#e7e4db',
   },
   cardTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
+    gap: 12,
+    marginBottom: 8,
   },
   cardStatusEmoji: {
-    fontSize: 16,
+    fontSize: 18,
   },
   cardTitle: {
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: '600',
     color: '#1a1c20',
     flex: 1,
-  },
-  cardHint: {
-    fontSize: 12,
-    color: '#5b606c',
-    lineHeight: 18,
   },
   badge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
   },
-  badgeGreen: {
-    backgroundColor: '#e6f5ef',
-  },
   badgeAmber: {
-    backgroundColor: '#fdf3df',
+    backgroundColor: '#fff3e0',
   },
-  // Key-Value Row Styles
+  badgeGreen: {
+    backgroundColor: '#e8f5e9',
+  },
+  cardHint: {
+    fontSize: 12,
+    color: '#5b606c',
+    marginLeft: 30,
+  },
   kvRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#e7e4db',
   },
   kvKey: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#5b606c',
     fontWeight: '500',
   },
   kvValue: {
-    fontSize: 12,
+    fontSize: 16,
+    fontWeight: '700',
     color: '#1a1c20',
-    fontWeight: '600',
   },
-  // Settings List Styles
   settingsListContainer: {
-    marginTop: 6,
-    marginBottom: 20,
     backgroundColor: '#fff',
     borderRadius: 12,
     borderWidth: 1,
@@ -867,28 +667,25 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
     paddingVertical: 14,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#e7e4db',
-  },
-  settingsListItemLast: {
-    borderBottomWidth: 0,
-  },
-  settingsListLabel: {
-    fontSize: 13,
-    color: '#1a1c20',
-    fontWeight: '500',
-  },
-  settingsListArrow: {
-    fontSize: 16,
-    color: '#5b606c',
-    marginLeft: 8,
   },
   logoutListItem: {
     borderBottomWidth: 0,
   },
+  settingsListLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#1a1c20',
+  },
   logoutText: {
     color: '#e0453f',
+    fontWeight: '600',
+  },
+  settingsListArrow: {
+    fontSize: 16,
+    color: '#5b606c',
   },
 });
