@@ -464,105 +464,122 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </View>
           )}
 
-          {/* Energy Tile (Fuel/Battery) */}
-          {energyRoute && (
-            <TouchableOpacity
-              style={styles.energyTile}
-              onPress={() => handleNavigateTile(energyRoute.route)}
-              activeOpacity={0.7}
-            >
-              <Text style={{ fontSize: 28, marginBottom: 6 }}>{energyRoute.emoji}</Text>
-              <Text style={styles.tileLabel}>{t(energyRoute.label) || energyRoute.label}</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Home Tiles Grid */}
-          <View style={styles.tileRow}>
-            {HOME_TILES.slice(0, 2).map((tile, idx) => (
+          {energyTile && (
               <TouchableOpacity
-                key={idx}
                 style={styles.homeTile}
-                onPress={() => handleNavigateTile(tile.route)}
-                activeOpacity={0.7}
+                onPress={() => {
+                  try {
+                    // Try direct navigation first (MainNavigator context)
+                    navigation.navigate(energyTile.route);
+                  } catch (err) {
+                    console.error('[HomeScreen] Navigation error:', err);
+                    // Fallback: try navigating through parent if nested
+                    try {
+                      navigation.navigate('Home', { screen: energyTile.route });
+                    } catch (fallbackErr) {
+                      console.error('[HomeScreen] Fallback navigation failed:', fallbackErr);
+                    }
+                  }
+                }}
               >
-                <Text style={styles.tileEmoji}>{tile.emoji}</Text>
-                <Text style={styles.tileLabel}>{t(tile.label) || tile.label}</Text>
+                <Text style={styles.tileEmoji}>{energyTile.emoji}</Text>
+                <Text style={styles.tileLabel}>{t(energyTile.label)}</Text>
               </TouchableOpacity>
-            ))}
-          </View>
+            )}
 
-          <View style={styles.tileRow}>
-            {HOME_TILES.slice(2, 4).map((tile, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={styles.homeTile}
-                onPress={() => handleNavigateTile(tile.route)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.tileEmoji}>{tile.emoji}</Text>
-                <Text style={styles.tileLabel}>{t(tile.label) || tile.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <View style={styles.tileRow}>
-            {HOME_TILES.slice(4, 6).map((tile, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={styles.homeTile}
-                onPress={() => handleNavigateTile(tile.route)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.tileEmoji}>{tile.emoji}</Text>
-                <Text style={styles.tileLabel}>{t(tile.label) || tile.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <View style={styles.tileRow}>
-            {HOME_TILES.slice(6, 8).map((tile, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={styles.homeTile}
-                onPress={() => handleNavigateTile(tile.route)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.tileEmoji}>{tile.emoji}</Text>
-                <Text style={styles.tileLabel}>{t(tile.label) || tile.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {/* Full-width Feedback Tile */}
           <TouchableOpacity
-            style={[styles.homeTile, styles.fullWidth]}
-            onPress={() => handleNavigateTile(HOME_TILES[8].route)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.tileEmoji}>{HOME_TILES[8].emoji}</Text>
-            <Text style={styles.tileLabel}>{t(HOME_TILES[8].label) || HOME_TILES[8].label}</Text>
-          </TouchableOpacity>
+              style={styles.homeTile}
+              onPress={() => {
+                console.log('[HomeScreen] Navigating to MaintenanceHub');
+                try {
+                  navigation.navigate('MaintenanceHub');
+                } catch (err) {
+                  console.error('[HomeScreen] MaintenanceHub navigation error:', err);
+                  showToast('Navigation failed', 'error');
+                }
+              }}
+            >
+              <Text style={styles.tileEmoji}>🔧</Text>
+              <Text style={styles.tileLabel}>{t('home.tile_service_motorcycle')}</Text>
+            </TouchableOpacity>
+          </View>
 
-          {/* Settings and Logout */}
-          <View style={styles.settingsRow}>
+          {/* Row 2: Financial Performance + My Subscription */}
+          <View style={styles.tileRow}>
             <TouchableOpacity
               style={styles.homeTile}
-              onPress={() => handleNavigateTile('Settings')}
-              activeOpacity={0.7}
+              onPress={() => navigation.navigate('MoneyMastery')}
             >
-              <Text style={styles.tileEmoji}>⚙️</Text>
-              <Text style={styles.tileLabel}>{t('home.settings') || 'Settings'}</Text>
+              <Text style={styles.tileEmoji}>💰</Text>
+              <Text style={styles.tileLabel}>{t('home.tile_financial_performance')}</Text>
+            </TouchableOpacity>
+          
+            <TouchableOpacity
+              style={styles.homeTile}
+              onPress={() => navigation.navigate('MySubscriptions')}
+            >
+              <Text style={styles.tileEmoji}>📲</Text>
+              <Text style={styles.tileLabel}>{t('home.tile_my_subscription')}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Row 3: Sync Status Card (Clickable) */}
+          <TouchableOpacity 
+            style={styles.cardContainer}
+            onPress={() => navigation.navigate('SyncStatus')}
+            activeOpacity={0.7}
+          >
+            <View style={styles.cardTitleRow}>
+              <Text style={styles.cardStatusEmoji}>
+                {queuedCount > 0 ? '🟠' : '🟢'}
+              </Text>
+              <Text style={styles.cardTitle}>Sync Status</Text>
+              <View style={[
+                styles.badge,
+                queuedCount > 0 ? styles.badgeAmber : styles.badgeGreen
+              ]}>
+                <Text style={styles.badgeText}>
+                  {queuedCount > 0 ? `Queued: ${queuedCount}` : 'All Synced'}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.cardHint}>
+              {queuedCount > 0 ? 'Tap to view queue and retry.' : 'Everything is safely backed up.'}
+            </Text>
+          </TouchableOpacity>
+
+          {/* Account Card */}
+          <View style={styles.cardContainer}>
+            <View style={styles.kvRow}>
+              <Text style={styles.kvKey}>Trips today</Text>
+              <Text style={styles.kvValue}>{tripsToday}</Text>
+            </View>
+          </View>
+
+          {/* Settings List Items */}
+          <View style={styles.settingsListContainer}>
+            <TouchableOpacity 
+              style={styles.settingsListItem}
+              onPress={handleOpenDailySummary}
+            >
+              <Text style={styles.settingsListLabel}>📊 My Daily Trade Summary</Text>
+              <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.homeTile, styles.logoutTile]}
-              onPress={handleLogout}
-              activeOpacity={0.7}
+            <TouchableOpacity 
+              style={styles.settingsListItem}
+              onPress={handleViewFinancialHistory}
             >
-              <Text style={styles.tileEmoji}>🚪</Text>
-              <Text style={[styles.tileLabel, { color: '#e0453f' }]}>
-                {t('home.logout') || 'Logout'}
-              </Text>
+              <Text style={styles.settingsListLabel}>📈 My Financial History & Statements</Text>
+              <Text style={styles.settingsListArrow}>›</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.settingsListItem, styles.logoutListItem]}
+              onPress={() => navigation.navigate('PinLogin')}
+            >
+              <Text style={[styles.settingsListLabel, styles.logoutText]}>🚪 Logout</Text>
+              <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
           </View>
         </View>
