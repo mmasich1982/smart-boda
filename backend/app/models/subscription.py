@@ -1,9 +1,13 @@
 # backend/app/models/subscription.py
-# ✅ COMPREHENSIVE FIX: All relationship issues resolved with explicit primaryjoin
-# This addresses ALL subscription relationship problems in one complete fix
+# ✅ COMPREHENSIVE FIX: Single authoritative source for all subscription models
+# Consolidates subscription.py and subscription_enhanced.py into ONE file
+# Resolves "Trying to redefine primary-key column" error
 
 import uuid
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, DateTime, ForeignKey, JSON, func, Text
+from sqlalchemy import (
+    Column, Integer, String, Numeric, Boolean, DateTime, ForeignKey, JSON, 
+    func, Text, Index, UniqueConstraint
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -13,14 +17,23 @@ from datetime import datetime, timezone
 class SubscriptionPlan(Base):
     """
     Subscription plan configuration - supports multiple tiers.
+    
     PLANS:
     - Biweekly: 14 days @ KES 500 (≈ KES 35.71/day)
     - Monthly: 30 days @ KES 1000 (≈ KES 33.33/day)
     
     Only one plan is "active" at a time. Super Admin can schedule changes
     with advance notice before activation.
+    
+    ✅ FIXED: extend_existing=True allows table alteration
     """
     __tablename__ = "subscription_plan"
+    __table_args__ = (
+        Index('ix_subscription_plan_is_active', 'is_active'),
+        Index('ix_subscription_plan_tier_name', 'tier_name'),
+        Index('ix_subscription_plan_version', 'version'),
+        {'extend_existing': True}
+    )
     
     id = Column(Integer, primary_key=True)
     name = Column(String, default="Smart Boda Plus")
@@ -40,12 +53,25 @@ class SubscriptionPlan(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # ✅ ALL RELATIONSHIPS PROPERLY DEFINED
-    # Relationships to models in subscription_enhanced.py
-    pricing_changes = relationship("PricingChangeLog", back_populates="plan", cascade="all, delete-orphan")
-    pending_changes = relationship("PendingPriceChange", back_populates="plan", uselist=True, cascade="all, delete-orphan")
-    
-    # Relationship to RiderSubscription (in this file)
-    rider_subscriptions = relationship("RiderSubscription", back_populates="plan", cascade="all, delete-orphan")
+    pricing_changes = relationship(
+        "PricingChangeLog", 
+        back_populates="plan", 
+        cascade="all, delete-orphan"
+    )
+    pending_changes = relationship(
+        "PendingPriceChange", 
+        back_populates="plan", 
+        uselist=True, 
+        cascade="all, delete-orphan"
+    )
+    rider_subscriptions = relationship(
+        "RiderSubscription", 
+        back_populates="plan", 
+        cascade="all, delete-orphan"
+    )
+
+    def __repr__(self):
+        return f'<SubscriptionPlan({self.id}, {self.name}, ${self.daily_price})>'
 
 
 class RiderSubscription(Base):
@@ -58,15 +84,18 @@ class RiderSubscription(Base):
     2. Paid subscription expires → Auto-lock
     3. Super Admin manual lock → Admin-triggered lock
     
-    Lock reasons: "Free Trial Expired", "Subscription Expired", "Admin Override"
-    
-    RELATIONSHIPS:
-    - plan: FK to subscription_plan.id
-    - payments: Via rider_id to payment.rider_id (viewonly)
-    - trial: Via rider_id to subscription_trial.rider_id (one-to-one, canonical side)
-    - lock_history: Via rider_id to account_lock_history.rider_id (one-to-many, canonical side)
+    ✅ FIXED: extend_existing=True allows table alteration
+    ✅ FIXED: rider_id is PRIMARY KEY (not redefined as non-PK)
     """
     __tablename__ = "rider_subscription"
+    __table_args__ = (
+        Index('ix_rider_subscription_plan_id', 'plan_id'),
+        Index('ix_rider_subscription_total_paid_lifetime', 'total_paid_lifetime'),
+        Index('ix_rider_subscription_last_payment_at', 'last_payment_at'),
+        Index('ix_rider_subscription_price_change_viewed_at', 'price_change_viewed_at'),
+        Index('ix_rider_subscription_created_at', 'created_at'),
+        {'extend_existing': True}
+    )
     
     rider_id = Column(UUID(as_uuid=True), ForeignKey("rider.id"), primary_key=True)
     plan_id = Column(Integer, ForeignKey("subscription_plan.id"), default=1)
@@ -93,16 +122,10 @@ class RiderSubscription(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # ✅ ALL RELATIONSHIPS WITH EXPLICIT PRIMARYJOIN (COMPREHENSIVE FIX)
-    
-    # Relationship to SubscriptionPlan (in this file)
-    # Foreign key: plan_id → subscription_plan.id
+    # ✅ ALL RELATIONSHIPS WITH EXPLICIT PRIMARYJOIN
     plan = relationship("SubscriptionPlan", back_populates="rider_subscriptions")
     
-    # Relationship to Payment (in payment.py)
-    # Foreign key: rider_id → rider.id (same as RiderSubscription.rider_id)
-    # This is a one-to-many relationship with Payment.rider_id
-    # Explicit primaryjoin required because rider_id is PK here but regular FK in Payment
+    # Relationship to Payment (viewonly because we can't cascade deletes across FK types)
     payments = relationship(
         "Payment",
         primaryjoin="RiderSubscription.rider_id == foreign(Payment.rider_id)",
@@ -112,12 +135,7 @@ class RiderSubscription(Base):
         uselist=True
     )
     
-    # Relationship to SubscriptionTrial (in subscription_enhanced.py)
-    # Foreign key: SubscriptionTrial.rider_id → rider.id
-    # This maps RiderSubscription.rider_id (which is a FK to rider.id) to SubscriptionTrial.rider_id
-    # Explicit primaryjoin required because the FK doesn't directly reference RiderSubscription
-    # ✅ FIXED: Removed back_populates to avoid bidirectional constraint issues
-    # The SubscriptionTrial model has a read-only reverse relationship if needed
+    # Relationship to SubscriptionTrial (one-to-one, this is the canonical side)
     trial = relationship(
         "SubscriptionTrial",
         primaryjoin="RiderSubscription.rider_id == foreign(SubscriptionTrial.rider_id)",
@@ -127,12 +145,7 @@ class RiderSubscription(Base):
         lazy="select"
     )
     
-    # Relationship to AccountLockHistory (in subscription_enhanced.py)
-    # Foreign key: AccountLockHistory.rider_id → rider.id
-    # This maps RiderSubscription.rider_id (which is a FK to rider.id) to AccountLockHistory.rider_id
-    # Explicit primaryjoin required because the FK doesn't directly reference RiderSubscription
-    # ✅ FIXED: Removed back_populates to avoid bidirectional constraint issues
-    # The AccountLockHistory model has a read-only reverse relationship if needed
+    # Relationship to AccountLockHistory (one-to-many, this is the canonical side)
     lock_history = relationship(
         "AccountLockHistory",
         primaryjoin="RiderSubscription.rider_id == foreign(AccountLockHistory.rider_id)",
@@ -142,36 +155,163 @@ class RiderSubscription(Base):
         lazy="select"
     )
 
+    def __repr__(self):
+        return f'<RiderSubscription({self.rider_id}, locked={self.locked}, expiry={self.expiry_at})>'
 
-# ============================================================================
-# COMPREHENSIVE RELATIONSHIP MAPPING
-# ============================================================================
-# The models in subscription_enhanced.py (PricingChangeLog, PendingPriceChange,
-# SubscriptionTrial, AccountLockHistory) are NOT duplicated here.
-# They are properly imported in app/models/__init__.py
-#
-# RELATIONSHIP MATRIX (All relationships defined):
-# ┌─────────────────────┬──────────────────────┬────────────────┐
-# │ Model               │ Relationship         │ Back Populates │
-# ├─────────────────────┼──────────────────────┼────────────────┤
-# │ SubscriptionPlan    │ pricing_changes      │ plan           │
-# │ SubscriptionPlan    │ pending_changes      │ plan           │
-# │ SubscriptionPlan    │ rider_subscriptions  │ plan           │
-# │ RiderSubscription   │ plan                 │ rider_subsc.   │
-# │ RiderSubscription   │ payments             │ (viewonly)     │
-# │ RiderSubscription   │ trial                │ (no backref)   │
-# │ RiderSubscription   │ lock_history         │ (no backref)   │
-# │ PricingChangeLog    │ plan                 │ pricing_chang. │
-# │ PendingPriceChange  │ plan                 │ pending_chang. │
-# │ SubscriptionTrial   │ rider                │ (viewonly)     │
-# │ AccountLockHistory  │ rider                │ (viewonly)     │
-# └─────────────────────┴──────────────────────┴────────────────┘
-#
-# NOTES ON THE FIX:
-# 1. RiderSubscription is the CANONICAL side for trial and lock_history relationships
-# 2. Both SubscriptionTrial and AccountLockHistory have read-only reverse relationships
-# 3. Removed back_populates from RiderSubscription.trial and RiderSubscription.lock_history
-#    to avoid SQLAlchemy's bidirectional relationship enforcement
-# 4. This resolves the "both of the same direction" error that occurred when SQLAlchemy
-#    tried to infer relationships from FK constraints that don't directly link the models
-# ============================================================================
+
+class SubscriptionTrial(Base):
+    """
+    Trial period tracking with conversion metrics.
+    One trial per rider, linked via rider_id.
+    """
+    __tablename__ = 'subscription_trial'
+    __table_args__ = (
+        Index('ix_subscription_trial_rider_id', 'rider_id', unique=True),
+        Index('ix_subscription_trial_converted_to_paid', 'converted_to_paid'),
+        Index('ix_subscription_trial_started_at', 'started_at'),
+        Index('ix_subscription_trial_converted_at', 'converted_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    rider_id = Column(UUID(as_uuid=True), ForeignKey('rider.id', ondelete='CASCADE'), 
+                     nullable=False, unique=True, index=True)
+
+    started_at = Column(DateTime(timezone=True), nullable=False, 
+                       default=datetime.utcnow)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    converted_to_paid = Column(Boolean, nullable=False, default=False)
+    converted_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    # Notification tracking
+    notification_sent_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Audit
+    created_at = Column(DateTime(timezone=True), nullable=False, 
+                       default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<SubscriptionTrial({self.rider_id}, converted={self.converted_to_paid})>'
+
+
+class PricingChangeLog(Base):
+    """
+    Audit trail for subscription price changes with scheduling support.
+    """
+    __tablename__ = 'pricing_change_log'
+    __table_args__ = (
+        Index('ix_pricing_change_log_plan_id', 'plan_id'),
+        Index('ix_pricing_change_log_version', 'version'),
+        Index('ix_pricing_change_log_effective_at', 'effective_at'),
+        Index('ix_pricing_change_log_applied_at', 'applied_at'),
+        Index('ix_pricing_change_log_plan_applied', 'plan_id', 'applied_at'),
+        Index('ix_pricing_change_log_is_pending', 'applied_at', 'cancelled_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    plan_id = Column(Integer, ForeignKey('subscription_plan.id', ondelete='CASCADE'), 
+                    nullable=False, index=True)
+
+    # Version tracking
+    version = Column(Integer, nullable=False)
+
+    # Pricing details
+    daily_price_old = Column(Numeric(precision=10, scale=2), nullable=False)
+    daily_price_new = Column(Numeric(precision=10, scale=2), nullable=False)
+    discounts = Column(JSON, nullable=True)
+
+    # Timing
+    announced_at = Column(DateTime(timezone=True), nullable=False)
+    effective_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    applied_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+    # Cancellation
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_by_admin = Column(String(100), nullable=True)
+    cancellation_reason = Column(String(500), nullable=True)
+
+    # Admin tracking
+    created_by_admin = Column(String(100), nullable=False)
+    creation_ip = Column(String(50), nullable=True)
+
+    # Audit
+    created_at = Column(DateTime(timezone=True), nullable=False, 
+                       default=datetime.utcnow)
+
+    # Relationships
+    plan = relationship('SubscriptionPlan', back_populates='pricing_changes')
+
+    def __repr__(self):
+        return f'<PricingChangeLog({self.plan_id}, v{self.version}, ${self.daily_price_old}->${self.daily_price_new})>'
+
+
+class PendingPriceChange(Base):
+    """
+    Current pending price changes (one per plan).
+    For efficient querying of what price changes are awaiting.
+    """
+    __tablename__ = 'pending_price_change'
+    __table_args__ = (
+        Index('ix_pending_price_change_plan_id', 'plan_id', unique=True),
+        Index('ix_pending_price_change_effective_at', 'effective_at'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    plan_id = Column(Integer, ForeignKey('subscription_plan.id', ondelete='CASCADE'), 
+                    nullable=False, unique=True, index=True)
+
+    # Pricing change details
+    daily_price = Column(Numeric(precision=10, scale=2), nullable=False)
+    discounts = Column(JSON, nullable=True)
+    version = Column(Integer, nullable=False)
+
+    # Timing
+    announced_at = Column(DateTime(timezone=True), nullable=False)
+    effective_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+    # Audit
+    created_at = Column(DateTime(timezone=True), nullable=False, 
+                       default=datetime.utcnow)
+
+    # Relationships
+    plan = relationship('SubscriptionPlan', back_populates='pending_changes')
+
+    def __repr__(self):
+        return f'<PendingPriceChange({self.plan_id}, effective={self.effective_at})>'
+
+
+class AccountLockHistory(Base):
+    """
+    Lock/unlock audit trail (automatic and manual).
+    """
+    __tablename__ = 'account_lock_history'
+    __table_args__ = (
+        Index('ix_account_lock_history_rider_id', 'rider_id'),
+        Index('ix_account_lock_history_action', 'action'),
+        Index('ix_account_lock_history_triggered_at', 'triggered_at'),
+        Index('ix_account_lock_history_rider_action', 'rider_id', 'action'),
+        Index('ix_account_lock_history_triggered_by', 'triggered_by'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    rider_id = Column(UUID(as_uuid=True), ForeignKey('rider.id', ondelete='CASCADE'), 
+                     nullable=False, index=True)
+
+    # Action type
+    action = Column(String(20), nullable=False)  # 'lock', 'unlock'
+    reason = Column(String(255), nullable=True)
+
+    # Trigger
+    triggered_by = Column(String(50), nullable=False)  # 'system', 'manual'
+    triggered_at = Column(DateTime(timezone=True), nullable=False, 
+                         default=datetime.utcnow, index=True)
+
+    # For manual actions
+    admin_email = Column(String(100), nullable=True)
+    admin_note = Column(String(500), nullable=True)
+
+    # Audit
+    created_at = Column(DateTime(timezone=True), nullable=False, 
+                       default=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<AccountLockHistory({self.rider_id}, {self.action}, by={self.triggered_by})>'

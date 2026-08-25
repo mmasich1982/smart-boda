@@ -1,6 +1,7 @@
 # backend/app/models/__init__.py
 # Import all models here so they're registered with Base.metadata during application startup.
-# FIXED: Added missing imports from subscription_enhanced.py
+# ✅ FIXED: All subscription models now imported from subscription.py (single source of truth)
+# subscription_enhanced.py is DEPRECATED - all models moved to subscription.py
 
 from app.models.admin_user import AdminUser
 from app.models.bike_profile import BikeProfile, DuplicatePlateCase
@@ -43,11 +44,18 @@ from app.models.savings_contribution import SavingsContribution
 from app.models.service_type_master import ServiceTypeMaster
 from app.models.statement import Statement
 from app.models.statement_download import StatementDownload
-from app.models.subscription import SubscriptionPlan, RiderSubscription
-# ✅ FIXED: ADD THIS IMPORT - Imports the 4 models from subscription_enhanced
-from app.models.subscription_enhanced import (
-    PricingChangeLog, PendingPriceChange, SubscriptionTrial, AccountLockHistory
+
+# ✅ FIXED: Import ALL subscription models from the single consolidated subscription.py
+# This replaces the old separate imports from subscription.py and subscription_enhanced.py
+from app.models.subscription import (
+    SubscriptionPlan, 
+    RiderSubscription,
+    SubscriptionTrial,
+    PricingChangeLog, 
+    PendingPriceChange, 
+    AccountLockHistory
 )
+
 from app.models.suggestion import Suggestion
 from app.models.suggestion_category_master import SuggestionCategoryMaster
 from app.models.swap_partner_master import SwapPartnerMaster
@@ -101,12 +109,12 @@ __all__ = [
     "ServiceTypeMaster",
     "Statement",
     "StatementDownload",
+    # ✅ FIXED: All subscription models from single consolidated subscription.py
     "SubscriptionPlan",
     "RiderSubscription",
-    # ✅ FIXED: Now these are imported and can be exported
+    "SubscriptionTrial",
     "PricingChangeLog",
     "PendingPriceChange",
-    "SubscriptionTrial",
     "AccountLockHistory",
     "Suggestion",
     "SuggestionCategoryMaster",
