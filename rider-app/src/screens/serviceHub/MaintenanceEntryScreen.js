@@ -152,16 +152,23 @@ export default function MaintenanceEntryScreen({ navigation }) {
       clearCriticalError();
       setSuccessMessage('');
 
+      const now = Date.now();
       const payload = {
         cost: parseFloat(cost),
         created_at: new Date().toISOString(),
       };
 
-      const recordId = `maintenance_${effectiveRiderId}_${Date.now()}`;
-      const offlineRecord = { 
-        ...payload, 
-        id: recordId, 
+      const recordId = `maintenance_${effectiveRiderId}_${now}`;
+      // ✅ CRITICAL: Include timestamp fields for MoneyMasteryScreen period filtering
+      const offlineRecord = {
+        ...payload,
+        id: recordId,
         rider_id: effectiveRiderId,
+        ts: now,                                    // ✅ Primary timestamp (ms) for period filtering
+        timestamp: now,                             // ✅ Backup timestamp (ms)
+        date: new Date().toISOString().split('T')[0], // ✅ Date string for grouping
+        status: 'active',                           // ✅ Status tracking
+        syncStatus: 'pending',                      // ✅ Sync tracking
       };
 
       console.log('💾 Saving entry:', { recordId, riderId: effectiveRiderId, cost });

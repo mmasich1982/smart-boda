@@ -107,14 +107,25 @@ export default function BatteryEntryScreen({ bikeProfile, navigation }) {
       clearCriticalError();
       setSuccessMessage('');
 
+      const now = Date.now();
       const payload = {
         mode: 'charging',
         cost: parseFloat(totalCost),
         created_at: new Date().toISOString(),
       };
 
-      const recordId = `battery_${effectiveRiderId}_${Date.now()}`;
-      const offlineRecord = { ...payload, id: recordId, rider_id: effectiveRiderId };
+      const recordId = `battery_${effectiveRiderId}_${now}`;
+      // ✅ CRITICAL: Include timestamp fields for MoneyMasteryScreen period filtering
+      const offlineRecord = {
+        ...payload,
+        id: recordId,
+        rider_id: effectiveRiderId,
+        ts: now,                                    // ✅ Primary timestamp (ms) for period filtering
+        timestamp: now,                             // ✅ Backup timestamp (ms)
+        date: new Date().toISOString().split('T')[0], // ✅ Date string for grouping
+        status: 'active',                           // ✅ Status tracking
+        syncStatus: 'pending',                      // ✅ Sync tracking
+      };
 
       console.log('💾 Saving battery entry:', { recordId, riderId: effectiveRiderId, cost: totalCost });
 
