@@ -18,6 +18,8 @@ import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
 import HeroFareCard from '../components/HeroFareCard';
 // ✅ NEW IMPORT: Subscription Banners
 import SubscriptionBanners from '../components/SubscriptionBanners';
+// ✅ CRITICAL: Account lock enforcement
+import { checkAndEnforceLock } from '../offline/subscriptionUtils';
 
 const ENERGY_TILE_BY_FUEL = {
   petrol: { emoji: '⛽', label: 'home.tile_fuel_motorcycle', route: 'FuelHub' },
@@ -141,6 +143,10 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   // ✅ Track if data has been loaded on mount
   const hasLoadedRef = useRef(false);
 
+  // ✅ CRITICAL: Account lock state
+  const [isAccountLocked, setIsAccountLocked] = useState(false);
+  const [lockCheckInProgress, setLockCheckInProgress] = useState(true);
+
   // ✅ Load riderId on mount
   useEffect(() => {
     const loadRiderId = async () => {
@@ -165,6 +171,59 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
 
     loadRiderId();
   }, []);
+
+  // ========================================================================
+  // ✅ CRITICAL: CHECK ACCOUNT LOCK ON SCREEN FOCUS
+  // ========================================================================
+  // This ensures AccountLockedScreen is shown immediately if subscription expired
+  useFocusEffect(
+    useCallback(() => {
+      const checkAccountLock = async () => {
+        if (!riderId) {
+          console.log('[HomeScreen] Lock check skipped - no riderId');
+          setLockCheckInProgress(false);
+          return;
+        }
+
+        try {
+          console.log('[HomeScreen] 🔒 Checking account lock status...');
+          setLockCheckInProgress(true);
+
+          const lockStatus = await checkAndEnforceLock(riderId);
+
+          console.log('[HomeScreen] Lock check result:', {
+            isLocked: lockStatus.isLocked,
+            reason: lockStatus.reason,
+            justLocked: lockStatus.justLocked,
+          });
+
+          if (lockStatus.isLocked) {
+            console.log('[HomeScreen] 🔒 Account is LOCKED - navigating to AccountLockedScreen');
+            setIsAccountLocked(true);
+            // Navigate to lock screen instead of showing home
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'AccountLockedScreen' }],
+            });
+          } else {
+            console.log('[HomeScreen] ✅ Account is UNLOCKED - showing home screen');
+            setIsAccountLocked(false);
+          }
+        } catch (err) {
+          console.error('[HomeScreen] Error checking account lock:', err);
+          setIsAccountLocked(false);
+        } finally {
+          setLockCheckInProgress(false);
+        }
+      };
+
+      checkAccountLock();
+
+      return () => {
+        // Cleanup if needed
+      };
+    }, [riderId, navigation])
+  );
 
   /**
    * ✅ Calculate today's total from trip cache
@@ -397,7 +456,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     }
   }, [navigation]);
 
-  if (riderIdLoading || !isInitialized) {
+  if (riderIdLoading || !isInitialized || lockCheckInProgress) {
     return <LoadingSkeleton />;
   }
 
