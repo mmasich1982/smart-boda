@@ -3,6 +3,7 @@
 // ✅ BUSINESS LOGIC: Free Trial, Renewal, Prepay, Payment History
 // ✅ UI/UX: Matches index.html design system (hero-band, cards, banners)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
+// ✅ FIXED: HeroBand component replaces custom black card hero section
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -17,6 +18,7 @@ import {
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
+import HeroBand from '../../components/HeroBand';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
@@ -211,19 +213,11 @@ const SubscriptionScreen = () => {
   if (subState?.lockedAt && !loading) {
     return (
       <ScrollView style={styles.container}>
-        <View style={styles.heroBand}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backLink}
-          >
-            <Text style={styles.backLinkText}>← {t('common.back') || 'Home'}</Text>
-          </TouchableOpacity>
-          <Text style={styles.heroEmoji}>👋</Text>
-          <Text style={styles.heroTitle}>We've Missed You!</Text>
-          <Text style={styles.heroSubtitle}>
-            {subState.lockReason || 'Subscription expired'} — but your data is safe.
-          </Text>
-        </View>
+        <HeroBand
+          title="We've Missed You!"
+          subtitle={subState.lockReason || 'Subscription expired — but your data is safe.'}
+          onBack={() => navigation.goBack()}
+        />
 
         <View style={styles.bannerContainer}>
           <View style={[styles.banner, styles.bannerWarn]}>
@@ -278,7 +272,9 @@ const SubscriptionScreen = () => {
     return (
       <View style={styles.centered}>
         <Text style={styles.errorText}>
-          {t(`common.${error}`) || 'Unable to load subscription'}
+          {error === 'error_loading_subscription'
+            ? 'Error loading subscription. Please try again.'
+            : 'No subscription found. Start your free trial today.'}
         </Text>
         <TouchableOpacity
           style={styles.retryButton}
@@ -287,103 +283,92 @@ const SubscriptionScreen = () => {
             loadSubscriptionData();
           }}
         >
-          <Text style={styles.retryButtonText}>{t('common.retry') || 'Retry'}</Text>
+          <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   // ========================================================================
-  // DETERMINE SUBSCRIPTION STATUS
+  // DETERMINE STATE
   // ========================================================================
   const isOnFreeTrial = subState?.trialStarted && !subscription;
-  const daysLeft = isOnFreeTrial ? daysOfTrialLeft() : daysUntilExpiry();
-  const statusWord = isOnFreeTrial ? '🎁 Your free trial' : '✅ You\'re all set';
-  const statusTitle = isOnFreeTrial ? 'Free Trial' : 'Active';
-  const isUrgent = daysLeft <= 2;
+  const isSubscribed = !!subscription;
+  const daysLeft = daysUntilExpiry();
+  const trialDaysLeft = daysOfTrialLeft();
 
   // ========================================================================
-  // MAIN UI
+  // MAIN UI - FREE TRIAL OR ACTIVE SUBSCRIPTION
   // ========================================================================
   return (
     <ScrollView
       style={styles.container}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor="#ff7a1a"
-        />
-      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
-      {/* HERO BAND */}
-      <View style={styles.heroBand}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backLink}
-        >
-          <Text style={styles.backLinkText}>← {t('common.back') || 'Home'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.heroEyebrow}>{statusWord}</Text>
-        <Text style={styles.heroTitle}>{statusTitle}</Text>
-        <View style={styles.heroCountdown}>
-          <Text style={styles.heroCountdownDays}>{Math.max(daysLeft, 0)}</Text>
-          <Text style={styles.heroCountdownLabel}>
-            day{daysLeft === 1 ? '' : 's'} left{isOnFreeTrial ? ' of your free trial' : ' on your plan'}
-          </Text>
-        </View>
-      </View>
+      {/* ✅ HERO BAND COMPONENT (replaces custom black card) */}
+      <HeroBand
+        title={
+          isOnFreeTrial
+            ? `${trialDaysLeft} Day${trialDaysLeft > 1 ? 's' : ''} Free Trial`
+            : isSubscribed
+            ? `Renew in ${daysLeft} Day${daysLeft > 1 ? 's' : ''}`
+            : 'Start Your Journey'
+        }
+        subtitle={
+          isOnFreeTrial
+            ? 'Pay anytime before or after. No surprises.'
+            : isSubscribed
+            ? `Your ${subscription.plan === 'biweekly' ? 'Bi-Weekly' : 'Monthly'} plan expires soon.`
+            : 'Choose a plan that works for you.'
+        }
+        onBack={() => navigation.goBack()}
+      />
 
-      {/* URGENT BANNER */}
-      {isUrgent && (
+      {/* FREE TRIAL BANNER */}
+      {isOnFreeTrial && (
         <View style={styles.bannerContainer}>
-          <View
-            style={[
-              styles.banner,
-              daysLeft <= 1 ? styles.bannerError : styles.bannerWarn
-            ]}
-          >
+          <View style={[styles.banner, styles.bannerTrial]}>
             <Text style={styles.bannerText}>
-              {daysLeft <= 1
-                ? '⏰ Today is your last day! Keep your tools running — subscribe now.'
-                : `⏰ Only ${daysLeft} days left. Subscribe now to stay active.`}
+              ✨ Take your time — your {trialDaysLeft}-day free trial doesn't expire until{' '}
+              {new Date(subState.trialEndDate).toLocaleDateString('en-KE')}
             </Text>
           </View>
         </View>
       )}
 
-      {/* STATUS CARD */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Status Details</Text>
-        <View style={styles.kvRow}>
-          <Text style={styles.kvLabel}>Days Left</Text>
-          <Text style={styles.kvValue}>{Math.max(daysLeft, 0)}</Text>
-        </View>
-        {subscription?.expiryDate && (
+      {/* SUBSCRIPTION DETAILS CARD */}
+      {isSubscribed && (
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Your Plan</Text>
+          </View>
+
           <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Expiry Date</Text>
+            <Text style={styles.kvLabel}>Plan Type</Text>
+            <Text style={styles.kvValue}>
+              {subscription.plan === 'biweekly' ? 'Bi-Weekly' : 'Monthly'}
+            </Text>
+          </View>
+
+          <View style={styles.kvRow}>
+            <Text style={styles.kvLabel}>Amount</Text>
+            <Text style={styles.kvValue}>KSh {subscription.amount.toLocaleString()}</Text>
+          </View>
+
+          <View style={[styles.kvRow, { borderBottomWidth: 0 }]}>
+            <Text style={styles.kvLabel}>Expires</Text>
             <Text style={styles.kvValue}>
               {new Date(subscription.expiryDate).toLocaleDateString('en-KE')}
             </Text>
           </View>
-        )}
-        {subscription?.plan && (
-          <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Current Plan</Text>
-            <Text style={styles.kvValue}>
-              {subscription.plan === 'biweekly'
-                ? '📆 Bi-Weekly (14 days)'
-                : '📆 Monthly (30 days)'}
-            </Text>
-          </View>
-        )}
-      </View>
+        </View>
+      )}
 
-      {/* WHY SUBSCRIBE CARD (TRIAL ONLY) */}
+      {/* BENEFITS CARD */}
       {isOnFreeTrial && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Why Subscribe?</Text>
-          <Text style={styles.cardSubtext}>
+        <View style={styles.benefitsCard}>
+          <Text style={styles.benefitsTitle}>Why Subscribe Now?</Text>
+          <Text style={styles.benefitsText}>
             ✅ Keep tracking every trip, fuel cost, and service reminder{'\n'}
             ✅ Stay connected to your SACCO{'\n'}
             ✅ From just KSh 35/day — less than a cup of tea
@@ -480,59 +465,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  // Hero Band
-  heroBand: {
-    backgroundColor: '#1a1c20',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 24,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  backLink: {
-    marginBottom: 16,
-  },
-  backLinkText: {
-    fontSize: 13,
-    color: '#fff',
-    opacity: 0.85,
-  },
-  heroEyebrow: {
-    fontSize: 12,
-    color: '#ff7a1a',
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  heroTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#fff',
-    marginBottom: 12,
-  },
-  heroEmoji: {
-    fontSize: 34,
-    marginBottom: 8,
-  },
-  heroSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.85)',
-  },
-  heroCountdown: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 8,
-    marginTop: 12,
-  },
-  heroCountdownDays: {
-    fontSize: 34,
-    fontWeight: '800',
-    color: '#fff',
-  },
-  heroCountdownLabel: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.85)',
-  },
-
   // Banners
   bannerContainer: {
     marginHorizontal: 14,
@@ -543,6 +475,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 13,
     marginBottom: 14,
+  },
+  bannerTrial: {
+    backgroundColor: '#e6f5ef',
   },
   bannerWarn: {
     backgroundColor: '#fdf3df',
@@ -574,13 +509,37 @@ const styles = StyleSheet.create({
     borderColor: '#e7e4db',
     padding: 16,
   },
+  cardHeader: {
+    marginBottom: 12,
+  },
   cardTitle: {
     fontSize: 13.5,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 12,
   },
   cardSubtext: {
+    fontSize: 12.5,
+    color: '#5b606c',
+    lineHeight: 19,
+  },
+
+  // Benefits Card
+  benefitsCard: {
+    backgroundColor: '#fff',
+    marginHorizontal: 14,
+    marginBottom: 14,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    padding: 16,
+  },
+  benefitsTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 10,
+  },
+  benefitsText: {
     fontSize: 12.5,
     color: '#5b606c',
     lineHeight: 19,

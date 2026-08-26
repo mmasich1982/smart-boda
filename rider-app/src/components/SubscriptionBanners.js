@@ -6,7 +6,8 @@
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
 // ✅ AUTO-INIT: Ensures free trial is initialized for new riders on first home screen load
 // ✅ IMPROVED: Better state management and direct state usage after initialization
-// ✅ UPDATED: "Subscribe Now" button on reminder banner instead of arrow
+// ✅ FIXED: Navigation routes corrected to FrequencySelectScreen (not SubscriptionScreen)
+// ✅ UPDATED: All banners now have "Subscribe Now" buttons instead of arrows
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
@@ -140,7 +141,7 @@ export default function SubscriptionBanners({ navigation }) {
   }
 
   // ========================================================================
-  // FREE TRIAL BANNER
+  // FREE TRIAL BANNER - "Subscribe Now" button (✅ FIXED)
   // ========================================================================
   if (bannerType === 'trial' && state?.trialEndDate) {
     const trialEndMs = new Date(state.trialEndDate).getTime();
@@ -162,18 +163,18 @@ export default function SubscriptionBanners({ navigation }) {
           </Text>
         </View>
         <TouchableOpacity
-          style={styles.bannerAction}
-          onPress={() => navigation.navigate('SubscriptionScreen')}
+          style={styles.bannerButton}
+          onPress={() => navigation.navigate('FrequencySelectScreen')}
           activeOpacity={0.7}
         >
-          <Text style={styles.bannerActionText}>→</Text>
+          <Text style={styles.bannerButtonText}>Subscribe Now →</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   // ========================================================================
-  // REMINDER BANNER (2 days before expiry) - "Subscribe Now" button
+  // REMINDER BANNER (2 days before expiry) - "Subscribe Now" button (✅ FIXED)
   // ========================================================================
   if (bannerType === 'reminder' && subscription?.expiryDate) {
     const expiryMs = new Date(subscription.expiryDate).getTime();
@@ -194,7 +195,7 @@ export default function SubscriptionBanners({ navigation }) {
         </View>
         <TouchableOpacity
           style={styles.bannerButton}
-          onPress={() => navigation.navigate('SubscriptionScreen')}
+          onPress={() => navigation.navigate('FrequencySelectScreen')}
           activeOpacity={0.7}
         >
           <Text style={styles.bannerButtonText}>Subscribe Now →</Text>
@@ -204,7 +205,7 @@ export default function SubscriptionBanners({ navigation }) {
   }
 
   // ========================================================================
-  // ACCOUNT LOCKED BANNER
+  // ACCOUNT LOCKED BANNER - "Subscribe Now" button (✅ FIXED)
   // ========================================================================
   if (bannerType === 'locked') {
     console.log('🎨 [SubscriptionBanners] Rendering locked banner');
@@ -221,11 +222,11 @@ export default function SubscriptionBanners({ navigation }) {
           </Text>
         </View>
         <TouchableOpacity
-          style={styles.bannerAction}
-          onPress={() => navigation.navigate('SubscriptionScreen')}
+          style={styles.bannerButton}
+          onPress={() => navigation.navigate('FrequencySelectScreen')}
           activeOpacity={0.7}
         >
-          <Text style={styles.bannerActionText}>→</Text>
+          <Text style={styles.bannerButtonText}>Subscribe Now →</Text>
         </TouchableOpacity>
       </View>
     );
@@ -295,18 +296,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
-  // Action Button (arrow)
-  bannerAction: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  bannerActionText: {
-    fontSize: 18,
-    color: '#ff7a1a',
-    fontWeight: '700',
-  },
-
-  // Subscribe Now Button (for reminder banner)
+  // Subscribe Now Button (✅ UNIFIED for all banners - replaces arrow)
   bannerButton: {
     paddingHorizontal: 12,
     paddingVertical: 10,
