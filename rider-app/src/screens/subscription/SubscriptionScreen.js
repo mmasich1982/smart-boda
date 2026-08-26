@@ -1,8 +1,8 @@
 // rider-app/src/screens/subscription/SubscriptionScreen.js
-// ✅ KEY FIXES:
-// 1. Ensure Subscribe Now / Renew Now buttons navigate to FrequencySelectScreen
-// 2. Ensure View Payment History link navigates to PaymentHistoryScreen
-// 3. NO UI CHANGES - keeping existing styling intact
+// ✅ REFACTORED: IndexedDB-FIRST + subscriptionUtils alignment
+// ✅ BUSINESS LOGIC: Free Trial, Renewal, Prepay, Payment History
+// ✅ UI/UX: Matches index.html design system (hero-band, cards, banners)
+// ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -166,32 +166,27 @@ const SubscriptionScreen = () => {
   }, [loadSubscriptionData]);
 
   // ========================================================================
-  // HANDLE ACTIONS - CRITICAL FIXES FOR NAVIGATION
+  // HANDLE ACTIONS
   // ========================================================================
   const handleSubscribeNow = () => {
-    console.log('📍 handleSubscribeNow triggered');
     navigation.navigate('FrequencySelectScreen');
   };
 
   const handleRenewNow = () => {
-    console.log('📍 handleRenewNow triggered');
     navigation.navigate('FrequencySelectScreen');
   };
 
   const handlePrepay = () => {
-    console.log('📍 handlePrepay triggered');
     navigation.navigate('PrepayScreen', {
       currentExpiryAt: subscription?.expiryDate
     });
   };
 
   const handlePaymentHistory = () => {
-    console.log('📍 handlePaymentHistory triggered');
     navigation.navigate('PaymentHistoryScreen');
   };
 
   const handleUnlock = () => {
-    console.log('📍 handleUnlock triggered');
     navigation.navigate('FrequencySelectScreen');
   };
 
