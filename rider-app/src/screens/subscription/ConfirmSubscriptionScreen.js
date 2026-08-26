@@ -188,7 +188,11 @@ const ConfirmSubscriptionScreen = () => {
 
       console.log('✅ Subscription created & payment logged');
 
-      // ✅ Navigate to home after successful payment
+      // ✅ CRITICAL FIX: Navigate immediately after payment success
+      // This prevents duplicate payment capture and ensures user goes to Home
+      setMpesaCode('');
+      
+      // Show success confirmation, but navigate immediately (don't wait for user)
       Alert.alert(
         'Payment Received! 🎉',
         'Your subscription is now active. Start tracking trips & fuel costs.',
@@ -196,17 +200,31 @@ const ConfirmSubscriptionScreen = () => {
           {
             text: 'Continue',
             onPress: () => {
-              setMpesaCode('');
+              console.log('🏠 [ConfirmSubscription] User pressed Continue - navigating to Home');
               goHome();
             },
           },
-        ]
+        ],
+        { cancelable: false }
       );
+
+      // ✅ AUTO-NAVIGATE: Navigate immediately (don't wait for user to press button)
+      // This ensures riders who don't interact with alert still get navigated
+      setTimeout(() => {
+        try {
+          console.log('🏠 [ConfirmSubscription] Automatically navigating to Home...');
+          if (navigation?.isFocused && navigation.isFocused()) {
+            goHome();
+          }
+        } catch (navErr) {
+          console.warn('⚠️ Auto-navigation failed:', navErr);
+        }
+      }, 500); // Small delay to ensure alert is shown first
+
     } catch (err) {
       console.error('❌ Error submitting payment:', err);
-      setError('Failed to process payment. Please try again.');
-    } finally {
       setLoading(false);
+      setError('Failed to process payment. Please try again.');
     }
   }, [localRiderId, selectedFrequency, plan.amount, mpesaCode, navigation, goHome]);
 
