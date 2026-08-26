@@ -6,6 +6,7 @@
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
 // ✅ AUTO-INIT: Ensures free trial is initialized for new riders on first home screen load
 // ✅ IMPROVED: Better state management and direct state usage after initialization
+// ✅ UPDATED: "Subscribe Now" button on reminder banner instead of arrow
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
@@ -172,7 +173,7 @@ export default function SubscriptionBanners({ navigation }) {
   }
 
   // ========================================================================
-  // REMINDER BANNER (2 days before expiry)
+  // REMINDER BANNER (2 days before expiry) - "Subscribe Now" button
   // ========================================================================
   if (bannerType === 'reminder' && subscription?.expiryDate) {
     const expiryMs = new Date(subscription.expiryDate).getTime();
@@ -192,11 +193,11 @@ export default function SubscriptionBanners({ navigation }) {
           </Text>
         </View>
         <TouchableOpacity
-          style={styles.bannerAction}
+          style={styles.bannerButton}
           onPress={() => navigation.navigate('SubscriptionScreen')}
           activeOpacity={0.7}
         >
-          <Text style={styles.bannerActionText}>→</Text>
+          <Text style={styles.bannerButtonText}>Subscribe Now →</Text>
         </TouchableOpacity>
       </View>
     );
@@ -294,7 +295,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
-  // Action Button
+  // Action Button (arrow)
   bannerAction: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -303,5 +304,20 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#ff7a1a',
     fontWeight: '700',
+  },
+
+  // Subscribe Now Button (for reminder banner)
+  bannerButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#ff7a1a',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bannerButtonText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#fff',
   },
 });
