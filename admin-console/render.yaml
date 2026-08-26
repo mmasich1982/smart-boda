@@ -2,9 +2,12 @@ services:
   - type: web
     name: smart-boda-admin
     env: node
+    region: frankfurt
     plan: free
     buildCommand: npm install && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=512
