@@ -4,6 +4,7 @@
 // ✅ UI/UX: Matches index.html design system
 // ✅ BUSINESS LOGIC: Trial status, reminder rate limiting, lock detection
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
+// ✅ AUTO-INIT: Ensures free trial is initialized for new riders on first home screen load
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
@@ -14,6 +15,7 @@ import {
   shouldShowReminderBanner,
   recordReminderShown,
   isSubscriptionExpired,
+  ensureFreeTrial,
 } from '../offline/subscriptionUtils';
 import { getLocalRiderId } from '../offline/db';
 
@@ -34,24 +36,44 @@ export default function SubscriptionBanners({ navigation }) {
         if (id) {
           setRiderId(id);
           console.log('✅ SubscriptionBanners: Loaded rider ID:', id);
+        } else {
+          console.warn('⚠️ SubscriptionBanners: No rider ID found');
         }
       } catch (err) {
-        console.error('❌ Error loading rider ID:', err);
+        console.error('❌ SubscriptionBanners: Error loading rider ID:', err);
       }
     };
     loadRiderId();
   }, []);
 
   // ========================================================================
-  // CHECK SUBSCRIPTION STATUS
+  // AUTO-INITIALIZE FREE TRIAL + CHECK SUBSCRIPTION STATUS
   // ========================================================================
   useEffect(() => {
-    if (!riderId) return;
+    if (!riderId) {
+      setLoading(false);
+      return;
+    }
 
-    const checkSubscriptionStatus = async () => {
+    const checkAndInitializeSubscription = async () => {
       try {
+        console.log('🔍 SubscriptionBanners: Checking subscription for rider:', riderId);
+        
+        // ✅ CRITICAL: Ensure free trial is initialized for new riders
+        // This is the key fix - it auto-initializes trial on first load
+        await ensureFreeTrial(riderId);
+        console.log('✅ SubscriptionBanners: Free trial ensured');
+
+        // Now check subscription status
         const sub = await getActiveSubscription(riderId);
         const subState = await getSubscriptionState(riderId);
+
+        console.log('📊 SubscriptionBanners: Subscription state:', {
+          subscription: sub ? 'ACTIVE' : 'NONE',
+          trialStarted: subState?.trialStarted,
+          trialEndDate: subState?.trialEndDate,
+          lockedAt: subState?.lockedAt,
+        });
 
         setSubscription(sub);
         setState(subState);
@@ -59,28 +81,29 @@ export default function SubscriptionBanners({ navigation }) {
         // ✅ Determine which banner to show (priority order)
         if (subState?.lockedAt) {
           // Account is locked
-          console.log('🔒 Account locked, showing lock banner');
+          console.log('🔒 SubscriptionBanners: Account locked, showing lock banner');
           setBannerType('locked');
         } else if (await shouldShowReminderBanner(riderId)) {
           // Show reminder (2 days before expiry, max 3x per day)
-          console.log('👉 Showing reminder banner');
+          console.log('👉 SubscriptionBanners: Showing reminder banner');
           setBannerType('reminder');
           await recordReminderShown(riderId);
         } else if (await isFreTrialActive(riderId)) {
           // Show free trial banner
-          console.log('✨ Showing free trial banner');
+          console.log('✨ SubscriptionBanners: Showing free trial banner');
           setBannerType('trial');
         } else {
+          console.log('ℹ️ SubscriptionBanners: No banner to show');
           setBannerType(null);
         }
       } catch (err) {
-        console.error('❌ Error checking subscription status:', err);
+        console.error('❌ SubscriptionBanners: Error checking subscription status:', err);
       } finally {
         setLoading(false);
       }
     };
 
-    checkSubscriptionStatus();
+    checkAndInitializeSubscription();
   }, [riderId]);
 
   // ========================================================================

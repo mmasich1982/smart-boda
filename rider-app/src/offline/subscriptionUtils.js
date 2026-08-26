@@ -4,6 +4,7 @@
 // ✅ RETENTION POLICY: 6-month rolling window for subscription history
 // ✅ BUSINESS LOGIC: Bi-Weekly (500), Monthly (1000), Free Trial
 // ✅ FIXED EXPORTS: Clean named exports (no conflicting default export)
+// ✅ AUTO-INIT: Ensures free trial initialized for new riders on first load
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { addToSyncQueue } from './syncQueue';
@@ -137,6 +138,31 @@ export async function getSubscriptionState(riderId) {
       lockedAt: null,
       lockReason: null,
     };
+  }
+}
+
+/**
+ * ✅ ENSURE FREE TRIAL EXISTS FOR NEW RIDERS
+ * Called on first home screen load to auto-initialize trial for new riders
+ * If rider has no subscription state, automatically initializes 1-day free trial
+ */
+export async function ensureFreeTrial(riderId) {
+  try {
+    const state = await getSubscriptionState(riderId);
+    
+    // ✅ If trial not started, initialize it now
+    if (!state.trialStarted) {
+      console.log('✨ New rider detected - initializing free trial...');
+      const initializedState = await initializeFreeTrial(riderId);
+      console.log('✅ Free trial initialized on first load:', initializedState);
+      return initializedState;
+    }
+    
+    console.log('✅ Trial already exists for rider:', riderId);
+    return state;
+  } catch (err) {
+    console.error('❌ Error ensuring free trial:', err);
+    return null;
   }
 }
 
@@ -301,6 +327,7 @@ export async function initializeFreeTrial(riderId) {
     await indexedDbAdapter.kvSet(key, JSON.stringify(state));
 
     console.log('✅ Free trial initialized for rider:', riderId);
+    console.log('   Trial ends at:', new Date(trialEndMs).toISOString());
     return state;
   } catch (err) {
     console.error('❌ Error initializing trial:', err);
@@ -391,7 +418,7 @@ export async function getSubscriptionHistory(riderId) {
 // ✅ CLEAN NAMED EXPORTS (No conflicting default export)
 // ============================================================================
 // All functions available via named imports:
-// import { getActiveSubscription, getSubscriptionState, ... } from './subscriptionUtils'
+// import { getActiveSubscription, getSubscriptionState, ensureFreeTrial, ... } from './subscriptionUtils'
 // 
 // Constants available via named imports:
 // import { SUBSCRIPTION_PLANS, FREE_TRIAL_DAYS, REMINDER_DAYS_BEFORE, REMINDER_CHECKS_PER_DAY } from './subscriptionUtils'
