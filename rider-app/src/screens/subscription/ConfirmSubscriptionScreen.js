@@ -93,6 +93,22 @@ const ConfirmSubscriptionScreen = () => {
   };
 
   // ========================================================================
+  // ✅ NAVIGATE DIRECTLY TO HOME (Customer-Friendly)
+  // ========================================================================
+  const goHome = useCallback(() => {
+    try {
+      if (navigation && navigation.navigate) {
+        console.log('🏠 [ConfirmSubscription] Navigating to Home after payment...');
+        navigation.navigate('Home');
+      } else {
+        console.warn('⚠️ Navigation not available');
+      }
+    } catch (err) {
+      console.error('❌ Navigation error:', err);
+    }
+  }, [navigation]);
+
+  // ========================================================================
   // HANDLE PAYMENT SUBMISSION
   // ========================================================================
   const handleSubmitPayment = useCallback(async () => {
@@ -167,22 +183,8 @@ const ConfirmSubscriptionScreen = () => {
       });
 
       console.log('✅ Subscription created & payment logged');
-	  
-	  // ✅ FIXED: Back navigation goes directly to Home (customer-friendly)
-  const handleBackPress = useCallback(() => {
-    try {
-      if (navigation && navigation.navigate) {
-        // Navigate directly to Home instead of goBack (customer prefers this)
-        navigation.navigate('Home');
-      } else {
-        console.warn('⚠️ Navigation not available');
-      }
-    } catch (err) {
-      console.error('❌ Navigation error:', err);
-    }
-  }, [navigation]);
 
-      // ✅ Navigate to success state
+      // ✅ Navigate to home after successful payment
       Alert.alert(
         'Payment Received! 🎉',
         'Your subscription is now active. Start tracking trips & fuel costs.',
@@ -191,7 +193,7 @@ const ConfirmSubscriptionScreen = () => {
             text: 'Continue',
             onPress: () => {
               setMpesaCode('');
-              navigation.navigate('handleBackPress');
+              goHome();
             },
           },
         ]
@@ -202,7 +204,7 @@ const ConfirmSubscriptionScreen = () => {
     } finally {
       setLoading(false);
     }
-  }, [localRiderId, selectedFrequency, plan.amount, mpesaCode, navigation]);
+  }, [localRiderId, selectedFrequency, plan.amount, mpesaCode, navigation, goHome]);
 
   // ========================================================================
   // CALCULATE EXPIRY DATE
