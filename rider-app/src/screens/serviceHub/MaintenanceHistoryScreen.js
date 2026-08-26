@@ -3,7 +3,7 @@
 // ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
 // ✅ NETWORK AWARE: Real-time connectivity detection
 // ✅ FIXED: Infinite loop resolved with proper dependency management
-// ✅ FIXED: Back navigation now properly handled
+// ✅ FIXED: Back navigation now properly handled - navigates directly to Home
 // ✅ FIXED: Single data load on mount with smart refresh on focus
 // ✅ BACKEND MANAGED: 6-month data retention handled by PostgreSQL API
 
@@ -97,6 +97,9 @@ export default function MaintenanceHistoryScreen({ navigation }) {
   }, [effectiveRiderId]);
 
   // ✅ LOAD DATA ON MOUNT - Single execution
+  // ✅ CRITICAL: Only effectiveRiderId and isInitialized in dependencies
+  // Removed isConnected, t, showCriticalError, clearCriticalError, and reconstructHistoryFromIndividualEntries
+  // These are recreated on each render and cause infinite re-execution
   useEffect(() => {
     if (!effectiveRiderId || !isInitialized || hasLoadedRef.current) {
       return;
@@ -106,6 +109,9 @@ export default function MaintenanceHistoryScreen({ navigation }) {
 
     async function loadHistoryOnMount() {
       try {
+        // ✅ CRITICAL: Mark as loaded FIRST to prevent race conditions
+        hasLoadedRef.current = true;
+        
         setLoading(true);
         clearCriticalError();
 
@@ -175,7 +181,6 @@ export default function MaintenanceHistoryScreen({ navigation }) {
         }
 
         if (isMounted) {
-          hasLoadedRef.current = true;
           setLoading(false);
         }
       } catch (err) {
@@ -192,7 +197,7 @@ export default function MaintenanceHistoryScreen({ navigation }) {
     return () => {
       isMounted = false;
     };
-  }, [effectiveRiderId, isInitialized, isConnected, clearCriticalError, reconstructHistoryFromIndividualEntries]);
+  }, [effectiveRiderId, isInitialized]);
 
   /**
    * ✅ Refresh on screen focus (soft refresh only)
@@ -251,12 +256,10 @@ export default function MaintenanceHistoryScreen({ navigation }) {
     });
   };
 
-  // ✅ FIXED: Proper back navigation with fallback
+  // ✅ FIXED: Navigate directly to Home instead of goBack
   const handleBackPress = useCallback(() => {
     try {
-      if (navigation && navigation.canGoBack && navigation.canGoBack()) {
-        navigation.goBack();
-      } else if (navigation && navigation.navigate) {
+      if (navigation && navigation.navigate) {
         navigation.navigate('Home');
       } else {
         console.warn('⚠️ Navigation not available');
@@ -295,7 +298,7 @@ export default function MaintenanceHistoryScreen({ navigation }) {
         </View>
       )}
 
-      {/* Period Filter Tabs */}
+      {/* Period Tabs */}
       <View style={styles.periodTabs}>
         {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => (
           <TouchableOpacity
@@ -304,7 +307,10 @@ export default function MaintenanceHistoryScreen({ navigation }) {
             onPress={() => setPeriod(p)}
           >
             <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
-              {p === 'thisMonth' ? 'This Month' : p === 'lastMonth' ? 'Last Month' : p === 'last6' ? 'Last 6M' : 'All Time'}
+              {p === 'thisMonth' && 'This Month'}
+              {p === 'lastMonth' && 'Last Month'}
+              {p === 'last6' && 'Last 6'}
+              {p === 'sinceJoining' && 'All Time'}
             </Text>
           </TouchableOpacity>
         ))}
