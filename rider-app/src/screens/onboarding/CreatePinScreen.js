@@ -1,11 +1,13 @@
 // rider-app/src/screens/onboarding/CreatePinScreen.js
-// FIXED: Properly saves rider_id to both rider_status AND separate rider_id key
-// FIXED: Improved error handling for API failures
-// FIXED: Better logging for debugging 500 errors
-// FIXED: Blank screen after PIN creation issue
-// FIXED: Now fetches and caches rider data before navigating to Home
-// FIXED: Adds proper error handling and loading states
-// FIXED: Strong PIN validation (reject weak/easy-to-guess PINs like 1234)
+// ✅ FIXED: Properly saves rider_id to both rider_status AND separate rider_id key
+// ✅ FIXED: Improved error handling for API failures
+// ✅ FIXED: Better logging for debugging 500 errors
+// ✅ FIXED: Blank screen after PIN creation issue
+// ✅ FIXED: Now fetches and caches rider data before navigating to Home
+// ✅ FIXED: Adds proper error handling and loading states
+// ✅ FIXED: Strong PIN validation (reject weak/easy-to-guess PINs like 1234)
+// ✅ CRITICAL FIX (25 AUG 2026): Now syncs created_at from rider data to fix retention window
+// ✅ NEW (26 AUG 2026): Saves PIN to IndexedDB locally for offline-first login
 
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
@@ -16,6 +18,8 @@ import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import api from '../../api/client';
 import { saveRiderAccountSummary, saveLocalBikeProfile, saveLocalRiderStatus, saveLocalRiderId } from '../../offline/db';
+import { updateRiderOnboardingDate } from '../../offline/tripsRepository';
+import { savePinLocally } from '../../offline/pinUtility';
 
 export default function CreatePinScreen({ route, navigation }) {
   const { riderId } = route.params || {};
@@ -101,6 +105,20 @@ export default function CreatePinScreen({ route, navigation }) {
       if (data.rider) {
         const riderIdFromBackend = data.rider.rider_id;
         
+        // ✅ CRITICAL FIX (25 AUG 2026): Sync onboarding date from rider.created_at
+        // This ensures retention window is based on actual backend onboarding date
+        if (data.rider.created_at) {
+          try {
+            const syncResult = await updateRiderOnboardingDate(riderIdFromBackend, data.rider.created_at);
+            if (syncResult) {
+              console.log('[CreatePin] ✅ Synced onboarding date from rider.created_at:', data.rider.created_at);
+            }
+          } catch (syncErr) {
+            console.error('[CreatePin] Error syncing onboarding date:', syncErr);
+            // Don't fail onboarding - continue anyway
+          }
+        }
+        
         // ✅ FIXED: Save rider_id to both places for compatibility
         await saveLocalRiderStatus({
           rider_id: riderIdFromBackend,
@@ -176,6 +194,16 @@ export default function CreatePinScreen({ route, navigation }) {
 
       if (res?.data?.ok) {
         showToast(t('pin.created_success') || 'PIN created successfully');
+        
+        // ✅ NEW (26 AUG 2026): Save PIN to IndexedDB for offline-first login
+        console.log('[CreatePin] Saving PIN to IndexedDB locally...');
+        const pinSaved = await savePinLocally(riderId, draft);
+        if (pinSaved) {
+          console.log('[CreatePin] ✅ PIN saved locally for offline login');
+        } else {
+          console.warn('[CreatePin] ⚠️ Failed to save PIN locally, but continuing');
+          // Continue anyway - offline login won't work but onboarding should complete
+        }
         
         // FIXED: Fetch and cache rider data before navigating
         setInitializingHome(true);
