@@ -274,99 +274,115 @@ const SubscriptionScreen = () => {
   // ========================================================================
   // ERROR STATE
   // ========================================================================
-  if (error === 'error_loading_subscription') {
+  if (error) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>Failed to load subscription. Please try again.</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={onRefresh}>
-          <Text style={styles.retryButtonText}>Retry</Text>
+        <Text style={styles.errorText}>
+          {t(`common.${error}`) || 'Unable to load subscription'}
+        </Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={() => {
+            hasLoadedRef.current = false;
+            loadSubscriptionData();
+          }}
+        >
+          <Text style={styles.retryButtonText}>{t('common.retry') || 'Retry'}</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   // ========================================================================
-  // DETERMINE IF ON FREE TRIAL
+  // DETERMINE SUBSCRIPTION STATUS
   // ========================================================================
-  const isOnFreeTrial = subState?.trialStarted && subState?.trialEndDate && !subscription;
-  const trialDaysLeft = daysOfTrialLeft();
+  const isOnFreeTrial = subState?.trialStarted && !subscription;
+  const daysLeft = isOnFreeTrial ? daysOfTrialLeft() : daysUntilExpiry();
+  const statusWord = isOnFreeTrial ? '🎁 Your free trial' : '✅ You\'re all set';
+  const statusTitle = isOnFreeTrial ? 'Free Trial' : 'Active';
+  const isUrgent = daysLeft <= 2;
 
   // ========================================================================
-  // MAIN UI - SUBSCRIPTION MANAGEMENT
+  // MAIN UI
   // ========================================================================
   return (
     <ScrollView
       style={styles.container}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={onRefresh}
+          tintColor="#ff7a1a"
+        />
+      }
     >
-      {/* HERO SECTION - Trial or Active Subscription */}
-      {isOnFreeTrial ? (
-        <View style={styles.heroBand}>
-          <Text style={styles.heroEyebrow}>Free Trial</Text>
-          <Text style={styles.heroTitle}>Enjoy Your Free Day</Text>
-          <Text style={styles.heroSubtitle}>
-            {trialDaysLeft} day left · No payment required yet
+      {/* HERO BAND */}
+      <View style={styles.heroBand}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backLink}
+        >
+          <Text style={styles.backLinkText}>← {t('common.back') || 'Home'}</Text>
+        </TouchableOpacity>
+        <Text style={styles.heroEyebrow}>{statusWord}</Text>
+        <Text style={styles.heroTitle}>{statusTitle}</Text>
+        <View style={styles.heroCountdown}>
+          <Text style={styles.heroCountdownDays}>{Math.max(daysLeft, 0)}</Text>
+          <Text style={styles.heroCountdownLabel}>
+            day{daysLeft === 1 ? '' : 's'} left{isOnFreeTrial ? ' of your free trial' : ' on your plan'}
           </Text>
-          <View style={styles.heroCountdown}>
-            <Text style={styles.heroCountdownDays}>{trialDaysLeft}</Text>
-            <Text style={styles.heroCountdownLabel}>day{trialDaysLeft !== 1 ? 's' : ''} remaining</Text>
-          </View>
         </View>
-      ) : subscription ? (
-        <View style={styles.heroBand}>
-          <Text style={styles.heroEyebrow}>Active Subscription</Text>
-          <Text style={styles.heroTitle}>{subscription.plan === 'biweekly' ? 'Bi-Weekly' : 'Monthly'} Plan</Text>
-          <Text style={styles.heroSubtitle}>
-            Expires in {daysUntilExpiry()} day{daysUntilExpiry() !== 1 ? 's' : ''}
-          </Text>
-          <View style={styles.heroCountdown}>
-            <Text style={styles.heroCountdownDays}>{daysUntilExpiry()}</Text>
-            <Text style={styles.heroCountdownLabel}>day{daysUntilExpiry() !== 1 ? 's' : ''} left</Text>
+      </View>
+
+      {/* URGENT BANNER */}
+      {isUrgent && (
+        <View style={styles.bannerContainer}>
+          <View
+            style={[
+              styles.banner,
+              daysLeft <= 1 ? styles.bannerError : styles.bannerWarn
+            ]}
+          >
+            <Text style={styles.bannerText}>
+              {daysLeft <= 1
+                ? '⏰ Today is your last day! Keep your tools running — subscribe now.'
+                : `⏰ Only ${daysLeft} days left. Subscribe now to stay active.`}
+            </Text>
           </View>
-        </View>
-      ) : (
-        <View style={styles.heroBand}>
-          <Text style={styles.heroTitle}>No Active Subscription</Text>
-          <Text style={styles.heroSubtitle}>Subscribe now to get started</Text>
         </View>
       )}
 
-      {/* CURRENT SUBSCRIPTION CARD */}
-      {subscription && (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Current Plan</Text>
-          </View>
-
+      {/* STATUS CARD */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Status Details</Text>
+        <View style={styles.kvRow}>
+          <Text style={styles.kvLabel}>Days Left</Text>
+          <Text style={styles.kvValue}>{Math.max(daysLeft, 0)}</Text>
+        </View>
+        {subscription?.expiryDate && (
           <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Plan</Text>
-            <Text style={styles.kvValue}>
-              {subscription.plan === 'biweekly' ? 'Bi-Weekly' : 'Monthly'}
-            </Text>
-          </View>
-
-          <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Amount</Text>
-            <Text style={styles.kvValue}>KSh {subscription.amount}</Text>
-          </View>
-
-          <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Expires</Text>
+            <Text style={styles.kvLabel}>Expiry Date</Text>
             <Text style={styles.kvValue}>
               {new Date(subscription.expiryDate).toLocaleDateString('en-KE')}
             </Text>
           </View>
-
-          <View style={[styles.kvRow, styles.kvRowBold]}>
-            <Text style={styles.kvLabelBold}>Days Remaining</Text>
-            <Text style={styles.kvValueBold}>{daysUntilExpiry()}</Text>
+        )}
+        {subscription?.plan && (
+          <View style={styles.kvRow}>
+            <Text style={styles.kvLabel}>Current Plan</Text>
+            <Text style={styles.kvValue}>
+              {subscription.plan === 'biweekly'
+                ? '📆 Bi-Weekly (14 days)'
+                : '📆 Monthly (30 days)'}
+            </Text>
           </View>
-        </View>
-      )}
+        )}
+      </View>
 
-      {/* FREE TRIAL INFO CARD */}
+      {/* WHY SUBSCRIBE CARD (TRIAL ONLY) */}
       {isOnFreeTrial && (
         <View style={styles.card}>
+          <Text style={styles.cardTitle}>Why Subscribe?</Text>
           <Text style={styles.cardSubtext}>
             ✅ Keep tracking every trip, fuel cost, and service reminder{'\n'}
             ✅ Stay connected to your SACCO{'\n'}
@@ -558,13 +574,11 @@ const styles = StyleSheet.create({
     borderColor: '#e7e4db',
     padding: 16,
   },
-  cardHeader: {
-    marginBottom: 12,
-  },
   cardTitle: {
     fontSize: 13.5,
     fontWeight: '700',
     color: '#1a1c20',
+    marginBottom: 12,
   },
   cardSubtext: {
     fontSize: 12.5,
@@ -581,32 +595,15 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f0ede5',
   },
-  kvRowBold: {
-    paddingVertical: 13,
-    marginTop: 4,
-    borderBottomWidth: 0,
-    borderTopWidth: 1,
-    borderTopColor: '#e7e4db',
-  },
   kvLabel: {
     fontSize: 13,
     color: '#5b606c',
     fontWeight: '500',
   },
-  kvLabelBold: {
-    fontSize: 13,
-    color: '#1a1c20',
-    fontWeight: '700',
-  },
   kvValue: {
     fontSize: 13,
     fontWeight: '700',
     color: '#1a1c20',
-  },
-  kvValueBold: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#ff7a1a',
   },
 
   // Actions Container
