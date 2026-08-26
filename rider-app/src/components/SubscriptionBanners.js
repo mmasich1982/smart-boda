@@ -9,9 +9,12 @@
 // ✅ UPDATED: "Subscribe Now" button on all banners instead of arrow
 // ✅ FIXED: Navigation screen names corrected to match actual registration
 //           'SelectFrequency' instead of 'FrequencySelectScreen'
+// ✅ FIXED: Added useFocusEffect to refresh subscription state when returning to Home
+//           This ensures banner hides after successful payment/subscription creation
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   getActiveSubscription,
   getSubscriptionState,
@@ -53,86 +56,109 @@ export default function SubscriptionBanners({ navigation }) {
   }, []);
 
   // ========================================================================
-  // AUTO-INITIALIZE FREE TRIAL + CHECK SUBSCRIPTION STATUS
+  // CHECK AND INITIALIZE SUBSCRIPTION STATE
+  // ========================================================================
+  const checkAndInitializeSubscription = async (currentRiderId) => {
+    if (!currentRiderId) {
+      return;
+    }
+
+    try {
+      console.log('🔍 [SubscriptionBanners] Starting subscription check for rider:', currentRiderId);
+      
+      // ✅ CRITICAL: Ensure free trial is initialized for new riders
+      const ensuredState = await ensureFreeTrial(currentRiderId);
+      console.log('📊 [SubscriptionBanners] ensureFreeTrial returned:', {
+        trialStarted: ensuredState?.trialStarted,
+        trialEndDate: ensuredState?.trialEndDate,
+      });
+
+      // Get the subscription (if any paid plan is active)
+      const sub = await getActiveSubscription(currentRiderId);
+      console.log('💳 [SubscriptionBanners] Active subscription:', sub ? 'YES' : 'NO');
+
+      // Get full state (trial, reminders, lock)
+      const fullState = await getSubscriptionState(currentRiderId);
+      console.log('📋 [SubscriptionBanners] Full subscription state:', {
+        trialStarted: fullState?.trialStarted,
+        trialEndDate: fullState?.trialEndDate,
+        lockedAt: fullState?.lockedAt,
+      });
+
+      setSubscription(sub);
+      setState(fullState);
+
+      // ========================================================================
+      // DETERMINE WHICH BANNER TO SHOW (Priority Order)
+      // ========================================================================
+      console.log('🎯 [SubscriptionBanners] Determining banner type...');
+      
+      // PRIORITY 1: Account is locked
+      if (fullState?.lockedAt) {
+        console.log('🔒 [SubscriptionBanners] >>> SHOWING LOCKED BANNER');
+        setBannerType('locked');
+      }
+      // PRIORITY 2: Reminder for expiring subscription (only if active paid subscription)
+      else if (sub && await shouldShowReminderBanner(currentRiderId)) {
+        console.log('👉 [SubscriptionBanners] >>> SHOWING REMINDER BANNER');
+        setBannerType('reminder');
+        await recordReminderShown(currentRiderId);
+      }
+      // PRIORITY 3: Free trial is active
+      else if (fullState?.trialStarted && fullState?.trialEndDate) {
+        const trialEndMs = new Date(fullState.trialEndDate).getTime();
+        const isTrialActive = trialEndMs > Date.now();
+        
+        if (isTrialActive) {
+          console.log('✨ [SubscriptionBanners] >>> SHOWING TRIAL BANNER');
+          const daysLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60 * 24));
+          console.log(`   Trial has ${daysLeft} day(s) remaining`);
+          setBannerType('trial');
+        } else {
+          console.log('⏰ [SubscriptionBanners] Trial expired, no banner');
+          setBannerType(null);
+        }
+      }
+      // No banner to show
+      else {
+        console.log('ℹ️ [SubscriptionBanners] >>> NO BANNER TO SHOW');
+        setBannerType(null);
+      }
+    } catch (err) {
+      console.error('❌ [SubscriptionBanners] Error checking subscription status:', err);
+      setBannerType(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ========================================================================
+  // INITIAL LOAD: Check subscription on first mount
   // ========================================================================
   useEffect(() => {
     if (!riderId) {
       return;
     }
 
-    const checkAndInitializeSubscription = async () => {
-      try {
-        console.log('🔍 [SubscriptionBanners] Starting subscription check for rider:', riderId);
-        
-        // ✅ CRITICAL: Ensure free trial is initialized for new riders
-        // This returns the current state (whether just created or existing)
-        const ensuredState = await ensureFreeTrial(riderId);
-        console.log('📊 [SubscriptionBanners] ensureFreeTrial returned:', {
-          trialStarted: ensuredState?.trialStarted,
-          trialEndDate: ensuredState?.trialEndDate,
-        });
-
-        // Get the subscription (if any paid plan is active)
-        const sub = await getActiveSubscription(riderId);
-        console.log('💳 [SubscriptionBanners] Active subscription:', sub ? 'YES' : 'NO');
-
-        // Get full state (trial, reminders, lock)
-        const fullState = await getSubscriptionState(riderId);
-        console.log('📋 [SubscriptionBanners] Full subscription state:', {
-          trialStarted: fullState?.trialStarted,
-          trialEndDate: fullState?.trialEndDate,
-          lockedAt: fullState?.lockedAt,
-        });
-
-        setSubscription(sub);
-        setState(fullState);
-
-        // ========================================================================
-        // DETERMINE WHICH BANNER TO SHOW (Priority Order)
-        // ========================================================================
-        console.log('🎯 [SubscriptionBanners] Determining banner type...');
-        
-        // PRIORITY 1: Account is locked
-        if (fullState?.lockedAt) {
-          console.log('🔒 [SubscriptionBanners] >>> SHOWING LOCKED BANNER');
-          setBannerType('locked');
-        }
-        // PRIORITY 2: Reminder for expiring subscription (only if active paid subscription)
-        else if (sub && await shouldShowReminderBanner(riderId)) {
-          console.log('👉 [SubscriptionBanners] >>> SHOWING REMINDER BANNER');
-          setBannerType('reminder');
-          await recordReminderShown(riderId);
-        }
-        // PRIORITY 3: Free trial is active
-        else if (fullState?.trialStarted && fullState?.trialEndDate) {
-          const trialEndMs = new Date(fullState.trialEndDate).getTime();
-          const isTrialActive = trialEndMs > Date.now();
-          
-          if (isTrialActive) {
-            console.log('✨ [SubscriptionBanners] >>> SHOWING TRIAL BANNER');
-            const daysLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60 * 24));
-            console.log(`   Trial has ${daysLeft} day(s) remaining`);
-            setBannerType('trial');
-          } else {
-            console.log('⏰ [SubscriptionBanners] Trial expired, no banner');
-            setBannerType(null);
-          }
-        }
-        // No banner to show
-        else {
-          console.log('ℹ️ [SubscriptionBanners] >>> NO BANNER TO SHOW');
-          setBannerType(null);
-        }
-      } catch (err) {
-        console.error('❌ [SubscriptionBanners] Error checking subscription status:', err);
-        setBannerType(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    checkAndInitializeSubscription();
+    checkAndInitializeSubscription(riderId);
   }, [riderId]);
+
+  // ========================================================================
+  // FOCUS EFFECT: Refresh subscription state when screen is focused
+  // ✅ CRITICAL: This ensures banner updates after user returns from payment screen
+  // ========================================================================
+  useFocusEffect(
+    React.useCallback(() => {
+      console.log('🔄 [SubscriptionBanners] Screen focused - refreshing subscription state');
+      if (riderId) {
+        checkAndInitializeSubscription(riderId);
+      }
+
+      return () => {
+        // Cleanup if needed
+      };
+    }, [riderId])
+  );
 
   // ========================================================================
   // DON'T RENDER IF LOADING, NO RIDER, OR NO BANNER TO SHOW
