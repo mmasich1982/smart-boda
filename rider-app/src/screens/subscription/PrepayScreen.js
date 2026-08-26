@@ -3,7 +3,7 @@
 // ✅ BUSINESS LOGIC: Multi-day prepayment (60-365 days), stepper control
 // ✅ UI/UX: Matches index.html design system (stepper, cards, buttons)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
-// ✅ UPDATED: Default prepay days changed from 7 to 60
+// ✅ FIXED: M-Pesa code validation, navigation, auto-redirect
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -140,6 +140,26 @@ const PrepayScreen = () => {
   };
 
   // ========================================================================
+  // ✅ NAVIGATE DIRECTLY TO HOME (Customer-Friendly)
+  // ========================================================================
+  const goHome = useCallback(() => {
+    try {
+      if (navigation && isMountedRef.current) {
+        console.log('🏠 [PrepayScreen] Navigating to Home after payment...');
+        // ✅ Use reset to ensure we go directly home and clear the stack
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Home' }],
+        });
+      } else {
+        console.warn('⚠️ Navigation not available or component unmounted');
+      }
+    } catch (err) {
+      console.error('❌ Navigation error:', err);
+    }
+  }, [navigation]);
+
+  // ========================================================================
   // HANDLE PREPAY PAYMENT SUBMISSION
   // ========================================================================
   const handleSubmitPrepay = useCallback(async () => {
@@ -246,7 +266,12 @@ const PrepayScreen = () => {
 
       console.log('✅ Prepay payment logged');
 
-      // ✅ Navigate to success state
+      // ✅ CRITICAL FIX: Clear state BEFORE showing alert
+      if (isMountedRef.current) {
+        setMpesaCode('');
+      }
+
+      // ✅ Show success confirmation
       Alert.alert(
         'Payment Received! 🎉',
         `You're paid ahead until ${newExpiryDate.toLocaleDateString('en-KE')}. No worries, we'll remind you when you're getting close.`,
@@ -254,19 +279,37 @@ const PrepayScreen = () => {
           {
             text: 'Continue',
             onPress: () => {
-              setMpesaCode('');
-              navigation.navigate('Home');
+              console.log('🏠 [PrepayScreen] User pressed Continue - navigating to Home');
+              if (isMountedRef.current) {
+                goHome();
+              }
             },
           },
-        ]
+        ],
+        { cancelable: false }
       );
+
+      // ✅ AUTO-NAVIGATE: Navigate immediately (don't wait for user to press button)
+      // This ensures riders who don't interact with alert still get navigated
+      setTimeout(() => {
+        try {
+          console.log('🏠 [PrepayScreen] Automatically navigating to Home...');
+          if (isMountedRef.current && navigation?.isFocused?.()) {
+            goHome();
+          }
+        } catch (navErr) {
+          console.warn('⚠️ Auto-navigation failed:', navErr);
+        }
+      }, 500); // Small delay to ensure alert is shown first
+
     } catch (err) {
       console.error('❌ Error submitting prepay:', err);
-      setError('Failed to process prepayment. Please try again.');
-    } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+        setError('Failed to process prepayment. Please try again.');
+      }
     }
-  }, [localRiderId, prepayDays, totalAmount, route.params, navigation]);
+  }, [localRiderId, prepayDays, totalAmount, route.params, navigation, goHome]);
 
   // ========================================================================
   // SCREEN 1: SELECT DAYS
