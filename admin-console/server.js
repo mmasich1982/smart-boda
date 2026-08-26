@@ -7,71 +7,54 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Verify dist folder exists
 const distPath = path.join(__dirname, 'dist');
-const indexPath = path.join(distPath, 'index.html');
+if (!fs.existsSync(distPath)) {
+  console.error('❌ ERROR: dist folder not found at', distPath);
+  console.error('Available files:', fs.readdirSync(__dirname));
+  process.exit(1);
+}
 
-console.log('🚀 Admin Console Server Starting');
-console.log(`📁 __dirname: ${__dirname}`);
-console.log(`📁 distPath: ${distPath}`);
-console.log(`📁 indexPath: ${indexPath}`);
-console.log(`✓ dist folder exists: ${fs.existsSync(distPath)}`);
-console.log(`✓ index.html exists: ${fs.existsSync(indexPath)}`);
-
-// Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+console.log('✓ dist folder found at:', distPath);
+console.log('✓ dist contents:', fs.readdirSync(distPath));
 
 // Serve static files from dist folder with caching headers
 app.use(express.static(distPath, {
-  maxAge: '1d',
+  maxAge: '1h',
+  etag: false
+}));
+
+// Cache busting for assets
+app.use('/assets', express.static(path.join(distPath, 'assets'), {
+  maxAge: '1y',
   etag: false
 }));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// API routes (if needed in future)
-app.get('/api/*', (req, res) => {
-  res.status(404).json({ error: 'API endpoint not found' });
-});
-
-// SPA routing: ALL other requests redirect to index.html
-// This must be LAST to catch everything that wasn't matched above
+// SPA routing: redirect all non-file requests to index.html
 app.get('*', (req, res) => {
-  console.log(`📍 Routing ${req.method} ${req.path} -> /index.html`);
+  const indexPath = path.join(distPath, 'index.html');
   
   if (!fs.existsSync(indexPath)) {
-    console.error(`❌ ERROR: index.html not found at ${indexPath}`);
-    return res.status(500).send('index.html not found - build may have failed');
+    console.error('❌ index.html not found at:', indexPath);
+    return res.status(500).json({ error: 'Application failed to load' });
   }
   
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.sendFile(indexPath, (err) => {
-    if (err) {
-      console.error(`❌ Error sending index.html:`, err);
-      res.status(500).send('Error loading application');
-    }
-  });
+  res.sendFile(indexPath);
 });
 
-// Error handler
+// Error handling middleware
 app.use((err, req, res, next) => {
   console.error('❌ Server error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server running on http://0.0.0.0:${PORT}`);
-  console.log(`✅ Port: ${PORT}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('📍 SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('✅ HTTP server closed');
-    process.exit(0);
-  });
+app.listen(PORT, () => {
+  console.log('✅ Server running on port', PORT);
+  console.log('✅ Environment:', process.env.NODE_ENV);
+  console.log('✅ Access app at: http://localhost:' + PORT);
 });

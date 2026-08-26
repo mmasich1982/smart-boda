@@ -2,8 +2,11 @@ services:
   - type: web
     name: smart-boda-admin
     env: node
-    buildCommand: npm install && npm run build
+    plan: free
+    buildCommand: npm cache clean --force && npm install --legacy-peer-deps && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 3000
