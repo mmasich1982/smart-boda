@@ -30,11 +30,7 @@ import {
   getSubscriptionState,
   isFreTrialActive,
   isSubscriptionExpired,
-  createSubscription,
-  lockAccount,
-  unlockAccount,
   getSubscriptionHistory,
-  checkAndEnforceLock,
   SUBSCRIPTION_PLANS
 } from '../../offline/subscriptionUtils';
 
@@ -118,17 +114,6 @@ const SubscriptionScreen = () => {
         setSubscription(sub);
         setSubState(state);
 
-        // ✅ Check if account should be locked (expiry without payment)
-        if (!state.lockedAt && sub === null && state.trialEndDate) {
-          const trialEndMs = new Date(state.trialEndDate).getTime();
-          if (trialEndMs <= Date.now()) {
-            // Trial expired, lock account
-            await lockAccount(localRiderId, 'Free trial expired');
-            const updatedState = await getSubscriptionState(localRiderId);
-            setSubState(updatedState);
-          }
-        }
-
         if (!sub && !state.trialStarted) {
           setError('no_subscription_data');
         }
@@ -146,44 +131,20 @@ const SubscriptionScreen = () => {
   }, [localRiderId]);
 
   // ========================================================================
-  // FOCUS EFFECT: Check if locked, then load subscription data
+  // FOCUS EFFECT: Load subscription data
   // ========================================================================
   useFocusEffect(
     useCallback(() => {
       if (!hasLoadedRef.current && localRiderId) {
-        const checkLockAndLoadData = async () => {
-          try {
-            // ✅ Check if account is locked before showing subscription screen
-            const lockStatus = await checkAndEnforceLock(localRiderId);
-            
-            if (lockStatus?.isLocked) {
-              console.log('🔒 [SubscriptionScreen] Account is locked - redirecting to HomeScreen');
-              // ✅ CRITICAL: Set flag BEFORE redirecting to prevent infinite loop
-              hasLoadedRef.current = true;
-              // Navigate back to HomeScreen, where it will catch the lock and show AccountLockedScreen
-              navigation.goBack();
-              return; // Don't load subscription data
-            }
-
-            // ✅ Account is not locked, safe to show subscription screen
-            console.log('📌 SubscriptionScreen focused, loading data...');
-            hasLoadedRef.current = true;
-            loadSubscriptionData();
-          } catch (err) {
-            console.error('[SubscriptionScreen] Error checking account lock:', err);
-            // Fail-safe: allow subscription screen to load on error
-            hasLoadedRef.current = true;
-            loadSubscriptionData();
-          }
-        };
-
-        checkLockAndLoadData();
+        console.log('📌 SubscriptionScreen focused, loading data...');
+        hasLoadedRef.current = true;
+        loadSubscriptionData();
       }
 
       return () => {
         // Keep loaded state on unfocus
       };
-    }, [loadSubscriptionData, localRiderId, navigation])
+    }, [loadSubscriptionData, localRiderId])
   );
 
   // ========================================================================
@@ -220,10 +181,7 @@ const SubscriptionScreen = () => {
     navigation.navigate('PaymentHistory');
   };
 
-  const handleUnlock = () => {
-    console.log('🔵 [handleUnlock] Navigating to SelectFrequency');
-    navigation.navigate('SelectFrequency');
-  };
+
 
   // ========================================================================
   // RENDER HELPERS
@@ -234,57 +192,13 @@ const SubscriptionScreen = () => {
     return Math.ceil((expiryMs - Date.now()) / (1000 * 60 * 60 * 24));
   };
 
-  const daysOfTrialLeft = () => {
+  const hoursOfTrialLeft = () => {
     if (!subState?.trialEndDate) return 0;
     const trialEndMs = new Date(subState.trialEndDate).getTime();
-    return Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60 * 24));
+    return Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60));
   };
 
-  // ========================================================================
-  // ACCOUNT LOCKED STATE
-  // ========================================================================
-  if (subState?.lockedAt && !loading) {
-    return (
-      <ScrollView style={styles.container}>
-        <HeroBand
-          title="We've Missed You!"
-          subtitle={subState.lockReason || 'Subscription expired — but your data is safe.'}
-          onBack={() => navigation.goBack()}
-        />
 
-        <View style={styles.bannerContainer}>
-          <View style={[styles.banner, styles.bannerWarn]}>
-            <Text style={styles.bannerText}>
-              👉 Good news — one payment to unlock and you're back to work instantly.
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.card}>
-          <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Amount To Unlock</Text>
-            <Text style={styles.kvValue}>KSh {SUBSCRIPTION_PLANS.biweekly.amount}</Text>
-          </View>
-        </View>
-
-        <TouchableOpacity
-          style={styles.buttonPrimary}
-          onPress={handleUnlock}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.buttonPrimaryText}>🔓 Pay & Unlock Now →</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.buttonGhost}
-          onPress={() => navigation.navigate('SelectFrequency')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.buttonGhostText}>Choose a different plan</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    );
-  }
 
   // ========================================================================
   // LOADING STATE
@@ -328,7 +242,7 @@ const SubscriptionScreen = () => {
   const isOnFreeTrial = subState?.trialStarted && !subscription;
   const isSubscribed = !!subscription;
   const daysLeft = daysUntilExpiry();
-  const trialDaysLeft = daysOfTrialLeft();
+  const trialHoursLeft = hoursOfTrialLeft();
 
   // ========================================================================
   // MAIN UI - FREE TRIAL OR ACTIVE SUBSCRIPTION
@@ -342,7 +256,7 @@ const SubscriptionScreen = () => {
       <HeroBand
         title={
           isOnFreeTrial
-            ? `${trialDaysLeft} Day${trialDaysLeft > 1 ? 's' : ''} Free Trial`
+            ? '2 Hour Free Trial'
             : isSubscribed
             ? `Renew in ${daysLeft} Day${daysLeft > 1 ? 's' : ''}`
             : 'Start Your Journey'
@@ -362,7 +276,7 @@ const SubscriptionScreen = () => {
         <View style={styles.bannerContainer}>
           <View style={[styles.banner, styles.bannerTrial]}>
             <Text style={styles.bannerText}>
-              ✨ Take your time — your {trialDaysLeft}-day free trial doesn't expire until{' '}
+              ✨ Take your time — your 2-hour free trial doesn't expire until{' '}
               {new Date(subState.trialEndDate).toLocaleDateString('en-KE')}
             </Text>
           </View>
@@ -403,8 +317,8 @@ const SubscriptionScreen = () => {
           <Text style={styles.benefitsTitle}>Why Subscribe Now?</Text>
           <Text style={styles.benefitsText}>
             ✅ Keep tracking every trip, fuel cost, and service reminder{'\n'}
-            ✅ Stay connected to your SACCO{'\n'}
-            ✅ From just KSh 35/day — less than a cup of tea
+            ✅ Guaranteed acess to accurate statements{'\n'}
+            ✅ From just KSh 33/day — less than a cup of tea
           </Text>
         </View>
       )}

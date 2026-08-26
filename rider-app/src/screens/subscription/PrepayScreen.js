@@ -1,8 +1,9 @@
 // rider-app/src/screens/subscription/PrepayScreen.js
 // ✅ REFACTORED: IndexedDB-FIRST + subscriptionUtils alignment
-// ✅ BUSINESS LOGIC: Multi-day prepayment (3-60 days), stepper control
+// ✅ BUSINESS LOGIC: Multi-day prepayment (60-365 days), stepper control
 // ✅ UI/UX: Matches index.html design system (stepper, cards, buttons)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
+// ✅ UPDATED: Default prepay days changed from 7 to 60
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -44,7 +45,7 @@ const PrepayScreen = () => {
   // STATE
   // ========================================================================
   const [localRiderId, setLocalRiderId] = useState(null);
-  const [prepayDays, setPrepayDays] = useState(7);
+  const [prepayDays, setPrepayDays] = useState(60);
   const [mpesaCode, setMpesaCode] = useState('');
   const [confirmChecked, setConfirmChecked] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -91,6 +92,7 @@ const PrepayScreen = () => {
 
   // ========================================================================
   // ADJUST PREPAY DAYS (STEPPER)
+  // ✅ CONSTRAINT: Cannot reduce below 60 days minimum
   // ========================================================================
   const handleAdjustDays = (delta) => {
     const newValue = Math.max(MIN_PREPAY_DAYS, Math.min(MAX_PREPAY_DAYS, prepayDays + delta));
@@ -289,6 +291,7 @@ const PrepayScreen = () => {
           <TouchableOpacity
             style={styles.stepperButton}
             onPress={() => handleAdjustDays(-1)}
+            disabled={prepayDays <= MIN_PREPAY_DAYS}
             activeOpacity={0.7}
           >
             <Text style={styles.stepperButtonText}>−</Text>
@@ -299,6 +302,7 @@ const PrepayScreen = () => {
           <TouchableOpacity
             style={styles.stepperButton}
             onPress={() => handleAdjustDays(1)}
+            disabled={prepayDays >= MAX_PREPAY_DAYS}
             activeOpacity={0.7}
           >
             <Text style={styles.stepperButtonText}>+</Text>
@@ -306,28 +310,32 @@ const PrepayScreen = () => {
         </View>
 
         <Text style={styles.stepperHint}>
-          days to pay ahead ({MIN_PREPAY_DAYS}–{MAX_PREPAY_DAYS})
+          Minimum: {MIN_PREPAY_DAYS} days · Maximum: {MAX_PREPAY_DAYS} days
         </Text>
 
         {/* BREAKDOWN CARD */}
         <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Payment Breakdown</Text>
+          </View>
+
+          <View style={styles.kvRow}>
+            <Text style={styles.kvLabel}>Days to Add</Text>
+            <Text style={styles.kvValue}>{prepayDays}</Text>
+          </View>
+
           <View style={styles.kvRow}>
             <Text style={styles.kvLabel}>Daily Rate</Text>
             <Text style={styles.kvValue}>KSh {DAILY_RATE}</Text>
           </View>
 
-          <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Days</Text>
-            <Text style={styles.kvValue}>× {prepayDays}</Text>
-          </View>
-
           <View style={[styles.kvRow, styles.kvRowBold]}>
-            <Text style={styles.kvLabelBold}>Total to Pay</Text>
+            <Text style={styles.kvLabelBold}>Total Amount</Text>
             <Text style={styles.kvValueBold}>KSh {totalAmount.toLocaleString()}</Text>
           </View>
 
           <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>New Expiry Date</Text>
+            <Text style={styles.kvLabel}>New Expiry</Text>
             <Text style={styles.kvValue}>
               {newExpiryDate.toLocaleDateString('en-KE')}
             </Text>
@@ -336,30 +344,26 @@ const PrepayScreen = () => {
 
         {/* CONFIRMATION CHECKBOX */}
         <View style={styles.checkboxContainer}>
-          <TouchableOpacity
-            style={styles.checkboxRow}
-            onPress={() => setConfirmChecked(!confirmChecked)}
-            activeOpacity={0.7}
-          >
+          <View style={styles.checkboxRow}>
             <CheckBox
               value={confirmChecked}
               onValueChange={setConfirmChecked}
-              disabled={false}
+              style={{ width: 20, height: 20 }}
             />
             <Text style={styles.checkboxLabel}>
-              I confirm this amount and new expiry date.
+              I confirm the amount and new expiry date
             </Text>
-          </TouchableOpacity>
+          </View>
         </View>
 
-        {/* CONTINUE BUTTON */}
+        {/* ACTION BUTTON */}
         <TouchableOpacity
           style={[styles.buttonPrimary, !confirmChecked && styles.buttonDisabled]}
           onPress={handleContinueFromSelect}
           disabled={!confirmChecked}
           activeOpacity={0.8}
         >
-          <Text style={styles.buttonPrimaryText}>Continue to Payment →</Text>
+          <Text style={styles.buttonPrimaryText}>Continue →</Text>
         </TouchableOpacity>
 
         {/* SPACER */}
@@ -378,22 +382,34 @@ const PrepayScreen = () => {
         onPress={() => setScreenState('select')}
         style={styles.backLink}
       >
-        <Text style={styles.backLinkText}>← Change</Text>
+        <Text style={styles.backLinkText}>← {t('common.back') || 'Back'}</Text>
       </TouchableOpacity>
 
       {/* TITLE */}
-      <Text style={styles.title}>Confirm Your Prepayment</Text>
-      <Text style={styles.subtitle}>Review the details before paying</Text>
+      <Text style={styles.title}>Complete Payment</Text>
+      <Text style={styles.subtitle}>Confirm your prepayment details and send via M-Pesa</Text>
 
-      {/* PREPAY DETAILS CARD */}
+      {/* ERROR BANNER */}
+      {error && (
+        <View style={styles.errorBanner}>
+          <Text style={styles.errorText}>{error}</Text>
+        </View>
+      )}
+
+      {/* PAYMENT BREAKDOWN CARD */}
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>📅 {prepayDays}-Day Prepayment</Text>
+          <Text style={styles.cardTitle}>Your Prepayment</Text>
         </View>
 
         <View style={styles.kvRow}>
-          <Text style={styles.kvLabel}>Daily Rate</Text>
-          <Text style={styles.kvValue}>KSh {DAILY_RATE} × {prepayDays} days</Text>
+          <Text style={styles.kvLabel}>Days Added</Text>
+          <Text style={styles.kvValue}>{prepayDays} days</Text>
+        </View>
+
+        <View style={styles.kvRow}>
+          <Text style={styles.kvLabel}>Cost per Day</Text>
+          <Text style={styles.kvValue}>KSh {DAILY_RATE}</Text>
         </View>
 
         <View style={[styles.kvRow, styles.kvRowBold]}>
@@ -402,50 +418,41 @@ const PrepayScreen = () => {
         </View>
 
         <View style={styles.kvRow}>
-          <Text style={styles.kvLabel}>Keeps You Active Until</Text>
+          <Text style={styles.kvLabel}>New Expiry</Text>
           <Text style={styles.kvValue}>
             {newExpiryDate.toLocaleDateString('en-KE')}
           </Text>
         </View>
       </View>
 
-      {/* M-PESA PAYMENT CARD */}
+      {/* M-PESA INSTRUCTIONS CARD */}
       <View style={styles.mpesaCard}>
-        <Text style={styles.mpesaCardTitle}>📲 Payment Instructions</Text>
+        <Text style={styles.mpesaCardTitle}>💚 How to Pay with M-Pesa</Text>
         <Text style={styles.mpesaCardText}>
-          Please use "Send Money" to the Safaricom number below.
+          1. Go to M-Pesa menu on your phone{'\n'}
+          2. Choose "Lipa na M-Pesa Online" or "Send Money"{'\n'}
+          3. Enter the payment number below{'\n'}
+          4. Enter the amount: KSh {totalAmount.toLocaleString()}{'\n'}
+          5. Paste the confirmation code here
         </Text>
 
         <View style={styles.paymentNumberBox}>
           <View>
-            <Text style={styles.paymentNumberLabel}>Safaricom Number</Text>
-            <Text style={styles.paymentNumber}>0757 334 481</Text>
+            <Text style={styles.paymentNumberLabel}>Payment Number</Text>
+            <Text style={styles.paymentNumber}>400500</Text>
           </View>
-          <TouchableOpacity
-            onPress={() => {
-              console.log('📋 Copy number to clipboard');
-            }}
-          >
-            <Text style={styles.copyIcon}>📋</Text>
-          </TouchableOpacity>
+          <Text style={styles.copyIcon}>📋</Text>
         </View>
 
         <View style={styles.paymentAmountBox}>
-          <Text style={styles.paymentAmountLabel}>Amount To Send</Text>
+          <Text style={styles.paymentAmountLabel}>Amount to Send</Text>
           <Text style={styles.paymentAmount}>KSh {totalAmount.toLocaleString()}</Text>
         </View>
 
         <Text style={styles.mpesaCardNote}>
-          ✅ Tap below once you've sent the payment and we'll activate it right away.
+          You'll get a confirmation code from M-Pesa in seconds. Paste it below.
         </Text>
       </View>
-
-      {/* ERROR MESSAGE */}
-      {error && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>⚠️ {error}</Text>
-        </View>
-      )}
 
       {/* M-PESA CODE INPUT */}
       <View style={styles.fieldGroup}>
@@ -457,23 +464,18 @@ const PrepayScreen = () => {
             styles.textInput,
             fieldErrors.mpesaCode && styles.textInputError
           ]}
-          placeholder="e.g. QK71X9Y2AB"
-          placeholderTextColor="#c9c2b6"
-          maxLength={15}
+          placeholder="e.g., ABC123DEF"
+          placeholderTextColor="#8b8c8e"
           value={mpesaCode}
-          onChangeText={(text) => {
-            setMpesaCode(text.toUpperCase());
-            if (fieldErrors.mpesaCode) {
-              setFieldErrors({ ...fieldErrors, mpesaCode: null });
-            }
-          }}
+          onChangeText={setMpesaCode}
           editable={!loading}
+          maxLength={12}
         />
         {fieldErrors.mpesaCode && (
           <Text style={styles.errorMessage}>{fieldErrors.mpesaCode}</Text>
         )}
         <Text style={styles.fieldHint}>
-          Enter the code from the M-Pesa message you received.
+          Find this in your M-Pesa confirmation message. It's usually 8-10 characters.
         </Text>
       </View>
 
@@ -485,9 +487,9 @@ const PrepayScreen = () => {
         activeOpacity={0.8}
       >
         {loading ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator color="#fff" size="small" />
         ) : (
-          <Text style={styles.buttonPrimaryText}>I've Made This Payment ✅</Text>
+          <Text style={styles.buttonPrimaryText}>Confirm & Pay →</Text>
         )}
       </TouchableOpacity>
 
@@ -506,17 +508,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f6f4ef',
     paddingHorizontal: 14,
+    paddingTop: 14,
   },
 
   // Back Link
   backLink: {
-    marginTop: 16,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   backLinkText: {
     fontSize: 13,
-    color: '#1a1c20',
     fontWeight: '600',
+    color: '#ff7a1a',
   },
 
   // Title & Subtitle
