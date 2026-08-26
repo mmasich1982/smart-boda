@@ -1,14 +1,13 @@
 // admin-console/src/api/client.js
-// Single shared axios instance for the whole Admin Console. Every other file under
-// api/ imports `api` from here instead of creating its own axios.create() call, so
-// baseURL, credentials, and error handling are consistent everywhere.
+// Single shared axios instance with improved error handling and timeouts
 import axios from 'axios';
 
 // ============================================================================
-// AXIOS CONFIGURATION - FIXED
+// AXIOS CONFIGURATION
 // ============================================================================
-// CRITICAL FIX: Validate that API base URL is configured correctly
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'https://smart-boda-api.onrender.com';
+
+console.log(`📡 API Base URL: ${apiBaseUrl}`);
 
 if (!apiBaseUrl) {
   console.error(
@@ -25,54 +24,39 @@ if (apiBaseUrl && apiBaseUrl.includes('admin.onrender.com')) {
   );
 }
 
-console.log(`📡 API Base URL: ${apiBaseUrl}`);
-
 const api = axios.create({
   baseURL: apiBaseUrl,
-  timeout: 15000,
-  // AUDIT FIX (Admin Console §2, High): the auth token now lives in an httpOnly cookie
-  // issued by the backend (see backend/app/auth.py) instead of localStorage -- this just
-  // tells the browser to send/accept that cookie on cross-origin requests. No token is
-  // ever read or attached by JS here.
-  withCredentials: false,
+  timeout: 30000, // Increased to 30s for Render free tier cold starts
+  withCredentials: true, // Important: send cookies with requests
+  headers: {
+    'Content-Type': 'application/json',
+  }
 });
 
-// Add this NEW block (after axios.create, before interceptors):
+// ============================================================================
+// REQUEST INTERCEPTOR - Add auth token
+// ============================================================================
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('adminToken');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
-
-// ============================================================================
-// REQUEST INTERCEPTOR - Add debugging for failed requests
-// ============================================================================
-api.interceptors.request.use(
-  (config) => {
-    // Log outgoing requests in development
+    
     if (import.meta.env.DEV) {
       console.debug(`📤 ${config.method?.toUpperCase()} ${config.url}`);
     }
     return config;
   },
   (error) => {
-    console.error('❌ Request failed:', error);
+    console.error('❌ Request preparation failed:', error);
     return Promise.reject(error);
   }
 );
 
 // ============================================================================
-// RESPONSE INTERCEPTOR - Handle 401 and other errors
+// RESPONSE INTERCEPTOR - Handle errors gracefully
 // ============================================================================
-// If the backend ever says the session is no longer valid, clear it locally and
-// bounce back to the login screen rather than leaving the admin looking at a
-// silently-broken page. clearSession is imported lazily to avoid a circular import
-// with session.js (which itself imports `api` from this file).
 api.interceptors.response.use(
   (response) => {
     if (import.meta.env.DEV) {
@@ -83,9 +67,24 @@ api.interceptors.response.use(
   async (error) => {
     const status = error.response?.status;
     const url = error.config?.url;
+    const method = error.config?.method?.toUpperCase();
+    
+    // Handle timeout errors
+    if (error.code === 'ECONNABORTED') {
+      console.error(
+        `⏱️ Request timeout (30s) on ${method} ${url}\n` +
+        'This often means:\n' +
+        '  1. Backend API is sleeping (Render free tier)\n' +
+        '  2. Network is slow\n' +
+        '  3. Backend is not responding\n' +
+        `Check: ${apiBaseUrl}/health`
+      );
+      error.isTimeout = true;
+      return Promise.reject(error);
+    }
     
     // Log error details
-    console.error(`❌ API Error: ${status} on ${error.config?.method?.toUpperCase()} ${url}`);
+    console.error(`❌ API Error: ${status} on ${method} ${url}`);
     if (error.response?.data?.detail) {
       console.error(`   Detail: ${error.response.data.detail}`);
     }
@@ -96,17 +95,17 @@ api.interceptors.response.use(
       clearSession();
       
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-        console.warn('🔐 Session expired or invalid. Redirecting to login...');
+        console.warn('🔐 Session expired. Redirecting to login...');
         window.location.assign('/login');
       }
     }
     
-    // Handle 403 Forbidden - user doesn't have permission
+    // Handle 403 Forbidden
     if (status === 403) {
       console.warn('⛔ Access denied (403 Forbidden)');
     }
     
-    // Handle CORS errors
+    // Handle network errors and CORS issues
     if (error.message === 'Network Error' && !error.response) {
       console.error(
         '❌ Network Error - Check if:\n' +
@@ -115,11 +114,11 @@ api.interceptors.response.use(
         '  3. CORS is properly configured on backend\n' +
         `  4. Trying to reach: ${apiBaseUrl}`
       );
+      error.isNetworkError = true;
     }
     
     return Promise.reject(error);
   }
 );
-
 
 export default api;
