@@ -116,18 +116,25 @@ export const REMINDER_CHECKS_PER_DAY = 3;
  */
 export async function checkAndEnforceLock(riderId) {
   try {
-    if (!riderId) {
-      console.warn('⚠️ [checkAndEnforceLock] No rider ID provided');
+    // ✅ CRITICAL: Validate rider ID exists
+    if (!riderId || riderId === 'undefined' || riderId === 'null') {
+      console.error('❌ [checkAndEnforceLock] Invalid rider ID:', riderId);
       return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
     }
 
+    console.log('🔐 [checkAndEnforceLock] Checking lock status for rider:', riderId);
+
     const now = Date.now();
     
-    // ✅ 1. Get current subscription
+    // ✅ 1. Get current subscription with rider ID isolation
     const subscription = await getActiveSubscription(riderId);
+    console.log('   Active subscription:', subscription ? `YES (${subscription.plan})` : 'NO');
     
-    // ✅ 2. Get current state
+    // ✅ 2. Get current state with rider ID isolation
     const state = await getSubscriptionState(riderId);
+    console.log('   Trial started:', state?.trialStarted);
+    console.log('   Trial end date:', state?.trialEndDate);
+    console.log('   Currently locked:', !!state?.lockedAt);
 
     // ✅ 3. Check if currently locked
     const isCurrentlyLocked = !!state?.lockedAt;
@@ -136,13 +143,18 @@ export async function checkAndEnforceLock(riderId) {
     let shouldLock = false;
     let lockReason = null;
 
-    // Check if subscription expired
+    // ✅ PRIORITY 1: Active paid subscription takes precedence
     if (subscription) {
       const expiryMs = subscription.expiryDate 
         ? new Date(subscription.expiryDate).getTime() 
         : subscription.expiry_ms;
       
-      if (expiryMs && expiryMs <= now) {
+      if (expiryMs && expiryMs > now) {
+        // Subscription is still valid - DO NOT LOCK
+        console.log('✅ [checkAndEnforceLock] Active valid subscription found - NOT locking');
+        shouldLock = false;
+      } else if (expiryMs && expiryMs <= now) {
+        // Subscription expired
         shouldLock = true;
         lockReason = 'Subscription expired';
         console.log('🔒 [checkAndEnforceLock] Subscription expired:', {
@@ -150,15 +162,16 @@ export async function checkAndEnforceLock(riderId) {
           now: toEATString(now),
         });
       }
-    } else if (!state?.trialStarted) {
-      // No subscription and no trial = new rider, initialize trial
-      console.log('ℹ️ [checkAndEnforceLock] No subscription or trial - initializing trial');
-      await ensureFreeTrial(riderId);
-      return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
-    } else if (state?.trialStarted && state?.trialEndDate) {
-      // Check if trial expired
+    } 
+    // ✅ PRIORITY 2: Check trial only if NO paid subscription exists
+    else if (state?.trialStarted && state?.trialEndDate) {
       const trialEndMs = new Date(state.trialEndDate).getTime();
-      if (trialEndMs <= now) {
+      if (trialEndMs > now) {
+        // Trial still active - DO NOT LOCK
+        console.log('✅ [checkAndEnforceLock] Active trial found - NOT locking');
+        shouldLock = false;
+      } else if (trialEndMs <= now) {
+        // Trial expired and no paid subscription
         shouldLock = true;
         lockReason = 'Trial period expired';
         console.log('🔒 [checkAndEnforceLock] Trial expired:', {
@@ -166,6 +179,12 @@ export async function checkAndEnforceLock(riderId) {
           now: toEATString(now),
         });
       }
+    } 
+    // ✅ PRIORITY 3: No subscription and no trial = new rider
+    else if (!state?.trialStarted) {
+      console.log('ℹ️ [checkAndEnforceLock] No subscription or trial - initializing trial');
+      await ensureFreeTrial(riderId);
+      return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
     }
 
     // ✅ 5. Update lock state if needed
@@ -181,7 +200,7 @@ export async function checkAndEnforceLock(riderId) {
         isLocked: true,
         reason: lockReason,
         lockedSince: toEATString(now),
-        justLocked: true, // Signal that this is a new lock
+        justLocked: true,
       };
     } else if (!shouldLock && isCurrentlyLocked) {
       // Already paid - unlock account
@@ -198,6 +217,7 @@ export async function checkAndEnforceLock(riderId) {
       };
     } else if (shouldLock && isCurrentlyLocked) {
       // Already locked
+      console.log('🔒 [checkAndEnforceLock] Account already locked');
       return {
         isLocked: true,
         reason: state?.lockReason || lockReason,
@@ -207,6 +227,7 @@ export async function checkAndEnforceLock(riderId) {
     }
 
     // ✅ 6. No lock needed
+    console.log('✅ [checkAndEnforceLock] No lock required');
     return {
       isLocked: false,
       reason: null,
@@ -293,6 +314,11 @@ export async function ensureFreeTrial(riderId) {
   try {
     console.log('🔍 [ensureFreeTrial] Checking trial status for rider:', riderId);
     
+    if (!riderId) {
+      console.error('❌ [ensureFreeTrial] No rider ID provided');
+      return null;
+    }
+    
     const state = await getSubscriptionState(riderId);
     
     // ✅ If trial not started, initialize it now
@@ -300,7 +326,7 @@ export async function ensureFreeTrial(riderId) {
       console.log('✨ [ensureFreeTrial] New rider detected - initializing free trial');
       
       const now = Date.now();
-      const trialEndMs = now + 120000; // 2 minutes for testing
+      const trialEndMs = now + FREE_TRIAL_MS; // 2 hours
 
       const newState = {
         trialStarted: true,
@@ -316,18 +342,19 @@ export async function ensureFreeTrial(riderId) {
       const key = `subscription_state_${riderId}`;
       await indexedDbAdapter.kvSet(key, JSON.stringify(newState));
       
-      console.log('✅ [ensureFreeTrial] Free trial created:', {
-        trialStartDate: newState.trialStartDate,
-        trialEndDate: newState.trialEndDate,
-        daysRemaining: 0.00138, // 2 minutes in days
-      });
+      console.log('✅ [ensureFreeTrial] Free trial created for rider:', riderId);
+      console.log('   Trial duration: 2 hours (7,200,000 ms)');
+      console.log('   Trial start:', newState.trialStartDate);
+      console.log('   Trial end:', newState.trialEndDate);
       
       return newState;
     }
     
-    console.log('✅ [ensureFreeTrial] Trial already exists:', {
+    console.log('✅ [ensureFreeTrial] Trial already exists for rider:', riderId);
+    console.log('   Trial status:', {
       trialStarted: state.trialStarted,
       trialEndDate: state.trialEndDate,
+      lockedAt: state.lockedAt,
     });
     
     return state;
@@ -445,6 +472,16 @@ export async function recordReminderShown(riderId) {
  */
 export async function createSubscription(riderId, plan, paymentMethod = 'mpesa') {
   try {
+    // ✅ CRITICAL: Validate rider ID exists and is not undefined/null
+    if (!riderId || riderId === 'undefined' || riderId === 'null') {
+      console.error('❌ [createSubscription] Invalid rider ID:', riderId);
+      throw new Error('Rider ID is required to create subscription');
+    }
+
+    console.log('📝 [createSubscription] Creating subscription for rider:', riderId);
+    console.log('   Plan:', plan);
+    console.log('   Payment Method:', paymentMethod);
+
     const planConfig = SUBSCRIPTION_PLANS[plan];
     if (!planConfig) {
       throw new Error(`Invalid plan: ${plan}`);
@@ -472,20 +509,27 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
       syncStatus: 'pending',
     };
 
-    // Save to IndexedDB
+    // ✅ Save to IndexedDB with rider ID isolation
     const key = `subscription_${riderId}`;
+    console.log('💾 [createSubscription] Saving to IndexedDB with key:', key);
     await indexedDbAdapter.kvSet(key, JSON.stringify(subscription));
 
-    // Update history
+    // ✅ Update history with rider ID isolation
     await addToSubscriptionHistory(riderId, subscription);
 
-    // Initialize trial state if new rider
+    // ✅ CRITICAL: Clear trial lock state when paid subscription is created
+    // This prevents immediate account lock after subscription creation
     const state = await getSubscriptionState(riderId);
-    if (!state.trialStarted) {
-      await ensureFreeTrial(riderId);
-    }
+    state.lockedAt = null; // Clear lock
+    state.lockReason = null; // Clear lock reason
+    // Keep trial info for historical purposes, but it's no longer active
+    state.trialActive = false;
+    
+    const stateKey = `subscription_state_${riderId}`;
+    await indexedDbAdapter.kvSet(stateKey, JSON.stringify(state));
+    console.log('✅ [createSubscription] Cleared trial lock state for rider:', riderId);
 
-    // Queue for sync
+    // ✅ Queue for sync with rider ID
     await addToSyncQueue({
       id: subscription.id,
       type: 'subscription',
@@ -494,10 +538,17 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
       timestamp: new Date(),
     });
 
-    console.log('✅ Subscription created:', subscription.id);
+    console.log('✅ [createSubscription] Subscription successfully created:', {
+      id: subscription.id,
+      riderId: riderId,
+      plan: plan,
+      amount: subscription.amount,
+      expiryDate: subscription.expiryDate,
+    });
+    
     return subscription;
   } catch (err) {
-    console.error('❌ Error creating subscription:', err);
+    console.error('❌ [createSubscription] Error creating subscription:', err);
     return null;
   }
 }
