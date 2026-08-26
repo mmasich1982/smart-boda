@@ -1,9 +1,6 @@
 // rider-app/src/screens/subscription/SubscriptionScreen.js
-// ✅ REFACTORED: IndexedDB-FIRST + subscriptionUtils alignment
-// ✅ BUSINESS LOGIC: Free Trial, Renewal, Prepay, Payment History
-// ✅ UI/UX: Matches index.html design system (hero-band, cards, banners)
-// ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
-// ✅ FIXED: HeroBand component replaces custom black card hero section
+// ✅ DIAGNOSTIC VERSION: Includes detailed logging for navigation debugging
+// Use this to identify why FrequencySelectScreen and PaymentHistoryScreen navigation fails
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -13,7 +10,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  RefreshControl
+  RefreshControl,
+  Alert
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
@@ -54,6 +52,22 @@ const SubscriptionScreen = () => {
   // ========================================================================
   const hasLoadedRef = useRef(false);
   const isMountedRef = useRef(true);
+
+  // ========================================================================
+  // DIAGNOSTIC: Log navigation object on mount
+  // ========================================================================
+  useEffect(() => {
+    console.log('🔍 [SubscriptionScreen] ===== NAVIGATION DIAGNOSTIC =====');
+    console.log('📱 Navigation object:', navigation);
+    console.log('📱 Navigation.getState():', navigation.getState?.());
+    
+    if (navigation.getState?.()) {
+      const navState = navigation.getState();
+      console.log('✅ Available route names:', navState.routeNames || 'NOT AVAILABLE');
+      console.log('✅ Current routes:', navState.routes || 'NOT AVAILABLE');
+      console.log('✅ Index:', navState.index);
+    }
+  }, [navigation]);
 
   // ========================================================================
   // LOAD RIDER ID (Local-First)
@@ -106,7 +120,6 @@ const SubscriptionScreen = () => {
       setLoading(true);
       setError(null);
 
-      // ✅ Load active subscription & state using subscriptionUtils
       const sub = await getActiveSubscription(localRiderId);
       const state = await getSubscriptionState(localRiderId);
 
@@ -114,11 +127,9 @@ const SubscriptionScreen = () => {
         setSubscription(sub);
         setSubState(state);
 
-        // ✅ Check if account should be locked (expiry without payment)
         if (!state.lockedAt && sub === null && state.trialEndDate) {
           const trialEndMs = new Date(state.trialEndDate).getTime();
           if (trialEndMs <= Date.now()) {
-            // Trial expired, lock account
             await lockAccount(localRiderId, 'Free trial expired');
             const updatedState = await getSubscriptionState(localRiderId);
             setSubState(updatedState);
@@ -168,28 +179,89 @@ const SubscriptionScreen = () => {
   }, [loadSubscriptionData]);
 
   // ========================================================================
-  // HANDLE ACTIONS
+  // HANDLE ACTIONS - WITH DIAGNOSTIC LOGGING
   // ========================================================================
   const handleSubscribeNow = () => {
-    navigation.navigate('FrequencySelectScreen');
+    console.log('🔵 [handleSubscribeNow] TRIGGERED');
+    console.log('📱 Navigation object exists?', !!navigation);
+    console.log('📱 Navigation.navigate exists?', !!navigation.navigate);
+    
+    const navState = navigation.getState?.();
+    if (navState) {
+      console.log('📱 Available screens:', navState.routeNames);
+      console.log('📱 FrequencySelectScreen in routes?', navState.routeNames?.includes('FrequencySelectScreen'));
+    } else {
+      console.warn('⚠️ Cannot get navigation state');
+    }
+
+    try {
+      console.log('➡️ Attempting navigation to: FrequencySelectScreen');
+      navigation.navigate('FrequencySelectScreen');
+      console.log('✅ Navigation.navigate() call succeeded');
+    } catch (error) {
+      console.error('❌ Navigation error caught:', error);
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Stack trace:', error.stack);
+      Alert.alert('Navigation Error', `Unable to navigate: ${error.message}`);
+    }
   };
 
   const handleRenewNow = () => {
-    navigation.navigate('FrequencySelectScreen');
+    console.log('🔵 [handleRenewNow] TRIGGERED');
+    console.log('📱 Navigation object exists?', !!navigation);
+    
+    try {
+      console.log('➡️ Attempting navigation to: FrequencySelectScreen');
+      navigation.navigate('FrequencySelectScreen');
+      console.log('✅ Navigation.navigate() call succeeded');
+    } catch (error) {
+      console.error('❌ Navigation error:', error.message);
+      Alert.alert('Navigation Error', `Unable to navigate: ${error.message}`);
+    }
   };
 
   const handlePrepay = () => {
-    navigation.navigate('PrepayScreen', {
-      currentExpiryAt: subscription?.expiryDate
-    });
+    console.log('🟢 [handlePrepay] TRIGGERED - THIS WORKS');
+    console.log('📱 Navigation to: PrepayScreen');
+    console.log('📱 Parameters:', { currentExpiryAt: subscription?.expiryDate });
+    
+    try {
+      navigation.navigate('PrepayScreen', {
+        currentExpiryAt: subscription?.expiryDate
+      });
+      console.log('✅ PrepayScreen navigation succeeded');
+    } catch (error) {
+      console.error('❌ PrepayScreen navigation error:', error.message);
+    }
   };
 
   const handlePaymentHistory = () => {
-    navigation.navigate('PaymentHistoryScreen');
+    console.log('🔵 [handlePaymentHistory] TRIGGERED');
+    console.log('📱 Navigation object exists?', !!navigation);
+    
+    const navState = navigation.getState?.();
+    if (navState) {
+      console.log('📱 Available screens:', navState.routeNames);
+      console.log('📱 PaymentHistoryScreen in routes?', navState.routeNames?.includes('PaymentHistoryScreen'));
+    }
+
+    try {
+      console.log('➡️ Attempting navigation to: PaymentHistoryScreen');
+      navigation.navigate('PaymentHistoryScreen');
+      console.log('✅ Navigation.navigate() call succeeded');
+    } catch (error) {
+      console.error('❌ Navigation error:', error.message);
+      Alert.alert('Navigation Error', `Unable to navigate: ${error.message}`);
+    }
   };
 
   const handleUnlock = () => {
-    navigation.navigate('FrequencySelectScreen');
+    console.log('🔵 [handleUnlock] TRIGGERED');
+    try {
+      navigation.navigate('FrequencySelectScreen');
+    } catch (error) {
+      console.error('❌ Unlock navigation error:', error.message);
+    }
   };
 
   // ========================================================================
@@ -305,7 +377,6 @@ const SubscriptionScreen = () => {
       style={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
-      {/* ✅ HERO BAND COMPONENT (replaces custom black card) */}
       <HeroBand
         title={
           isOnFreeTrial
@@ -421,6 +492,17 @@ const SubscriptionScreen = () => {
             ℹ️ Payment via M-Pesa (Lipa na M-Pesa, Pochi la Biashara, or Send Money)
           </Text>
         </View>
+      </View>
+
+      {/* DIAGNOSTIC PANEL - REMOVE IN PRODUCTION */}
+      <View style={styles.diagnosticPanel}>
+        <Text style={styles.diagnosticTitle}>🔍 DIAGNOSTIC INFO (Remove before production)</Text>
+        <Text style={styles.diagnosticText}>
+          Rider ID: {localRiderId || 'NOT SET'}{'\n'}
+          Subscription: {isSubscribed ? 'ACTIVE' : 'NONE'}{'\n'}
+          Trial: {isOnFreeTrial ? `ACTIVE (${trialDaysLeft} days)` : 'NOT ON TRIAL'}{'\n'}
+          Locked: {subState?.lockedAt ? 'YES' : 'NO'}
+        </Text>
       </View>
     </ScrollView>
   );
@@ -614,6 +696,29 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#e5650a',
     paddingVertical: 6,
+  },
+
+  // Diagnostic Panel (Remove in production)
+  diagnosticPanel: {
+    marginHorizontal: 14,
+    marginBottom: 20,
+    backgroundColor: '#fff3e0',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#ff9800',
+    padding: 12,
+  },
+  diagnosticTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#e65100',
+    marginBottom: 8,
+  },
+  diagnosticText: {
+    fontSize: 11,
+    color: '#bf360c',
+    fontFamily: 'monospace',
+    lineHeight: 16,
   },
 });
 
