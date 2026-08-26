@@ -12,6 +12,15 @@ import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { addToSyncQueue } from './syncQueue';
 
 /**
+ * Convert UTC timestamp to East Africa Time (EAT - UTC+3) formatted string
+ */
+function toEATString(timestamp) {
+  const EAT_OFFSET = 3 * 60 * 60 * 1000; // 3 hours in milliseconds
+  const eatDate = new Date(new Date(timestamp).getTime() + EAT_OFFSET);
+  return eatDate.toISOString().replace('Z', '+03:00');
+}
+
+/**
  * ============================================================================
  * SUBSCRIPTION STORAGE ARCHITECTURE
  * ============================================================================
@@ -136,7 +145,7 @@ export async function checkAndEnforceLock(riderId) {
         lockReason = 'Subscription expired';
         console.log('🔒 [checkAndEnforceLock] Subscription expired:', {
           expiryDate: subscription.expiryDate,
-          now: new Date(now).toISOString(),
+          now: toEATString(now),
         });
       }
     } else if (!state?.trialStarted) {
@@ -152,7 +161,7 @@ export async function checkAndEnforceLock(riderId) {
         lockReason = 'Trial period expired';
         console.log('🔒 [checkAndEnforceLock] Trial expired:', {
           trialEndDate: state.trialEndDate,
-          now: new Date(now).toISOString(),
+          now: toEATString(now),
         });
       }
     }
@@ -164,12 +173,12 @@ export async function checkAndEnforceLock(riderId) {
       console.log('🔒 [checkAndEnforceLock] ACCOUNT LOCKED:', {
         riderId,
         reason: lockReason,
-        timestamp: new Date(now).toISOString(),
+        timestamp: toEATString(now),
       });
       return {
         isLocked: true,
         reason: lockReason,
-        lockedSince: new Date(now).toISOString(),
+        lockedSince: toEATString(now),
         justLocked: true, // Signal that this is a new lock
       };
     } else if (!shouldLock && isCurrentlyLocked) {
@@ -177,7 +186,7 @@ export async function checkAndEnforceLock(riderId) {
       await unlockAccount(riderId);
       console.log('🔓 [checkAndEnforceLock] ACCOUNT UNLOCKED (payment received):', {
         riderId,
-        timestamp: new Date(now).toISOString(),
+        timestamp: toEATString(now),
       });
       return {
         isLocked: false,
@@ -420,7 +429,7 @@ export async function shouldShowReminderBanner(riderId) {
 export async function recordReminderShown(riderId) {
   try {
     const state = await getSubscriptionState(riderId);
-    state.lastReminderCheck = new Date().toISOString();
+    state.lastReminderCheck = toEATString(Date.now());
 
     const key = `subscription_state_${riderId}`;
     await indexedDbAdapter.kvSet(key, JSON.stringify(state));
@@ -451,11 +460,11 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
       currency: 'KES',
       status: 'active',
       paymentMethod: paymentMethod,
-      startDate: new Date(now).toISOString(),
+      startDate: toEATString(now),
       start_ms: now,
-      expiryDate: new Date(expiryMs).toISOString(),
+      expiryDate: toEATString(expiryMs),
       expiry_ms: expiryMs,
-      createdAt: new Date().toISOString(),
+      createdAt: toEATString(Date.now()),
       ts: now,
       timestamp: now,
       syncStatus: 'pending',
@@ -501,8 +510,8 @@ export async function initializeFreeTrial(riderId) {
 
     const state = {
       trialStarted: true,
-      trialStartDate: new Date(now).toISOString(),
-      trialEndDate: new Date(trialEndMs).toISOString(),
+      trialStartDate: toEATString(now),
+      trialEndDate: toEATString(trialEndMs),
       trialEndMs: trialEndMs,
       reminderCount: 0,
       lastReminderCheck: null,
@@ -514,7 +523,7 @@ export async function initializeFreeTrial(riderId) {
     await indexedDbAdapter.kvSet(key, JSON.stringify(state));
 
     console.log('✅ Free trial initialized for rider:', riderId);
-    console.log('   Trial ends at:', new Date(trialEndMs).toISOString());
+    console.log('   Trial ends at:', toEATString(trialEndMs));
     return state;
   } catch (err) {
     console.error('❌ Error initializing trial:', err);
@@ -528,7 +537,7 @@ export async function initializeFreeTrial(riderId) {
 export async function lockAccount(riderId, reason = 'Subscription expired') {
   try {
     const state = await getSubscriptionState(riderId);
-    state.lockedAt = new Date().toISOString();
+    state.lockedAt = toEATString(Date.now());
     state.lockReason = reason;
 
     const key = `subscription_state_${riderId}`;
