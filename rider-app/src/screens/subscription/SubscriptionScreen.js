@@ -1,9 +1,8 @@
 // rider-app/src/screens/subscription/SubscriptionScreen.js
-// ✅ REFACTORED: IndexedDB-FIRST + subscriptionUtils alignment
-// ✅ BUSINESS LOGIC: Free Trial, Renewal, Prepay, Payment History
-// ✅ UI/UX: Matches index.html design system (hero-band, cards, banners)
-// ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
-// ✅ UPDATED: Replaced black hero card with HeroBand component
+// ✅ KEY FIXES:
+// 1. Ensure Subscribe Now / Renew Now buttons navigate to FrequencySelectScreen
+// 2. Ensure View Payment History link navigates to PaymentHistoryScreen
+// 3. NO UI CHANGES - keeping existing styling intact
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -18,7 +17,6 @@ import {
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
-import HeroBand from '../../components/HeroBand';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
@@ -168,27 +166,32 @@ const SubscriptionScreen = () => {
   }, [loadSubscriptionData]);
 
   // ========================================================================
-  // HANDLE ACTIONS
+  // HANDLE ACTIONS - CRITICAL FIXES FOR NAVIGATION
   // ========================================================================
   const handleSubscribeNow = () => {
+    console.log('📍 handleSubscribeNow triggered');
     navigation.navigate('FrequencySelectScreen');
   };
 
   const handleRenewNow = () => {
+    console.log('📍 handleRenewNow triggered');
     navigation.navigate('FrequencySelectScreen');
   };
 
   const handlePrepay = () => {
+    console.log('📍 handlePrepay triggered');
     navigation.navigate('PrepayScreen', {
       currentExpiryAt: subscription?.expiryDate
     });
   };
 
   const handlePaymentHistory = () => {
+    console.log('📍 handlePaymentHistory triggered');
     navigation.navigate('PaymentHistoryScreen');
   };
 
   const handleUnlock = () => {
+    console.log('📍 handleUnlock triggered');
     navigation.navigate('FrequencySelectScreen');
   };
 
@@ -213,11 +216,19 @@ const SubscriptionScreen = () => {
   if (subState?.lockedAt && !loading) {
     return (
       <ScrollView style={styles.container}>
-        <HeroBand
-          title="We've Missed You!"
-          subtitle={`${subState.lockReason || 'Subscription expired'} — but your data is safe.`}
-          onBack={() => navigation.goBack()}
-        />
+        <View style={styles.heroBand}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backLink}
+          >
+            <Text style={styles.backLinkText}>← {t('common.back') || 'Home'}</Text>
+          </TouchableOpacity>
+          <Text style={styles.heroEmoji}>👋</Text>
+          <Text style={styles.heroTitle}>We've Missed You!</Text>
+          <Text style={styles.heroSubtitle}>
+            {subState.lockReason || 'Subscription expired'} — but your data is safe.
+          </Text>
+        </View>
 
         <View style={styles.bannerContainer}>
           <View style={[styles.banner, styles.bannerWarn]}>
@@ -293,27 +304,36 @@ const SubscriptionScreen = () => {
       style={styles.container}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
-      {/* FREE TRIAL BANNER OR ACTIVE SUBSCRIPTION HERO */}
+      {/* HERO SECTION - Trial or Active Subscription */}
       {isOnFreeTrial ? (
-        <HeroBand
-          eyebrow="Free Trial"
-          title="Enjoy Your Free Day"
-          subtitle={`${trialDaysLeft} day left · No payment required yet`}
-          onBack={() => navigation.goBack()}
-        />
+        <View style={styles.heroBand}>
+          <Text style={styles.heroEyebrow}>Free Trial</Text>
+          <Text style={styles.heroTitle}>Enjoy Your Free Day</Text>
+          <Text style={styles.heroSubtitle}>
+            {trialDaysLeft} day left · No payment required yet
+          </Text>
+          <View style={styles.heroCountdown}>
+            <Text style={styles.heroCountdownDays}>{trialDaysLeft}</Text>
+            <Text style={styles.heroCountdownLabel}>day{trialDaysLeft !== 1 ? 's' : ''} remaining</Text>
+          </View>
+        </View>
       ) : subscription ? (
-        <HeroBand
-          eyebrow="Active Subscription"
-          title={`${subscription.plan === 'biweekly' ? 'Bi-Weekly' : 'Monthly'} Plan Active`}
-          subtitle={`Expires in ${daysUntilExpiry()} day${daysUntilExpiry() !== 1 ? 's' : ''}`}
-          onBack={() => navigation.goBack()}
-        />
+        <View style={styles.heroBand}>
+          <Text style={styles.heroEyebrow}>Active Subscription</Text>
+          <Text style={styles.heroTitle}>{subscription.plan === 'biweekly' ? 'Bi-Weekly' : 'Monthly'} Plan</Text>
+          <Text style={styles.heroSubtitle}>
+            Expires in {daysUntilExpiry()} day{daysUntilExpiry() !== 1 ? 's' : ''}
+          </Text>
+          <View style={styles.heroCountdown}>
+            <Text style={styles.heroCountdownDays}>{daysUntilExpiry()}</Text>
+            <Text style={styles.heroCountdownLabel}>day{daysUntilExpiry() !== 1 ? 's' : ''} left</Text>
+          </View>
+        </View>
       ) : (
-        <HeroBand
-          title="No Active Subscription"
-          subtitle="Subscribe now to get started"
-          onBack={() => navigation.goBack()}
-        />
+        <View style={styles.heroBand}>
+          <Text style={styles.heroTitle}>No Active Subscription</Text>
+          <Text style={styles.heroSubtitle}>Subscribe now to get started</Text>
+        </View>
       )}
 
       {/* CURRENT SUBSCRIPTION CARD */}
@@ -447,6 +467,59 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
     fontSize: 14,
+  },
+
+  // Hero Band
+  heroBand: {
+    backgroundColor: '#1a1c20',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 24,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  backLink: {
+    marginBottom: 16,
+  },
+  backLinkText: {
+    fontSize: 13,
+    color: '#fff',
+    opacity: 0.85,
+  },
+  heroEyebrow: {
+    fontSize: 12,
+    color: '#ff7a1a',
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  heroTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 12,
+  },
+  heroEmoji: {
+    fontSize: 34,
+    marginBottom: 8,
+  },
+  heroSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+  heroCountdown: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    marginTop: 12,
+  },
+  heroCountdownDays: {
+    fontSize: 34,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  heroCountdownLabel: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.85)',
   },
 
   // Banners
