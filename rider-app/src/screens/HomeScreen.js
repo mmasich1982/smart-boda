@@ -15,7 +15,7 @@ import { useToast } from '../components/Toast';
 import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
 import { getActiveBikeProfile, getRiderAccountSummary, clearSession, getLocalRiderId } from '../offline/db';
 import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
-import { checkAndEnforceLock } from '../offline/subscriptionUtils';
+import { getSubscriptionState, getActiveSubscription, lockAccount } from '../offline/subscriptionUtils';
 import HeroFareCard from '../components/HeroFareCard';
 // ✅ NEW IMPORT: Subscription Banners
 import SubscriptionBanners from '../components/SubscriptionBanners';
@@ -284,6 +284,47 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       setHasError(false);
       setErrorMsg(null);
 
+      // ✅ CRITICAL: Check and enforce subscription lock BEFORE loading other data
+      // This ensures if account should be locked, we don't show home screen content
+      const state = await getSubscriptionState(riderId);
+      
+      // Check if trial expired and account not yet locked
+      if (!state?.lockedAt && state?.trialStarted && state?.trialEndDate) {
+        const trialEndMs = new Date(state.trialEndDate).getTime();
+        if (trialEndMs <= Date.now()) {
+          // Trial expired - lock account NOW
+          await lockAccount(riderId, 'Free trial expired');
+          console.log('🔒 [HomeScreen] Trial expired - account locked, navigating to AccountLockedScreen');
+          // Navigate to lock screen
+          if (navigation && navigation.reset) {
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'AccountLocked' }],
+            });
+          }
+          return;
+        }
+      }
+      
+      // Check if subscription expired and account not yet locked
+      const subscription = await getActiveSubscription(riderId);
+      if (!state?.lockedAt && subscription?.expiryDate) {
+        const expiryMs = new Date(subscription.expiryDate).getTime();
+        if (expiryMs <= Date.now()) {
+          // Subscription expired - lock account NOW
+          await lockAccount(riderId, 'Subscription expired');
+          console.log('🔒 [HomeScreen] Subscription expired - account locked, navigating to AccountLockedScreen');
+          // Navigate to lock screen
+          if (navigation && navigation.reset) {
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'AccountLocked' }],
+            });
+          }
+          return;
+        }
+      }
+
       const activeBike = await getActiveBikeProfile();
       if (activeBike) {
         setBike(activeBike);
@@ -335,74 +376,27 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     } finally {
       setRefreshing(false);
     }
-  }, [riderId, isInitialized, showToast, calculateTodaysTotal, calculateYesterdaysTotal]);
+  }, [riderId, isInitialized, showToast, calculateTodaysTotal, calculateYesterdaysTotal, navigation]);
 
   // ✅ Load data on mount
-  // ✅ ALSO: Check if account is locked on initial load
+  // ✅ refresh() handles subscription status checking and lock enforcement
   useEffect(() => {
     if (!riderIdLoading && riderId && !hasLoadedRef.current) {
-      const initializeAndCheckLock = async () => {
-        try {
-          // ✅ Check if account is locked before loading home screen
-          const lockStatus = await checkAndEnforceLock(riderId);
-          
-          if (lockStatus?.isLocked) {
-            console.log('🔒 [HomeScreen] Account is locked on initial load - showing AccountLockedScreen');
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'AccountLocked' }],
-            });
-            return; // Don't proceed with home screen load
-          }
-
-          // ✅ Account is not locked, safe to load home screen
-          hasLoadedRef.current = true;
-          refresh();
-        } catch (err) {
-          console.error('[HomeScreen] Error checking lock status on initial load:', err);
-          // Fail-safe: allow access on error
-          hasLoadedRef.current = true;
-          refresh();
-        }
-      };
-
-      initializeAndCheckLock();
+      hasLoadedRef.current = true;
+      refresh();
     }
-  }, [riderIdLoading, riderId, refresh, navigation]);
+  }, [riderIdLoading, riderId, refresh]);
 
   // ✅ CRITICAL: Auto-refresh when returning to HomeScreen
   // Always refresh on focus to ensure Hero Fare Card reflects new trips
-  // ✅ ALSO: Check if account is locked and redirect to AccountLockedScreen if needed
+  // ✅ Also checks subscription status and locks account if needed
   useFocusEffect(
     useCallback(() => {
       if (!riderIdLoading && riderId && hasLoadedRef.current) {
-        const checkLockAndRefresh = async () => {
-          try {
-            // ✅ CRITICAL: Check if account is locked (subscription expired, etc.)
-            const lockStatus = await checkAndEnforceLock(riderId);
-            
-            if (lockStatus?.isLocked) {
-              console.log('🔒 [HomeScreen] Account is locked - navigating to AccountLockedScreen');
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'AccountLocked' }],
-              });
-              return; // Don't refresh, user is locked out
-            }
-
-            // ✅ Account is not locked, proceed with normal refresh
-            console.log('[HomeScreen] 🔄 Refreshing on focus (account is unlocked)');
-            refresh();
-          } catch (err) {
-            console.error('[HomeScreen] Error checking account lock status:', err);
-            // On error, continue with refresh (fail-safe: allow access)
-            refresh();
-          }
-        };
-
-        checkLockAndRefresh();
+        console.log('[HomeScreen] 🔄 Refreshing on focus');
+        refresh();
       }
-    }, [riderIdLoading, riderId, refresh, navigation])
+    }, [riderIdLoading, riderId, refresh])
   );
 
   const handleRecordTrip = useCallback(() => {
