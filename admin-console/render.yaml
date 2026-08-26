@@ -3,7 +3,7 @@ services:
     name: smart-boda-admin
     env: node
     buildCommand: npm install && npm run build
-    startCommand: node server.js
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
