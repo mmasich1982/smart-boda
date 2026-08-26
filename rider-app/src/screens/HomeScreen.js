@@ -916,5 +916,3 @@ const styles = StyleSheet.create({
     color: '#5b606c',
   },
 });
-
-export default HomeScreen;
