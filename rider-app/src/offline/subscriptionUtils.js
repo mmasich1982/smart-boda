@@ -6,6 +6,7 @@
 // ✅ FIXED EXPORTS: Clean named exports (no conflicting default export)
 // ✅ AUTO-INIT: Ensures free trial initialized for new riders on first load
 // ✅ IMPROVED: Better state handling and return values
+// ✅ NEW: CRITICAL LOCK ENFORCEMENT - checkAndEnforceLock function for instant expiry detection
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { addToSyncQueue } from './syncQueue';
@@ -61,6 +62,10 @@ import { addToSyncQueue } from './syncQueue';
  * ACCOUNT LOCK:
  * • Graceful UI (no errors, no crashes)
  * • Data remains safe and accessible after unlock
+ * • CRITICAL: Enforced immediately on:
+ *   - Home Screen focus
+ *   - After PIN login
+ *   - On any screen that navigates to Home
  */
 
 export const SUBSCRIPTION_PLANS = {
@@ -83,6 +88,128 @@ export const REMINDER_DAYS_BEFORE = 2;
 export const REMINDER_CHECKS_PER_DAY = 3;
 
 /**
+ * ============================================================================
+ * ✅ CRITICAL: CHECK AND ENFORCE ACCOUNT LOCK
+ * ============================================================================
+ * This is the master function for determining if account should be locked.
+ * Called from:
+ *   - HomeScreen on mount/focus
+ *   - PinLoginScreen after successful PIN verification
+ *   - Any navigation to Home
+ *
+ * Returns: { isLocked, reason, lockedSince, justLocked }
+ * - isLocked: boolean - true if account should be locked
+ * - reason: string - why account is locked
+ * - lockedSince: ISO date - when account was locked
+ * - justLocked: boolean - true if lock status changed on this check
+ */
+export async function checkAndEnforceLock(riderId) {
+  try {
+    if (!riderId) {
+      console.warn('⚠️ [checkAndEnforceLock] No rider ID provided');
+      return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
+    }
+
+    const now = Date.now();
+    
+    // ✅ 1. Get current subscription
+    const subscription = await getActiveSubscription(riderId);
+    
+    // ✅ 2. Get current state
+    const state = await getSubscriptionState(riderId);
+
+    // ✅ 3. Check if currently locked
+    const isCurrentlyLocked = !!state?.lockedAt;
+
+    // ✅ 4. Determine lock reason
+    let shouldLock = false;
+    let lockReason = null;
+
+    // Check if subscription expired
+    if (subscription) {
+      const expiryMs = subscription.expiryDate 
+        ? new Date(subscription.expiryDate).getTime() 
+        : subscription.expiry_ms;
+      
+      if (expiryMs && expiryMs <= now) {
+        shouldLock = true;
+        lockReason = 'Subscription expired';
+        console.log('🔒 [checkAndEnforceLock] Subscription expired:', {
+          expiryDate: subscription.expiryDate,
+          now: new Date(now).toISOString(),
+        });
+      }
+    } else if (!state?.trialStarted) {
+      // No subscription and no trial = new rider, initialize trial
+      console.log('ℹ️ [checkAndEnforceLock] No subscription or trial - initializing trial');
+      await ensureFreeTrial(riderId);
+      return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
+    } else if (state?.trialStarted && state?.trialEndDate) {
+      // Check if trial expired
+      const trialEndMs = new Date(state.trialEndDate).getTime();
+      if (trialEndMs <= now) {
+        shouldLock = true;
+        lockReason = 'Trial period expired';
+        console.log('🔒 [checkAndEnforceLock] Trial expired:', {
+          trialEndDate: state.trialEndDate,
+          now: new Date(now).toISOString(),
+        });
+      }
+    }
+
+    // ✅ 5. Update lock state if needed
+    if (shouldLock && !isCurrentlyLocked) {
+      // Lock account
+      await lockAccount(riderId, lockReason);
+      console.log('🔒 [checkAndEnforceLock] ACCOUNT LOCKED:', {
+        riderId,
+        reason: lockReason,
+        timestamp: new Date(now).toISOString(),
+      });
+      return {
+        isLocked: true,
+        reason: lockReason,
+        lockedSince: new Date(now).toISOString(),
+        justLocked: true, // Signal that this is a new lock
+      };
+    } else if (!shouldLock && isCurrentlyLocked) {
+      // Already paid - unlock account
+      await unlockAccount(riderId);
+      console.log('🔓 [checkAndEnforceLock] ACCOUNT UNLOCKED (payment received):', {
+        riderId,
+        timestamp: new Date(now).toISOString(),
+      });
+      return {
+        isLocked: false,
+        reason: null,
+        lockedSince: null,
+        justLocked: false,
+      };
+    } else if (shouldLock && isCurrentlyLocked) {
+      // Already locked
+      return {
+        isLocked: true,
+        reason: state?.lockReason || lockReason,
+        lockedSince: state?.lockedAt,
+        justLocked: false,
+      };
+    }
+
+    // ✅ 6. No lock needed
+    return {
+      isLocked: false,
+      reason: null,
+      lockedSince: null,
+      justLocked: false,
+    };
+  } catch (err) {
+    console.error('❌ [checkAndEnforceLock] Error checking lock status:', err);
+    // FAIL-SAFE: On error, do NOT lock account - allow access
+    return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
+  }
+}
+
+/**
  * Get active subscription for rider
  */
 export async function getActiveSubscription(riderId) {
@@ -94,9 +221,12 @@ export async function getActiveSubscription(riderId) {
       const subscription = typeof cached === 'string' ? JSON.parse(cached) : cached;
       
       // Check if expired
-      const expiryMs = subscription.expiryDate || subscription.expiry_ms || 0;
+      const expiryMs = subscription.expiryDate 
+        ? new Date(subscription.expiryDate).getTime() 
+        : subscription.expiry_ms || 0;
+      
       if (expiryMs > 0 && expiryMs <= Date.now()) {
-        console.log('⚠️ Subscription expired');
+        console.log('⚠️ [getActiveSubscription] Subscription expired');
         return null;
       }
 
@@ -159,7 +289,7 @@ export async function ensureFreeTrial(riderId) {
       console.log('✨ [ensureFreeTrial] New rider detected - initializing free trial');
       
       const now = Date.now();
-      const trialEndMs = now + 120000
+      const trialEndMs = now + (FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000);
 
       const newState = {
         trialStarted: true,
@@ -206,7 +336,9 @@ export async function isSubscriptionExpired(riderId) {
     return true;
   }
 
-  const expiryMs = subscription.expiryDate || subscription.expiry_ms || 0;
+  const expiryMs = subscription.expiryDate 
+    ? new Date(subscription.expiryDate).getTime() 
+    : subscription.expiry_ms || 0;
   return expiryMs <= Date.now();
 }
 
@@ -256,7 +388,9 @@ export async function shouldShowReminderBanner(riderId) {
     if (!subscription) return false;
 
     const state = await getSubscriptionState(riderId);
-    const expiryMs = subscription.expiryDate || subscription.expiry_ms || 0;
+    const expiryMs = subscription.expiryDate 
+      ? new Date(subscription.expiryDate).getTime() 
+      : subscription.expiry_ms || 0;
     const now = Date.now();
     const daysUntilExpiry = (expiryMs - now) / (1000 * 60 * 60 * 24);
 
@@ -471,4 +605,11 @@ export async function getSubscriptionHistory(riderId) {
 // ✅ CLEAN NAMED EXPORTS (No conflicting default export)
 // ============================================================================
 // All functions available via named imports:
-// import { getActiveSubscription, getSubscriptionState, ensureFreeTrial, isFreTrialActive, ... } from './subscriptionUtils'
+// import { 
+//   getActiveSubscription, 
+//   getSubscriptionState, 
+//   ensureFreeTrial, 
+//   isFreTrialActive,
+//   checkAndEnforceLock,     // ← NEW CRITICAL FUNCTION
+//   ... 
+// } from './subscriptionUtils'
