@@ -11,6 +11,7 @@
 //           'SelectFrequency' instead of 'FrequencySelectScreen'
 // ✅ FIXED: Added useFocusEffect to refresh subscription state when returning to Home
 //           This ensures banner hides after successful payment/subscription creation
+// ✅ CRITICAL FIX: Hide ALL banners when user has ACTIVE PAID subscription (not expiring soon)
 
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
@@ -75,7 +76,11 @@ export default function SubscriptionBanners({ navigation }) {
 
       // Get the subscription (if any paid plan is active)
       const sub = await getActiveSubscription(currentRiderId);
-      console.log('💳 [SubscriptionBanners] Active subscription:', sub ? 'YES' : 'NO');
+      console.log('💳 [SubscriptionBanners] Active subscription:', sub ? 'YES' : 'NO', {
+        plan: sub?.plan,
+        amount: sub?.amount,
+        expiryDate: sub?.expiryDate,
+      });
 
       // Get full state (trial, reminders, lock)
       const fullState = await getSubscriptionState(currentRiderId);
@@ -98,19 +103,60 @@ export default function SubscriptionBanners({ navigation }) {
         console.log('🔒 [SubscriptionBanners] >>> SHOWING LOCKED BANNER');
         setBannerType('locked');
       }
-      // PRIORITY 2: Reminder for expiring subscription (only if active paid subscription)
-      else if (sub && await shouldShowReminderBanner(currentRiderId)) {
-        console.log('👉 [SubscriptionBanners] >>> SHOWING REMINDER BANNER');
-        setBannerType('reminder');
-        await recordReminderShown(currentRiderId);
+      // ✅ CRITICAL FIX: Check if user has ACTIVE PAID SUBSCRIPTION
+      // If yes AND not expiring soon, hide ALL banners
+      else if (sub && sub.expiryDate) {
+        const expiryMs = new Date(sub.expiryDate).getTime();
+        const isSubscriptionActive = expiryMs > Date.now();
+        const daysUntilExpiry = (expiryMs - Date.now()) / (1000 * 60 * 60 * 24);
+        
+        console.log('💳 [SubscriptionBanners] Subscription check:', {
+          isActive: isSubscriptionActive,
+          daysUntilExpiry: daysUntilExpiry.toFixed(1),
+          expiryDate: sub.expiryDate,
+        });
+
+        // PRIORITY 2: User has active subscription - show reminder ONLY if expiring within 2 days
+        if (isSubscriptionActive && daysUntilExpiry <= 2) {
+          console.log('👉 [SubscriptionBanners] >>> SHOWING REMINDER BANNER (expires in', daysUntilExpiry.toFixed(1), 'days)');
+          setBannerType('reminder');
+          await recordReminderShown(currentRiderId);
+        }
+        // User has active subscription NOT expiring soon - NO BANNER
+        else if (isSubscriptionActive) {
+          console.log('✅ [SubscriptionBanners] >>> HIDING ALL BANNERS (user has active subscription with', daysUntilExpiry.toFixed(1), 'days remaining)');
+          setBannerType(null);
+        }
+        // Subscription expired - fall through to check trial
+        else {
+          console.log('⏰ [SubscriptionBanners] Subscription expired, checking for trial...');
+          // Check free trial as fallback
+          if (fullState?.trialStarted && fullState?.trialEndDate) {
+            const trialEndMs = new Date(fullState.trialEndDate).getTime();
+            const isTrialActive = trialEndMs > Date.now();
+            
+            if (isTrialActive) {
+              console.log('✨ [SubscriptionBanners] >>> SHOWING TRIAL BANNER');
+              const daysLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60 * 24));
+              console.log(`   Trial has ${daysLeft} day(s) remaining`);
+              setBannerType('trial');
+            } else {
+              console.log('⏰ [SubscriptionBanners] Trial also expired, no banner');
+              setBannerType(null);
+            }
+          } else {
+            console.log('ℹ️ [SubscriptionBanners] No trial either, no banner');
+            setBannerType(null);
+          }
+        }
       }
-      // PRIORITY 3: Free trial is active
+      // PRIORITY 3: No paid subscription - check if free trial is active
       else if (fullState?.trialStarted && fullState?.trialEndDate) {
         const trialEndMs = new Date(fullState.trialEndDate).getTime();
         const isTrialActive = trialEndMs > Date.now();
         
         if (isTrialActive) {
-          console.log('✨ [SubscriptionBanners] >>> SHOWING TRIAL BANNER');
+          console.log('✨ [SubscriptionBanners] >>> SHOWING TRIAL BANNER (no paid subscription)');
           const daysLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60 * 24));
           console.log(`   Trial has ${daysLeft} day(s) remaining`);
           setBannerType('trial');
@@ -164,6 +210,11 @@ export default function SubscriptionBanners({ navigation }) {
   // DON'T RENDER IF LOADING, NO RIDER, OR NO BANNER TO SHOW
   // ========================================================================
   if (loading || !riderId || !bannerType) {
+    console.log('🚫 [SubscriptionBanners] Not rendering banner:', {
+      loading,
+      hasRiderId: !!riderId,
+      bannerType,
+    });
     return null;
   }
 
