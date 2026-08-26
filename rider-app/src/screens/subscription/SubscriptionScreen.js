@@ -158,11 +158,10 @@ const SubscriptionScreen = () => {
             
             if (lockStatus?.isLocked) {
               console.log('🔒 [SubscriptionScreen] Account is locked - redirecting to HomeScreen');
+              // ✅ CRITICAL: Set flag BEFORE redirecting to prevent infinite loop
+              hasLoadedRef.current = true;
               // Navigate back to HomeScreen, where it will catch the lock and show AccountLockedScreen
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'HomeScreen' }],
-              });
+              navigation.goBack();
               return; // Don't load subscription data
             }
 
