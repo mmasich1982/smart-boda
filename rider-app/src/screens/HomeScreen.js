@@ -284,12 +284,23 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       setHasError(false);
       setErrorMsg(null);
 
-      // ✅ CRITICAL: Check and enforce subscription lock BEFORE loading other data
-      // This ensures if account should be locked, we don't show home screen content
+      // ✅ CRITICAL: Check if account is ALREADY locked
+      // This is the first check - if locked, don't load any home screen content
       const state = await getSubscriptionState(riderId);
       
-      // Check if trial expired and account not yet locked
-      if (!state?.lockedAt && state?.trialStarted && state?.trialEndDate) {
+      if (state?.lockedAt) {
+        console.log('🔒 [HomeScreen] Account is already locked - navigating to AccountLockedScreen');
+        if (navigation && navigation.reset) {
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'AccountLocked' }],
+          });
+        }
+        return; // Stop, don't load home screen
+      }
+
+      // ✅ Check if trial expired and account not yet locked
+      if (state?.trialStarted && state?.trialEndDate) {
         const trialEndMs = new Date(state.trialEndDate).getTime();
         if (trialEndMs <= Date.now()) {
           // Trial expired - lock account NOW
@@ -306,9 +317,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
         }
       }
       
-      // Check if subscription expired and account not yet locked
+      // ✅ Check if subscription expired and account not yet locked
       const subscription = await getActiveSubscription(riderId);
-      if (!state?.lockedAt && subscription?.expiryDate) {
+      if (subscription?.expiryDate) {
         const expiryMs = new Date(subscription.expiryDate).getTime();
         if (expiryMs <= Date.now()) {
           // Subscription expired - lock account NOW
