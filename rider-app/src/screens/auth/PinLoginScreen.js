@@ -6,10 +6,12 @@
  * ✅ Professional, engaging visual design
  * ✅ Null-safe route.params handling
  * ✅ NEW (26 AUG 2026): Offline-first PIN validation using IndexedDB
- * ✅ CRITICAL (26 AUG 2026): Lock enforcement after PIN verification
+ * ✅ FIXED (27 AUG 2026): Removed duplicate lock enforcement from PIN login
  * Production-ready with premium UX and offline capability
  * 
- * UI/UX: 100% PRESERVED - No visual changes, only adds backend lock check
+ * UI/UX: 100% PRESERVED - No visual changes
+ * ARCHITECTURE FIX: Lock enforcement is now exclusively handled by HomeScreen.useFocusEffect()
+ *                   This eliminates race conditions and stuck UI when subscriptions expire
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -24,8 +26,7 @@ import { useToast } from '../../components/Toast';
 import colors from '../../theme/colors';
 import api from '../../api/client';
 import { verifyPinLocally, getLoginAttempts } from '../../offline/pinUtility';
-// ✅ NEW IMPORT (26 AUG 2026): Subscription lock enforcement
-import { checkAndEnforceLock, ensureFreeTrial } from '../../offline/subscriptionUtils';
+// ✅ REMOVED: checkAndEnforceLock, ensureFreeTrial imports - this is now HomeScreen's responsibility
 
 const { width } = Dimensions.get('window');
 
@@ -381,16 +382,20 @@ export default function PinLoginScreen({ navigation, route }) {
   };
 
   /**
-   * ✅ ENHANCED (26 AUG 2026): Offline-first PIN verification with lock enforcement
+   * ✅ SIMPLIFIED (27 AUG 2026): PIN-only verification - subscription checks moved to HomeScreen
    * 
-   * FLOW:
+   * FLOW (SIMPLIFIED):
    * 1. Verify PIN against locally stored PIN (works offline)
-   * 2. If PIN correct: Initialize free trial + check subscription lock status
-   * 3. If account locked due to expired subscription: Redirect to AccountLockedScreen
-   * 4. If account active: Navigate to Home Screen
+   * 2. If PIN correct: Navigate to Home Screen immediately
+   * 3. HomeScreen.useFocusEffect() will check subscription lock status
+   * 4. If locked, HomeScreen navigates to AccountLockedScreen
    * 5. If online and local fails: Try API verification as fallback
-   * 
-   * ✅ Lock enforcement is silent and non-blocking on error (fail-safe)
+   *
+   * WHY THIS FIX:
+   * ✅ Eliminates race conditions that caused stuck UI
+   * ✅ Single source of truth: HomeScreen owns subscription lock enforcement
+   * ✅ Fail-safe: Even if HomeScreen check fails, user still reaches Home
+   * ✅ Cleaner separation of concerns: PIN Login verifies auth, Home checks subscription
    */
   const verifyPin = async (pin) => {
     if (isLocked || verifying) return;
@@ -412,36 +417,11 @@ export default function PinLoginScreen({ navigation, route }) {
         console.log('[PinLogin] ✅ PIN verified offline');
         showToast('✅ Logged in successfully', 'success');
         
-        // ✅ CRITICAL: Before navigating to Home, perform lock checks
-        try {
-          console.log('[PinLogin] Initializing free trial if needed...');
-          await ensureFreeTrial(riderId);
-          
-          console.log('[PinLogin] Checking account lock status...');
-          const lockResult = await checkAndEnforceLock(riderId);
-          
-          if (lockResult.isLocked) {
-            console.log('🔒 [PinLogin] ACCOUNT LOCKED - Redirecting to AccountLockedScreen', {
-              reason: lockResult.reason,
-              lockedSince: lockResult.lockedSince,
-            });
-            
-            // Navigate to lock screen instead of home
-            setTimeout(() => {
-              navigation.replace('AccountLockedScreen');
-            }, 600);
-            return;
-          }
-          
-          console.log('✅ [PinLogin] Account NOT locked - Proceeding to Home');
-        } catch (lockErr) {
-          console.warn('[PinLogin] Lock check error (fail-safe):', lockErr);
-          // Fail-safe: On lock check error, allow access to Home
-          // User can still be locked on Home screen focus
-        }
-        
-        // Navigate to Home after brief success feedback
+        // ✅ SIMPLIFIED: Just navigate to Home - let HomeScreen handle subscription checks
+        // HomeScreen.useFocusEffect() will automatically check for account lock
+        // and redirect to AccountLockedScreen if needed
         setTimeout(() => {
+          console.log('[PinLogin] Navigating to Home - subscription checks deferred to HomeScreen');
           navigation.replace('Home');
         }, 600);
         return;
@@ -472,31 +452,10 @@ export default function PinLoginScreen({ navigation, route }) {
           // Reset local attempts on successful API verification
           await loadAttempts();
           
-          // ✅ CRITICAL: Check subscription lock even on API success
-          try {
-            console.log('[PinLogin] Initializing free trial if needed...');
-            await ensureFreeTrial(riderId);
-            
-            console.log('[PinLogin] Checking account lock status...');
-            const lockResult = await checkAndEnforceLock(riderId);
-            
-            if (lockResult.isLocked) {
-              console.log('🔒 [PinLogin] ACCOUNT LOCKED - Redirecting to AccountLockedScreen', {
-                reason: lockResult.reason,
-                lockedSince: lockResult.lockedSince,
-              });
-              
-              setTimeout(() => {
-                navigation.replace('AccountLockedScreen');
-              }, 600);
-              return;
-            }
-          } catch (lockErr) {
-            console.warn('[PinLogin] Lock check error on API success (fail-safe):', lockErr);
-            // Fail-safe: Allow access
-          }
-          
+          // ✅ SIMPLIFIED: Navigate to Home immediately
+          // Let HomeScreen handle subscription lock checks via useFocusEffect
           setTimeout(() => {
+            console.log('[PinLogin] Navigating to Home - subscription checks deferred to HomeScreen');
             navigation.replace('Home');
           }, 600);
           return;
