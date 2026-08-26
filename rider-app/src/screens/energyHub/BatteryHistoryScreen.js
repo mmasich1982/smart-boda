@@ -4,8 +4,9 @@
 // ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
 // ✅ NETWORK AWARE: Real-time connectivity detection
 // ✅ FIXED: Infinite loop resolved with proper dependency management
-// ✅ FIXED: Back navigation now properly handled
+// ✅ FIXED: Back navigation now properly handled - navigates directly to Home
 // ✅ FIXED: Single data load on mount with smart refresh on focus
+// ✅ CRITICAL: Only effectiveRiderId and isInitialized in dependencies
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
@@ -103,6 +104,9 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
   }, [effectiveRiderId]);
 
   // ✅ LOAD DATA ON MOUNT - Single execution
+  // ✅ CRITICAL: Only effectiveRiderId and isInitialized in dependencies
+  // Removed isConnected, t, showCriticalError, clearCriticalError, and reconstructHistoryFromIndividualEntries
+  // These are recreated on each render and cause infinite re-execution
   useEffect(() => {
     if (!effectiveRiderId || !isInitialized || hasLoadedRef.current) {
       return;
@@ -112,6 +116,9 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
 
     async function loadHistoryOnMount() {
       try {
+        // ✅ CRITICAL: Mark as loaded FIRST to prevent race conditions
+        hasLoadedRef.current = true;
+        
         setLoading(true);
         clearCriticalError();
 
@@ -153,7 +160,7 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
           }
         }
 
-        // Try to sync fresh data if online
+        // Try to sync fresh data if online (check isConnected inside effect, not as dependency)
         if (isConnected && isMounted) {
           console.log('📡 Syncing with API...');
           try {
@@ -182,7 +189,6 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
         }
 
         if (isMounted) {
-          hasLoadedRef.current = true;
           setLoading(false);
         }
       } catch (err) {
@@ -202,7 +208,7 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
     return () => {
       isMounted = false;
     };
-  }, [effectiveRiderId, isInitialized, isConnected, t, clearCriticalError, reconstructHistoryFromIndividualEntries]);
+  }, [effectiveRiderId, isInitialized]);
 
   /**
    * ✅ Refresh on screen focus (soft refresh only)
@@ -246,8 +252,9 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
     setPage(1);
   }, [period, allEntries, getPeriodRange]);
 
-  const totalPages = Math.ceil(entries.length / PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(entries.length / PAGE_SIZE));
   const pageItems = entries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalSpent = entries.reduce((sum, e) => sum + (e.cost || 0), 0);
 
   const formatDate = (dateString) => {
     if (!dateString) return '—';
@@ -261,21 +268,23 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
     }
   };
 
-  // ✅ FIXED: Back navigation goes directly to Home (customer-friendly)
+  // ✅ FIXED: Navigate directly to Home instead of goBack
   const handleBackPress = useCallback(() => {
     try {
       if (navigation && navigation.navigate) {
-        // Navigate directly to Home instead of goBack (customer prefers this)
         navigation.navigate('Home');
       } else {
         console.warn('⚠️ Navigation not available');
       }
     } catch (err) {
       console.error('❌ Navigation error:', err);
+      if (navigation && navigation.navigate) {
+        navigation.navigate('Home');
+      }
     }
   }, [navigation]);
 
-  if (!isInitialized || loading) {
+  if (!isInitialized) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={handleBackPress} label={t('backLabel') || '← Back'} />
@@ -291,7 +300,7 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
       
       <Text style={styles.title}>{title}</Text>
 
-      {/* CRITICAL ERROR ONLY */}
+      {/* CRITICAL ERROR ONLY - Never show status/offline info */}
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
@@ -301,32 +310,30 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
         </View>
       )}
 
-      {/* Period tabs */}
+      {/* Period Tabs */}
       <View style={styles.periodTabs}>
-        {[
-          { label: t('thisMonth') || 'This Month', value: 'thisMonth' },
-          { label: t('lastMonth') || 'Last Month', value: 'lastMonth' },
-          { label: t('last6Months') || 'Last 6M', value: 'last6' },
-          { label: t('sinceJoining') || 'Since Joining', value: 'sinceJoining' }
-        ].map(tab => (
+        {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => (
           <TouchableOpacity
-            key={tab.value}
-            style={[styles.periodTab, period === tab.value && styles.periodTabActive]}
-            onPress={() => setPeriod(tab.value)}
+            key={p}
+            style={[styles.periodTab, period === p && styles.periodTabActive]}
+            onPress={() => setPeriod(p)}
           >
-            <Text style={[styles.periodTabText, period === tab.value && styles.periodTabTextActive]}>
-              {tab.label}
+            <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
+              {p === 'thisMonth' && (t('thisMonth') || 'This Month')}
+              {p === 'lastMonth' && (t('lastMonth') || 'Last Month')}
+              {p === 'last6' && (t('last6Months') || 'Last 6')}
+              {p === 'sinceJoining' && (t('sinceJoining') || 'All Time')}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* Summary card */}
+      {/* Summary Card */}
       <View style={styles.summaryCard}>
         <View style={styles.summaryRow}>
           <View style={styles.summaryCol}>
             <Text style={styles.summaryLabel}>{t('totalSpent') || 'Total Spent'}</Text>
-            <Text style={styles.summaryValue}>KSh {entries.reduce((sum, e) => sum + (e.cost || 0), 0).toLocaleString()}</Text>
+            <Text style={styles.summaryValue}>KSh {totalSpent.toLocaleString()}</Text>
           </View>
           <View style={styles.summarySpacer} />
           <View style={styles.summaryCol}>
@@ -336,7 +343,7 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
         </View>
       </View>
 
-      {/* Entries list */}
+      {/* Entries List */}
       <View style={styles.entriesCard}>
         {pageItems.length > 0 ? (
           pageItems.map((entry, idx) => (
@@ -344,7 +351,7 @@ export default function BatteryHistoryScreen({ bikeProfile, navigation }) {
               <View style={styles.entryRow}>
                 <View style={styles.entryLeft}>
                   <Text style={styles.entryMode}>
-                    🔋 Battery Charge
+                    🔋 {isBattery ? 'Battery' : 'Charge'}
                   </Text>
                   <Text style={styles.entryTime}>
                     {formatDate(entry.created_at)}

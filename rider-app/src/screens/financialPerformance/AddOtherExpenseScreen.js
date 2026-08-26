@@ -6,6 +6,7 @@
 // ✅ NETWORK AWARE: Real-time connectivity detection
 // ✅ UI/UX: 100% preserved from original
 // ✅ RETENTION POLICY: All expenses subject to 6-month window
+// ✅ FIXED: Infinite loop resolved with proper dependency management
 
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Picker, ActivityIndicator } from 'react-native';
@@ -58,6 +59,8 @@ export default function AddOtherExpenseScreen({ navigation }) {
   const effectiveRiderId = localRiderId || state?.riderId;
 
   // ✅ Load categories on mount - Single execution
+  // ✅ CRITICAL: Only isInitialized in dependencies
+  // Removed isConnected and t which are recreated each render and cause infinite loops
   useEffect(() => {
     if (!isInitialized || hasLoadedCategoriesRef.current) {
       return; // Exit if already loaded
@@ -66,9 +69,12 @@ export default function AddOtherExpenseScreen({ navigation }) {
     let isMounted = true;
 
     async function loadCategoriesOnMount() {
-      const cacheKey = 'expense_categories';
-      
       try {
+        // ✅ CRITICAL: Mark as loaded FIRST to prevent race conditions
+        hasLoadedCategoriesRef.current = true;
+        
+        const cacheKey = 'expense_categories';
+        
         // 1. Try cache first
         console.log('📦 Checking IndexedDB cache for categories...');
         try {
@@ -88,7 +94,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
                 t('expenseCategory_family') || 'Family Support',
                 t('expenseCategory_other') || 'Other',
               ];
-              setCategories(defaultCategories);
+              if (isMounted) setCategories(defaultCategories);
             }
           } else {
             // No cache, show defaults
@@ -100,7 +106,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
               t('expenseCategory_family') || 'Family Support',
               t('expenseCategory_other') || 'Other',
             ];
-            setCategories(defaultCategories);
+            if (isMounted) setCategories(defaultCategories);
           }
         } catch (cacheErr) {
           console.warn('⚠️ Cache retrieval error:', cacheErr);
@@ -113,11 +119,11 @@ export default function AddOtherExpenseScreen({ navigation }) {
             t('expenseCategory_family') || 'Family Support',
             t('expenseCategory_other') || 'Other',
           ];
-          setCategories(defaultCategories);
+          if (isMounted) setCategories(defaultCategories);
         }
 
-        // 2. Try to sync fresh categories if online
-        if (isConnected && isInitialized && isMounted) {
+        // 2. Try to sync fresh categories if online (check isConnected inside effect, not as dependency)
+        if (isConnected && isMounted) {
           console.log('📡 Syncing categories with API...');
           try {
             const res = await api.get('/financial/expense-categories');
@@ -136,10 +142,6 @@ export default function AddOtherExpenseScreen({ navigation }) {
           } catch (apiErr) {
             console.log('⚠️ Categories API unavailable, using cached/defaults');
           }
-        }
-
-        if (isMounted) {
-          hasLoadedCategoriesRef.current = true;
         }
       } catch (err) {
         console.error('Error loading categories:', err);
@@ -162,7 +164,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
     return () => {
       isMounted = false;
     };
-  }, [isConnected, isInitialized, t]);
+  }, [isInitialized]);
 
   /**
    * ✅ Update other expenses summary cache
@@ -252,29 +254,31 @@ export default function AddOtherExpenseScreen({ navigation }) {
         syncStatus: 'pending',
       };
 
-      console.log('💾 Saving expense:', { recordId, riderId: effectiveRiderId, category, amount: amt });
+      console.log('💾 Saving other expense:', { recordId, riderId: effectiveRiderId, category, amount: amt });
 
-      // ✅ SAVE TO INDEXEDDB FIRST (fuel pattern - using kvSet)
+      // 1. Save locally first
       await indexedDbAdapter.kvSet(`other_expense_${recordId}`, JSON.stringify(entry));
-      console.log('✅ Expense saved to IndexedDB');
-
-      // ✅ Update summary cache for instant UI updates
+      
+      // 2. Update cache immediately for instant UI feedback
       await updateOtherExpensesCache(entry);
+      
+      // 3. Invalidate financial performance caches
+      try {
+        await invalidateFinancialCaches(effectiveRiderId);
+      } catch (err) {
+        console.warn('⚠️ Error invalidating caches:', err);
+      }
 
-      // ✅ Invalidate financial period caches (MoneyMasteryScreen will recompute)
-      await invalidateFinancialCaches(effectiveRiderId);
-
-      // ✅ ADD TO SYNC QUEUE FOR BACKGROUND SYNC
+      // 4. Add to sync queue
       const queueSuccess = await addToSyncQueue({
         id: recordId,
-        type: 'expense',
-        endpoint: `/financial/expenses?rider_id=${effectiveRiderId}`,
+        type: 'other_expense_entry',
+        endpoint: `/financial/other-expense?rider_id=${effectiveRiderId}`,
         data: {
-          rider_id: effectiveRiderId,
           category,
           amount: amt,
           note: note || '',
-          submitted_at: now,
+          created_at: new Date().toISOString(),
         },
         timestamp: new Date(),
       });
@@ -283,18 +287,17 @@ export default function AddOtherExpenseScreen({ navigation }) {
         console.warn('⚠️ Failed to add to queue, but local save succeeded');
       }
 
-      // Try to sync immediately only if online
+      // 5. Try to sync immediately only if online
       if (isConnected && isInitialized) {
         try {
-          console.log('📡 Attempting to sync expense to API...');
+          console.log('📡 Attempting to sync to API...');
           const response = await api.post(
-            `/financial/expenses?rider_id=${effectiveRiderId}`,
+            `/financial/other-expense?rider_id=${effectiveRiderId}`,
             {
-              rider_id: effectiveRiderId,
               category,
               amount: amt,
               note: note || '',
-              submitted_at: now,
+              created_at: new Date().toISOString(),
             }
           );
 
