@@ -167,6 +167,20 @@ const ConfirmSubscriptionScreen = () => {
       });
 
       console.log('✅ Subscription created & payment logged');
+	  
+	  // ✅ FIXED: Back navigation goes directly to Home (customer-friendly)
+  const handleBackPress = useCallback(() => {
+    try {
+      if (navigation && navigation.navigate) {
+        // Navigate directly to Home instead of goBack (customer prefers this)
+        navigation.navigate('Home');
+      } else {
+        console.warn('⚠️ Navigation not available');
+      }
+    } catch (err) {
+      console.error('❌ Navigation error:', err);
+    }
+  }, [navigation]);
 
       // ✅ Navigate to success state
       Alert.alert(
@@ -177,7 +191,7 @@ const ConfirmSubscriptionScreen = () => {
             text: 'Continue',
             onPress: () => {
               setMpesaCode('');
-              navigation.navigate('Home');
+              navigation.navigate('handleBackPress');
             },
           },
         ]
