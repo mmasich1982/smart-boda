@@ -97,9 +97,13 @@ const ConfirmSubscriptionScreen = () => {
   // ========================================================================
   const goHome = useCallback(() => {
     try {
-      if (navigation && navigation.navigate) {
+      if (navigation) {
         console.log('🏠 [ConfirmSubscription] Navigating to Home after payment...');
-        navigation.navigate('Home');
+        // ✅ Use reset to ensure we go directly home and clear the stack
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'Home' }],
+        });
       } else {
         console.warn('⚠️ Navigation not available');
       }
