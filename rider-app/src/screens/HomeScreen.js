@@ -478,6 +478,62 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     );
   }
 
+  // ========================================================================
+  // ✅ IF ACCOUNT IS LOCKED - RENDER ACCOUNT LOCKED SCREEN DIRECTLY
+  // ========================================================================
+  // This prevents HomeScreen from rendering when account is locked
+  if (isAccountLocked) {
+    console.log('[HomeScreen] 🔒 Account is locked - rendering AccountLockedScreen UI');
+    return (
+      <ScrollView style={styles.container}>
+        <View style={styles.lockedContainer}>
+          <View style={styles.heroLocked}>
+            <Text style={styles.heroEmoji}>👋</Text>
+            <Text style={styles.heroTitle}>We've Missed You!</Text>
+            <Text style={styles.heroSubtitle}>
+              Your subscription has expired — but your data is safe and waiting for you.
+            </Text>
+          </View>
+
+          <View style={styles.bannerContainer}>
+            <View style={[styles.banner, styles.bannerWarn]}>
+              <Text style={styles.bannerText}>
+                👉 Good news — getting back in takes just one payment, and you're back to work instantly.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.card}>
+            <View style={styles.kvRow}>
+              <Text style={styles.kvLabel}>Status</Text>
+              <Text style={styles.kvValue}>🔒 Locked</Text>
+            </View>
+            <View style={[styles.kvRow, styles.kvRowBold]}>
+              <Text style={styles.kvLabelBold}>Amount To Unlock</Text>
+              <Text style={styles.kvValueBold}>KSh 500</Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={styles.buttonPrimary}
+            onPress={() => navigation.navigate('SelectFrequency')}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.buttonPrimaryText}>🔓 Pay & Unlock Now →</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.buttonGhost}
+            onPress={() => navigation.navigate('SelectFrequency')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.buttonGhostText}>Choose a different plan</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    );
+  }
+
   const handleViewFinancialHistory = () => {
     navigation.navigate('FinancialHistory');
   };
@@ -951,5 +1007,134 @@ const styles = StyleSheet.create({
   settingsListArrow: {
     fontSize: 16,
     color: '#5b606c',
+  },
+
+  // ========================================================================
+  // LOCKED SCREEN STYLES
+  // ========================================================================
+  lockedContainer: {
+    flex: 1,
+  },
+  heroLocked: {
+    backgroundColor: '#fdecea',
+    paddingHorizontal: 20,
+    paddingVertical: 28,
+    alignItems: 'center',
+  },
+  heroEmoji: {
+    fontSize: 40,
+    marginBottom: 12,
+  },
+  heroTitle: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  heroSubtitle: {
+    fontSize: 14,
+    color: '#5b606c',
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  bannerContainer: {
+    marginHorizontal: 14,
+    marginTop: 14,
+  },
+  banner: {
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    marginBottom: 14,
+  },
+  bannerWarn: {
+    backgroundColor: '#fdf3df',
+  },
+  bannerText: {
+    fontSize: 12.5,
+    color: '#5b606c',
+    lineHeight: 18,
+  },
+  card: {
+    backgroundColor: '#fff',
+    marginHorizontal: 14,
+    marginBottom: 14,
+    marginTop: 14,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    padding: 16,
+  },
+  kvRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0ede5',
+  },
+  kvRowBold: {
+    paddingVertical: 13,
+    marginTop: 4,
+    borderBottomWidth: 0,
+    borderTopWidth: 1,
+    borderTopColor: '#e7e4db',
+  },
+  kvLabel: {
+    fontSize: 12,
+    color: '#5b606c',
+    fontWeight: '500',
+  },
+  kvLabelBold: {
+    fontSize: 13,
+    color: '#1a1c20',
+    fontWeight: '700',
+  },
+  kvValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1a1c20',
+  },
+  kvValueBold: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#e0453f',
+  },
+  buttonPrimary: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 14,
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+    marginHorizontal: 14,
+    marginBottom: 8,
+    alignItems: 'center',
+    shadowColor: '#ff7a1a',
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  buttonPrimaryText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+    letterSpacing: 0.3,
+  },
+  buttonGhost: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    marginHorizontal: 14,
+    marginBottom: 8,
+    alignItems: 'center',
+  },
+  buttonGhostText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1c20',
   },
 });
