@@ -3,7 +3,7 @@
 // ✅ BUSINESS LOGIC: Multi-day prepayment (60-365 days), stepper control
 // ✅ UI/UX: Matches index.html design system (stepper, cards, buttons)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
-// ✅ FIXED: M-Pesa code validation, navigation, auto-redirect
+// ✅ FIXED: M-Pesa code validation using TextInput REF (NOT STATE)
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -54,9 +54,10 @@ const PrepayScreen = () => {
   const [fieldErrors, setFieldErrors] = useState({});
 
   // ========================================================================
-  // CONTROL MECHANISMS
+  // REFS - CRITICAL FOR M-PESA CODE VALIDATION
   // ========================================================================
   const isMountedRef = useRef(true);
+  const mpesaInputRef = useRef(null);  // ✅ Direct input access, bypasses state timing
 
   // ========================================================================
   // LOAD RIDER ID (Local-First)
@@ -120,22 +121,33 @@ const PrepayScreen = () => {
   };
 
   // ========================================================================
-  // VALIDATE M-PESA CODE
+  // ✅ VALIDATE M-PESA CODE - READS DIRECTLY FROM REF, NOT STATE
   // ========================================================================
   const validateMpesaCode = () => {
-    setFieldErrors({});
-    const code = mpesaCode.trim().toUpperCase();
+    // 🔑 KEY FIX: Read directly from TextInput ref, not from state
+    // State might be stale due to async updates
+    const rawValue = mpesaInputRef.current?.value || '';
+    const code = rawValue.trim().toUpperCase();
 
-    if (!code) {
+    console.log('🔍 [Validation] Raw input value:', JSON.stringify(rawValue));
+    console.log('🔍 [Validation] After trim/uppercase:', JSON.stringify(code));
+    console.log('🔍 [Validation] Code length:', code.length);
+
+    setFieldErrors({});
+
+    if (!code || code.length === 0) {
+      console.log('❌ [Validation] Code is empty');
       setFieldErrors({ mpesaCode: 'M-Pesa confirmation code is required.' });
       return null;
     }
 
     if (code.length < 8) {
+      console.log('❌ [Validation] Code too short, length:', code.length);
       setFieldErrors({ mpesaCode: 'Code too short — check the M-Pesa message and re-enter.' });
       return null;
     }
 
+    console.log('✅ [Validation] Code is valid:', code);
     return code;
   };
 
@@ -146,7 +158,6 @@ const PrepayScreen = () => {
     try {
       if (navigation && isMountedRef.current) {
         console.log('🏠 [PrepayScreen] Navigating to Home after payment...');
-        // ✅ Use reset to ensure we go directly home and clear the stack
         navigation.reset({
           index: 0,
           routes: [{ name: 'Home' }],
@@ -163,8 +174,16 @@ const PrepayScreen = () => {
   // HANDLE PREPAY PAYMENT SUBMISSION
   // ========================================================================
   const handleSubmitPrepay = useCallback(async () => {
+    console.log('📝 [Submit] Starting payment submission...');
+    
     const validatedCode = validateMpesaCode();
-    if (!validatedCode || !localRiderId) {
+    if (!validatedCode) {
+      console.log('❌ [Submit] Validation failed, aborting');
+      return;
+    }
+
+    if (!localRiderId) {
+      console.log('❌ [Submit] No rider ID');
       return;
     }
 
@@ -172,7 +191,7 @@ const PrepayScreen = () => {
       setLoading(true);
       setError(null);
 
-      console.log('📝 Submitting prepay payment...');
+      console.log('📝 [Submit] Submitting prepay payment with code:', validatedCode);
 
       // ✅ Calculate new subscription expiry
       const currentExpiryMs = Math.max(
@@ -211,6 +230,7 @@ const PrepayScreen = () => {
       }
 
       await indexedDbAdapter.kvSet(key, JSON.stringify(subscription));
+      console.log('✅ [Submit] Subscription updated');
 
       // ✅ Log the prepay payment record
       const paymentRecord = {
@@ -232,6 +252,7 @@ const PrepayScreen = () => {
       // ✅ Save payment record to IndexedDB
       const paymentKey = `payment_${localRiderId}_${paymentRecord.id}`;
       await indexedDbAdapter.kvSet(paymentKey, JSON.stringify(paymentRecord));
+      console.log('✅ [Submit] Payment record saved');
 
       // ✅ Add to payment history
       const historyKey = `payment_history_${localRiderId}`;
@@ -247,12 +268,13 @@ const PrepayScreen = () => {
       }
       history.unshift(paymentRecord);
       await indexedDbAdapter.kvSet(historyKey, JSON.stringify(history));
+      console.log('✅ [Submit] Payment history updated');
 
       // ✅ Check if account was locked and unlock it
       const subState = await getSubscriptionState(localRiderId);
       if (subState?.lockedAt) {
         await unlockAccount(localRiderId);
-        console.log('🔓 Account unlocked after prepay');
+        console.log('🔓 [Submit] Account unlocked after prepay');
       }
 
       // ✅ Queue for backend sync
@@ -264,10 +286,14 @@ const PrepayScreen = () => {
         timestamp: new Date(),
       });
 
-      console.log('✅ Prepay payment logged');
+      console.log('✅ [Submit] Prepay payment queued for sync');
 
-      // ✅ CRITICAL FIX: Clear state BEFORE showing alert
-      if (isMountedRef.current) {
+      // ✅ CRITICAL: Clear input BEFORE showing alert
+      if (isMountedRef.current && mpesaInputRef.current) {
+        // For native TextInput, use setNativeProps or clear through ref
+        if (mpesaInputRef.current.clear) {
+          mpesaInputRef.current.clear();
+        }
         setMpesaCode('');
       }
 
@@ -290,20 +316,19 @@ const PrepayScreen = () => {
       );
 
       // ✅ AUTO-NAVIGATE: Navigate immediately (don't wait for user to press button)
-      // This ensures riders who don't interact with alert still get navigated
       setTimeout(() => {
         try {
-          console.log('🏠 [PrepayScreen] Automatically navigating to Home...');
+          console.log('🏠 [PrepayScreen] Auto-navigating to Home after 500ms...');
           if (isMountedRef.current && navigation?.isFocused?.()) {
             goHome();
           }
         } catch (navErr) {
           console.warn('⚠️ Auto-navigation failed:', navErr);
         }
-      }, 500); // Small delay to ensure alert is shown first
+      }, 500);
 
     } catch (err) {
-      console.error('❌ Error submitting prepay:', err);
+      console.error('❌ [Submit] Error submitting prepay:', err);
       if (isMountedRef.current) {
         setLoading(false);
         setError('Failed to process prepayment. Please try again.');
@@ -497,12 +522,13 @@ const PrepayScreen = () => {
         </Text>
       </View>
 
-      {/* M-PESA CODE INPUT */}
+      {/* M-PESA CODE INPUT - WITH REF */}
       <View style={styles.fieldGroup}>
         <Text style={styles.fieldLabel}>
           M-Pesa Confirmation Code <Text style={styles.fieldRequired}>*</Text>
         </Text>
         <TextInput
+          ref={mpesaInputRef}
           style={[
             styles.textInput,
             fieldErrors.mpesaCode && styles.textInputError
