@@ -3,6 +3,7 @@
 // ✅ BUSINESS LOGIC: Free Trial, Renewal, Prepay, Payment History
 // ✅ UI/UX: Matches index.html design system (hero-band, cards, banners)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
+// ✅ UPDATED: Replaced black hero card with HeroBand component
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -17,6 +18,7 @@ import {
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
+import HeroBand from '../../components/HeroBand';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
@@ -211,19 +213,11 @@ const SubscriptionScreen = () => {
   if (subState?.lockedAt && !loading) {
     return (
       <ScrollView style={styles.container}>
-        <View style={styles.heroBand}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            style={styles.backLink}
-          >
-            <Text style={styles.backLinkText}>← {t('common.back') || 'Home'}</Text>
-          </TouchableOpacity>
-          <Text style={styles.heroEmoji}>👋</Text>
-          <Text style={styles.heroTitle}>We've Missed You!</Text>
-          <Text style={styles.heroSubtitle}>
-            {subState.lockReason || 'Subscription expired'} — but your data is safe.
-          </Text>
-        </View>
+        <HeroBand
+          title="We've Missed You!"
+          subtitle={`${subState.lockReason || 'Subscription expired'} — but your data is safe.`}
+          onBack={() => navigation.goBack()}
+        />
 
         <View style={styles.bannerContainer}>
           <View style={[styles.banner, styles.bannerWarn]}>
@@ -274,115 +268,90 @@ const SubscriptionScreen = () => {
   // ========================================================================
   // ERROR STATE
   // ========================================================================
-  if (error) {
+  if (error === 'error_loading_subscription') {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorText}>
-          {t(`common.${error}`) || 'Unable to load subscription'}
-        </Text>
-        <TouchableOpacity
-          style={styles.retryButton}
-          onPress={() => {
-            hasLoadedRef.current = false;
-            loadSubscriptionData();
-          }}
-        >
-          <Text style={styles.retryButtonText}>{t('common.retry') || 'Retry'}</Text>
+        <Text style={styles.errorText}>Failed to load subscription. Please try again.</Text>
+        <TouchableOpacity style={styles.retryButton} onPress={onRefresh}>
+          <Text style={styles.retryButtonText}>Retry</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   // ========================================================================
-  // DETERMINE SUBSCRIPTION STATUS
+  // DETERMINE IF ON FREE TRIAL
   // ========================================================================
-  const isOnFreeTrial = subState?.trialStarted && !subscription;
-  const daysLeft = isOnFreeTrial ? daysOfTrialLeft() : daysUntilExpiry();
-  const statusWord = isOnFreeTrial ? '🎁 Your free trial' : '✅ You\'re all set';
-  const statusTitle = isOnFreeTrial ? 'Free Trial' : 'Active';
-  const isUrgent = daysLeft <= 2;
+  const isOnFreeTrial = subState?.trialStarted && subState?.trialEndDate && !subscription;
+  const trialDaysLeft = daysOfTrialLeft();
 
   // ========================================================================
-  // MAIN UI
+  // MAIN UI - SUBSCRIPTION MANAGEMENT
   // ========================================================================
   return (
     <ScrollView
       style={styles.container}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-          tintColor="#ff7a1a"
-        />
-      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
-      {/* HERO BAND */}
-      <View style={styles.heroBand}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backLink}
-        >
-          <Text style={styles.backLinkText}>← {t('common.back') || 'Home'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.heroEyebrow}>{statusWord}</Text>
-        <Text style={styles.heroTitle}>{statusTitle}</Text>
-        <View style={styles.heroCountdown}>
-          <Text style={styles.heroCountdownDays}>{Math.max(daysLeft, 0)}</Text>
-          <Text style={styles.heroCountdownLabel}>
-            day{daysLeft === 1 ? '' : 's'} left{isOnFreeTrial ? ' of your free trial' : ' on your plan'}
-          </Text>
-        </View>
-      </View>
-
-      {/* URGENT BANNER */}
-      {isUrgent && (
-        <View style={styles.bannerContainer}>
-          <View
-            style={[
-              styles.banner,
-              daysLeft <= 1 ? styles.bannerError : styles.bannerWarn
-            ]}
-          >
-            <Text style={styles.bannerText}>
-              {daysLeft <= 1
-                ? '⏰ Today is your last day! Keep your tools running — subscribe now.'
-                : `⏰ Only ${daysLeft} days left. Subscribe now to stay active.`}
-            </Text>
-          </View>
-        </View>
+      {/* FREE TRIAL BANNER OR ACTIVE SUBSCRIPTION HERO */}
+      {isOnFreeTrial ? (
+        <HeroBand
+          eyebrow="Free Trial"
+          title="Enjoy Your Free Day"
+          subtitle={`${trialDaysLeft} day left · No payment required yet`}
+          onBack={() => navigation.goBack()}
+        />
+      ) : subscription ? (
+        <HeroBand
+          eyebrow="Active Subscription"
+          title={`${subscription.plan === 'biweekly' ? 'Bi-Weekly' : 'Monthly'} Plan Active`}
+          subtitle={`Expires in ${daysUntilExpiry()} day${daysUntilExpiry() !== 1 ? 's' : ''}`}
+          onBack={() => navigation.goBack()}
+        />
+      ) : (
+        <HeroBand
+          title="No Active Subscription"
+          subtitle="Subscribe now to get started"
+          onBack={() => navigation.goBack()}
+        />
       )}
 
-      {/* STATUS CARD */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Status Details</Text>
-        <View style={styles.kvRow}>
-          <Text style={styles.kvLabel}>Days Left</Text>
-          <Text style={styles.kvValue}>{Math.max(daysLeft, 0)}</Text>
-        </View>
-        {subscription?.expiryDate && (
+      {/* CURRENT SUBSCRIPTION CARD */}
+      {subscription && (
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Current Plan</Text>
+          </View>
+
           <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Expiry Date</Text>
+            <Text style={styles.kvLabel}>Plan</Text>
+            <Text style={styles.kvValue}>
+              {subscription.plan === 'biweekly' ? 'Bi-Weekly' : 'Monthly'}
+            </Text>
+          </View>
+
+          <View style={styles.kvRow}>
+            <Text style={styles.kvLabel}>Amount</Text>
+            <Text style={styles.kvValue}>KSh {subscription.amount}</Text>
+          </View>
+
+          <View style={styles.kvRow}>
+            <Text style={styles.kvLabel}>Expires</Text>
             <Text style={styles.kvValue}>
               {new Date(subscription.expiryDate).toLocaleDateString('en-KE')}
             </Text>
           </View>
-        )}
-        {subscription?.plan && (
-          <View style={styles.kvRow}>
-            <Text style={styles.kvLabel}>Current Plan</Text>
-            <Text style={styles.kvValue}>
-              {subscription.plan === 'biweekly'
-                ? '📆 Bi-Weekly (14 days)'
-                : '📆 Monthly (30 days)'}
-            </Text>
-          </View>
-        )}
-      </View>
 
-      {/* WHY SUBSCRIBE CARD (TRIAL ONLY) */}
+          <View style={[styles.kvRow, styles.kvRowBold]}>
+            <Text style={styles.kvLabelBold}>Days Remaining</Text>
+            <Text style={styles.kvValueBold}>{daysUntilExpiry()}</Text>
+          </View>
+        </View>
+      )}
+
+      {/* FREE TRIAL INFO CARD */}
       {isOnFreeTrial && (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Why Subscribe?</Text>
           <Text style={styles.cardSubtext}>
             ✅ Keep tracking every trip, fuel cost, and service reminder{'\n'}
             ✅ Stay connected to your SACCO{'\n'}
@@ -480,59 +449,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  // Hero Band
-  heroBand: {
-    backgroundColor: '#1a1c20',
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 24,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  backLink: {
-    marginBottom: 16,
-  },
-  backLinkText: {
-    fontSize: 13,
-    color: '#fff',
-    opacity: 0.85,
-  },
-  heroEyebrow: {
-    fontSize: 12,
-    color: '#ff7a1a',
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  heroTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#fff',
-    marginBottom: 12,
-  },
-  heroEmoji: {
-    fontSize: 34,
-    marginBottom: 8,
-  },
-  heroSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.85)',
-  },
-  heroCountdown: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: 8,
-    marginTop: 12,
-  },
-  heroCountdownDays: {
-    fontSize: 34,
-    fontWeight: '800',
-    color: '#fff',
-  },
-  heroCountdownLabel: {
-    fontSize: 13,
-    color: 'rgba(255, 255, 255, 0.85)',
-  },
-
   // Banners
   bannerContainer: {
     marginHorizontal: 14,
@@ -574,11 +490,13 @@ const styles = StyleSheet.create({
     borderColor: '#e7e4db',
     padding: 16,
   },
+  cardHeader: {
+    marginBottom: 12,
+  },
   cardTitle: {
     fontSize: 13.5,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 12,
   },
   cardSubtext: {
     fontSize: 12.5,
@@ -595,15 +513,32 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#f0ede5',
   },
+  kvRowBold: {
+    paddingVertical: 13,
+    marginTop: 4,
+    borderBottomWidth: 0,
+    borderTopWidth: 1,
+    borderTopColor: '#e7e4db',
+  },
   kvLabel: {
     fontSize: 13,
     color: '#5b606c',
     fontWeight: '500',
   },
+  kvLabelBold: {
+    fontSize: 13,
+    color: '#1a1c20',
+    fontWeight: '700',
+  },
   kvValue: {
     fontSize: 13,
     fontWeight: '700',
     color: '#1a1c20',
+  },
+  kvValueBold: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ff7a1a',
   },
 
   // Actions Container

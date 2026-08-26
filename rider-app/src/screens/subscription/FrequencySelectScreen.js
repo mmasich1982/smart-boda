@@ -3,6 +3,7 @@
 // ✅ BUSINESS LOGIC: Frequency selection (Bi-Weekly 500, Monthly 1000)
 // ✅ UI/UX: Matches index.html design system (tiles, cards, buttons)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
+// ✅ UPDATED: Uses HeroBand component for consistent header design
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -16,6 +17,7 @@ import {
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useRider } from '../../rider/RiderContext';
+import HeroBand from '../../components/HeroBand';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { getLocalRiderId } from '../../offline/db';
 import api from '../../api/client';
@@ -147,11 +149,6 @@ const FrequencySelectScreen = () => {
   // ========================================================================
   const renderFrequencyTile = (frequency) => {
     const isSelected = selectedFrequency === frequency.key;
-    const savingsPercent = Math.round(
-      ((frequency.days * SUBSCRIPTION_PLANS[frequency.key].amount / frequency.days) -
-        (30 * SUBSCRIPTION_PLANS[frequency.key].amount / frequency.days)) /
-      (30 * SUBSCRIPTION_PLANS[frequency.key].amount / frequency.days) * 100
-    );
 
     return (
       <TouchableOpacity
@@ -211,19 +208,12 @@ const FrequencySelectScreen = () => {
 
   return (
     <ScrollView style={styles.container}>
-      {/* BACK LINK */}
-      <TouchableOpacity
-        onPress={() => navigation.goBack()}
-        style={styles.backLink}
-      >
-        <Text style={styles.backLinkText}>← {t('common.back') || 'Back'}</Text>
-      </TouchableOpacity>
-
-      {/* TITLE */}
-      <Text style={styles.title}>How Would You Like to Pay?</Text>
-      <Text style={styles.subtitle}>
-        Pick what works best for you. {currentSubscription ? 'Change your plan anytime.' : 'Pay now to get started.'}
-      </Text>
+      {/* HERO BAND */}
+      <HeroBand
+        title="How Would You Like to Pay?"
+        subtitle={currentSubscription ? 'Change your plan anytime.' : 'Pick what works best for you. Pay now to get started.'}
+        onBack={() => navigation.goBack()}
+      />
 
       {/* FREQUENCY TILES */}
       <View style={styles.tileGrid}>
@@ -276,7 +266,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f6f4ef',
-    paddingHorizontal: 14,
   },
   centered: {
     flex: 1,
@@ -285,35 +274,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#f6f4ef',
   },
 
-  // Back Link
-  backLink: {
-    marginTop: 16,
-    marginBottom: 16,
-  },
-  backLinkText: {
-    fontSize: 13,
-    color: '#1a1c20',
-    fontWeight: '600',
-  },
-
-  // Title & Subtitle
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 13,
-    color: '#5b606c',
-    lineHeight: 19,
-    marginBottom: 20,
-  },
+  // Title & Subtitle (handled by HeroBand now)
 
   // Tile Grid
   tileGrid: {
     flexDirection: 'row',
     gap: 10,
+    marginHorizontal: 14,
     marginBottom: 14,
   },
 
@@ -372,6 +339,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#1976d2',
     padding: 14,
+    marginHorizontal: 14,
     marginBottom: 14,
   },
   hintTitle: {
@@ -393,6 +361,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#e7e4db',
     padding: 14,
+    marginHorizontal: 14,
     marginBottom: 20,
   },
   currentPlanLabel: {
@@ -420,6 +389,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 15,
     paddingHorizontal: 16,
+    marginHorizontal: 14,
     alignItems: 'center',
     shadowColor: '#ff7a1a',
     shadowOpacity: 0.3,
