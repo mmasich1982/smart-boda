@@ -173,36 +173,60 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   }, []);
 
   // ========================================================================
-  // ✅ SUBTLE: CHECK ACCOUNT LOCK STATUS (For display only)
   // ========================================================================
-  // Note: Hard lock enforcement happens in SubscriptionScreen on focus
-  // This is just for awareness and updating state
-  useEffect(() => {
-    if (!riderId) {
-      setLockCheckInProgress(false);
-      return;
-    }
+  // ✅ CRITICAL: LOCK ENFORCEMENT GATE ON SCREEN FOCUS
+  // ========================================================================
+  // This is the MAIN GATE: Check for account lock BEFORE rendering home
+  // If locked, navigate to AccountLockedScreen immediately
+  useFocusEffect(
+    useCallback(() => {
+      const checkAndEnforceAccountLock = async () => {
+        if (!riderId) {
+          console.log('[HomeScreen] Lock gate: no riderId, cannot check');
+          setLockCheckInProgress(false);
+          return;
+        }
 
-    const checkLockStatus = async () => {
-      try {
-        setLockCheckInProgress(true);
-        const lockStatus = await checkAndEnforceLock(riderId);
-        
-        console.log('[HomeScreen] Lock status:', {
-          isLocked: lockStatus.isLocked,
-          reason: lockStatus.reason,
-        });
-        
-        setIsAccountLocked(lockStatus.isLocked);
-      } catch (err) {
-        console.error('[HomeScreen] Error checking lock status:', err);
-      } finally {
-        setLockCheckInProgress(false);
-      }
-    };
+        try {
+          console.log('[HomeScreen] 🔒 MAIN GATE: Checking account lock status...');
+          setLockCheckInProgress(true);
+          
+          const lockStatus = await checkAndEnforceLock(riderId);
 
-    checkLockStatus();
-  }, [riderId]);
+          if (lockStatus.isLocked) {
+            console.log('[HomeScreen] 🔒 GATE CLOSED: Account is LOCKED - navigating to AccountLockedScreen', {
+              reason: lockStatus.reason,
+              justLocked: lockStatus.justLocked,
+            });
+            
+            setIsAccountLocked(true);
+            
+            // ✅ ENFORCE LOCK: Navigate to AccountLockedScreen before rendering home
+            navigation.reset({
+              index: 0,
+              routes: [{ name: 'AccountLockedScreen' }],
+            });
+            return;
+          }
+
+          console.log('[HomeScreen] ✅ GATE OPEN: Account is UNLOCKED - rendering home screen normally');
+          setIsAccountLocked(false);
+        } catch (err) {
+          console.error('[HomeScreen] Error checking account lock:', err);
+          // Fail-safe: allow home screen on error
+          setIsAccountLocked(false);
+        } finally {
+          setLockCheckInProgress(false);
+        }
+      };
+
+      checkAndEnforceAccountLock();
+
+      return () => {
+        // Cleanup on unfocus
+      };
+    }, [riderId, navigation])
+  );
 
   /**
    * ✅ Calculate today's total from trip cache
