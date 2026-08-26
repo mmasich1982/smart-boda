@@ -506,7 +506,7 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
 export async function initializeFreeTrial(riderId) {
   try {
     const now = Date.now();
-    const trialEndMs = now + 120000;
+    const trialEndMs = now + 120000; // 2 minutes for testing
 
     const state = {
       trialStarted: true,
@@ -610,6 +610,58 @@ export async function getSubscriptionHistory(riderId) {
   }
 }
 
+/**
+ * ============================================================================
+ * ✅ TESTING & DEBUG UTILITIES
+ * ============================================================================
+ */
+
+/**
+ * RESET SUBSCRIPTION STATE FOR TESTING
+ * Call this to clear locked state and reinitialize trial
+ * Usage: await resetSubscriptionForTesting(riderId)
+ */
+export async function resetSubscriptionForTesting(riderId) {
+  try {
+    console.log('🔄 [resetSubscriptionForTesting] Resetting subscription state for:', riderId);
+    
+    // Clear subscription
+    const subKey = `subscription_${riderId}`;
+    await indexedDbAdapter.kvSet(subKey, null);
+    
+    // Clear subscription history
+    const historyKey = `subscription_history_${riderId}`;
+    await indexedDbAdapter.kvSet(historyKey, null);
+    
+    // Initialize fresh free trial
+    const now = Date.now();
+    const trialEndMs = now + 120000; // 2 minutes for testing
+    
+    const freshState = {
+      trialStarted: true,
+      trialStartDate: toEATString(now),
+      trialEndDate: toEATString(trialEndMs),
+      trialEndMs: trialEndMs,
+      reminderCount: 0,
+      lastReminderCheck: null,
+      lockedAt: null,
+      lockReason: null,
+    };
+    
+    const stateKey = `subscription_state_${riderId}`;
+    await indexedDbAdapter.kvSet(stateKey, JSON.stringify(freshState));
+    
+    console.log('✅ [resetSubscriptionForTesting] Subscription state reset successfully');
+    console.log('   Trial period: 2 minutes');
+    console.log('   Trial expires:', toEATString(trialEndMs));
+    
+    return freshState;
+  } catch (err) {
+    console.error('❌ [resetSubscriptionForTesting] Error resetting state:', err);
+    return null;
+  }
+}
+
 // ============================================================================
 // ✅ CLEAN NAMED EXPORTS (No conflicting default export)
 // ============================================================================
@@ -619,6 +671,7 @@ export async function getSubscriptionHistory(riderId) {
 //   getSubscriptionState, 
 //   ensureFreeTrial, 
 //   isFreTrialActive,
-//   checkAndEnforceLock,     // ← NEW CRITICAL FUNCTION
+//   checkAndEnforceLock,     // ← CRITICAL FUNCTION
+//   resetSubscriptionForTesting, // ← FOR TESTING ONLY
 //   ... 
 // } from './subscriptionUtils'

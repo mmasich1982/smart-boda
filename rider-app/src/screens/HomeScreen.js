@@ -173,57 +173,36 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   }, []);
 
   // ========================================================================
-  // ✅ CRITICAL: CHECK ACCOUNT LOCK ON SCREEN FOCUS
+  // ✅ SUBTLE: CHECK ACCOUNT LOCK STATUS (For display only)
   // ========================================================================
-  // This ensures AccountLockedScreen is shown immediately if subscription expired
-  useFocusEffect(
-    useCallback(() => {
-      const checkAccountLock = async () => {
-        if (!riderId) {
-          console.log('[HomeScreen] Lock check skipped - no riderId');
-          setLockCheckInProgress(false);
-          return;
-        }
+  // Note: Hard lock enforcement happens in SubscriptionScreen on focus
+  // This is just for awareness and updating state
+  useEffect(() => {
+    if (!riderId) {
+      setLockCheckInProgress(false);
+      return;
+    }
 
-        try {
-          console.log('[HomeScreen] 🔒 Checking account lock status...');
-          setLockCheckInProgress(true);
+    const checkLockStatus = async () => {
+      try {
+        setLockCheckInProgress(true);
+        const lockStatus = await checkAndEnforceLock(riderId);
+        
+        console.log('[HomeScreen] Lock status:', {
+          isLocked: lockStatus.isLocked,
+          reason: lockStatus.reason,
+        });
+        
+        setIsAccountLocked(lockStatus.isLocked);
+      } catch (err) {
+        console.error('[HomeScreen] Error checking lock status:', err);
+      } finally {
+        setLockCheckInProgress(false);
+      }
+    };
 
-          const lockStatus = await checkAndEnforceLock(riderId);
-
-          console.log('[HomeScreen] Lock check result:', {
-            isLocked: lockStatus.isLocked,
-            reason: lockStatus.reason,
-            justLocked: lockStatus.justLocked,
-          });
-
-          if (lockStatus.isLocked) {
-            console.log('[HomeScreen] 🔒 Account is LOCKED - navigating to AccountLockedScreen');
-            setIsAccountLocked(true);
-            // Navigate to lock screen instead of showing home
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'AccountLockedScreen' }],
-            });
-          } else {
-            console.log('[HomeScreen] ✅ Account is UNLOCKED - showing home screen');
-            setIsAccountLocked(false);
-          }
-        } catch (err) {
-          console.error('[HomeScreen] Error checking account lock:', err);
-          setIsAccountLocked(false);
-        } finally {
-          setLockCheckInProgress(false);
-        }
-      };
-
-      checkAccountLock();
-
-      return () => {
-        // Cleanup if needed
-      };
-    }, [riderId, navigation])
-  );
+    checkLockStatus();
+  }, [riderId]);
 
   /**
    * ✅ Calculate today's total from trip cache
