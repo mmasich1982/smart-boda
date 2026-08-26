@@ -159,7 +159,7 @@ export async function ensureFreeTrial(riderId) {
       console.log('✨ [ensureFreeTrial] New rider detected - initializing free trial');
       
       const now = Date.now();
-      const trialEndMs = now + (FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+      const trialEndMs = now + 120000
 
       const newState = {
         trialStarted: true,
