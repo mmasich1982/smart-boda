@@ -1,668 +1,412 @@
-// rider-app/src/screens/HomeScreen.js
-// ✅ REFACTORED: IndexedDB-first architecture (mirrors FuelHubScreen)
+// rider-app/src/screens/energyHub/FuelHistoryScreen.js
 // ✅ SEAMLESS ONLINE/OFFLINE: Clean UI, no status banners
-// ✅ UNIFIED ARCHITECTURE: Removed tripsRepository - uses only IndexedDB kvGet
-// ✅ INSTANT HERO FARE UPDATES: Trip cache read directly from IndexedDB
-// ✅ NETWORK AWARE: Graceful fallback when offline
-// ✅ UI/UX: 100% preserved from original
+// ✅ MULTILINGUAL: Uses i18n for all UI text
+// ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+// ✅ NETWORK AWARE: Real-time connectivity detection
+// ✅ FIXED: Infinite loop resolved with proper dependency management
+// ✅ FIXED: Back navigation now properly handled
+// ✅ FIXED: Single data load on mount with smart refresh on focus
+// ✅ FIXED: Removed isConnected from dependency array to prevent online loop
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { useTranslation } from '../i18n/LocalizationProvider';
-import { useToast } from '../components/Toast';
-import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
-import { getActiveBikeProfile, getRiderAccountSummary, clearSession, getLocalRiderId } from '../offline/db';
-import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
-import { getSubscriptionState, getActiveSubscription, lockAccount } from '../offline/subscriptionUtils';
-import HeroFareCard from '../components/HeroFareCard';
-// ✅ NEW IMPORT: Subscription Banners
-import SubscriptionBanners from '../components/SubscriptionBanners';
+import BackLink from '../../components/BackLink';
+import api from '../../api/client';
+import { useRider } from '../../rider/RiderContext';
+import { useTranslation } from '../../i18n/LocalizationProvider';
+import { getLocalRiderId } from '../../offline/db';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import colors from '../../theme/colors';
 
-const ENERGY_TILE_BY_FUEL = {
-  petrol: { emoji: '⛽', label: 'home.tile_fuel_motorcycle', route: 'FuelHub' },
-  electric: { emoji: '🔋', label: 'home.tile_charge_battery', route: 'ChargeBatteryHub' },
-};
+const PAGE_SIZE = 10;
 
-const HOME_TILES = [
-  { emoji: '🔧', label: 'home.tile_service_motorcycle', route: 'MaintenanceHub' },
-  { emoji: '💰', label: 'home.tile_financial_performance', route: 'MoneyMastery' },
-  { emoji: '🎯', label: 'home.tile_revenue_targets', route: 'RevenueTargets' },
-  { emoji: '📋', label: 'home.tile_license_insurance', route: 'ComplianceDashboard' },
-  { emoji: '🐖', label: 'home.tile_savings', route: 'SavingsHub' },
-  { emoji: '🧾', label: 'home.tile_lipa_later_report', route: 'PaymentSummary' },
-  { emoji: '🏡', label: 'home.tile_send_money_home', route: 'SendMoneyHome' },
-  { emoji: '🏆', label: 'home.tile_my_goals', route: 'Goals' },
-  { emoji: '💡', label: 'home.tile_suggestions_feedback', route: 'SuggestionsFeedback' },
-  { emoji: '📲', label: 'home.tile_my_subscription', route: 'Subscription' },
-  
-  
-  
-];
-
-function LoadingSkeleton() {
-  return (
-    <ScrollView style={styles.container}>
-      <View style={styles.topBar}>
-        <View style={styles.brand}>
-          <View style={styles.logo}>
-            <Text style={styles.logoText}>🚕</Text>
-          </View>
-          <Text style={styles.brandName}>Smart Boda</Text>
-        </View>
-      </View>
-      <View style={styles.screenBody}>
-        <View style={[styles.heroFare, styles.skeleton]} />
-        <View style={[styles.yesterdayCard, styles.skeleton, { height: 80, marginBottom: 16 }]} />
-        <View style={styles.skeletonGrid}>
-          <View style={[styles.homeTile, styles.skeleton]} />
-          <View style={[styles.homeTile, styles.skeleton]} />
-        </View>
-      </View>
-    </ScrollView>
-  );
-}
-
-function ErrorDisplay({ error, onRetry }) {
-  return (
-    <View style={styles.errorContainer}>
-      <Text style={styles.errorTitle}>⚠️ Unable to Load Home Screen</Text>
-      <Text style={styles.errorMessage}>{error}</Text>
-      <TouchableOpacity style={styles.retryButton} onPress={onRetry}>
-        <Text style={styles.retryButtonText}>Retry</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-class HomeScreenErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error, errorInfo) {
-    console.error('[HomeScreen] Error boundary caught:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <ErrorDisplay
-          error={this.state.error?.message || 'An unexpected error occurred'}
-          onRetry={() => {
-            this.setState({ hasError: false, error: null });
-            this.props.onRetry?.();
-          }}
-        />
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
-export default function HomeScreen({ navigation: passedNavigation, route }) {
+export default function FuelHistoryScreen({ bikeProfile, navigation }) {
+  const { state } = useRider();
   const { t } = useTranslation();
-  const { showToast } = useToast();
-
-  // Use useNavigation hook as primary source, fall back to passed prop
-  const hookNavigation = useNavigation();
-  const navigation = hookNavigation || passedNavigation;
-
-  useEffect(() => {
-    console.log('[HomeScreen] Mounted - using navigation from:', hookNavigation ? 'hook' : 'passed prop');
-    console.log('[HomeScreen] Navigation available:', !!navigation);
-    if (navigation?.getState) {
-      const state = navigation.getState();
-      console.log('[HomeScreen] Navigation state routes:', state?.routes?.map(r => r.name));
-    }
-  }, [navigation, hookNavigation]);
-
-  const [isInitialized, setIsInitialized] = useState(false);
-  const [hasError, setHasError] = useState(false);
-  const [errorMsg, setErrorMsg] = useState(null);
-  const [riderId, setRiderId] = useState(null);
-  const [riderIdLoading, setRiderIdLoading] = useState(true);
-
-  const [runningTotal, setRunningTotal] = useState(0);
-  const [yesterdayTotal, setYesterdayTotal] = useState(null);
-  const [queuedCount, setQueuedCount] = useState(0);
-  const [bike, setBike] = useState(null);
-  const [account, setAccount] = useState(null);
-  const [tripsToday, setTripsToday] = useState(0);
-  const [offlineHours, setOfflineHours] = useState(0);
-  const [refreshing, setRefreshing] = useState(false);
-
-  // ✅ Track if data has been loaded on mount
+  const [localRiderId, setLocalRiderId] = useState(null);
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [period, setPeriod] = useState('thisMonth');
+  const [allEntries, setAllEntries] = useState([]);
+  
+  // ✅ Track if we've already loaded data on mount
   const hasLoadedRef = useRef(false);
 
-  // ✅ Load riderId on mount
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
+
+  const isElectric = bikeProfile?.fuelType === 'electric';
+  const title = isElectric ? (t('batteryManagement_history') || 'Battery Cost History') : (t('fuelManagement_history') || 'Fuel Cost History');
+
+  // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
     const loadRiderId = async () => {
       try {
         const id = await getLocalRiderId();
         if (id) {
-          setRiderId(id);
-          console.log('[HomeScreen] ✅ Loaded rider ID:', id);
-        } else {
-          console.warn('[HomeScreen] ⚠️ No rider ID found');
-          setHasError(true);
-          setErrorMsg('Unable to load rider information');
+          setLocalRiderId(id);
+          console.log('✅ FuelHistory: Loaded rider ID:', id);
         }
       } catch (err) {
-        console.error('[HomeScreen] Error loading rider ID:', err);
-        setHasError(true);
-        setErrorMsg('Error loading rider information: ' + err.message);
-      } finally {
-        setRiderIdLoading(false);
+        console.error('❌ Error loading rider ID:', err);
       }
     };
-
+    
     loadRiderId();
   }, []);
 
+  const effectiveRiderId = localRiderId || state?.riderId;
+
+  const getPeriodRange = useCallback((selectedPeriod) => {
+    const now = new Date();
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    const sixMonthsStart = new Date(now.getFullYear(), now.getMonth() - 5, 1).getTime();
+
+    switch (selectedPeriod) {
+      case 'thisMonth':
+        return { start: thisMonthStart, end: now.getTime() };
+      case 'lastMonth':
+        return { start: lastMonthStart, end: thisMonthStart - 1 };
+      case 'last6':
+        return { start: sixMonthsStart, end: now.getTime() };
+      case 'sinceJoining':
+        return { start: 0, end: now.getTime() };
+      default:
+        return { start: thisMonthStart, end: now.getTime() };
+    }
+  }, []);
+
   /**
-   * ✅ Calculate today's total from trip cache
-   * Mirrors DailyTradeSummaryScreen logic but for display purposes
+   * ✅ Reconstruct history from individual entries
+   * Fallback when cache is missing
+   * Uses IndexedDB queryRows for efficient lookups
    */
-  const calculateTodaysTotal = useCallback(async (riderIdParam) => {
+  const reconstructHistoryFromIndividualEntries = useCallback(async () => {
     try {
-      const cacheKey = `trip_history_${riderIdParam}`;
-      const cachedData = await indexedDbAdapter.kvGet(cacheKey);
-
-      let items = [];
-      if (cachedData) {
-        try {
-          items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
-          if (!Array.isArray(items)) items = [];
-        } catch (parseErr) {
-          console.warn('⚠️ Cache parse error');
-          items = [];
-        }
-      }
-
-      // Filter to today's active trips
-      const today = new Date().toDateString();
-      const todaysActiveTrips = items.filter(t => {
-        const tripDate = new Date(t.ts || t.timestamp || 0).toDateString();
-        return t.status === 'active' && tripDate === today;
+      const rows = await indexedDbAdapter.queryRows('fuelEntry', (row) => {
+        return row.rider_id === effectiveRiderId;
       });
+      
+      // Sort by created_at (newest first)
+      rows.sort((a, b) => 
+        new Date(b.created_at || b.createdAt).getTime() - new Date(a.created_at || a.createdAt).getTime()
+      );
+      
+      return rows;
+    } catch (err) {
+      console.error('❌ Error reconstructing entries:', err);
+      return [];
+    }
+  }, [effectiveRiderId]);
 
-      // Calculate realized income (same logic as DailyTradeSummary)
-      let total = 0;
-      todaysActiveTrips.forEach(trip => {
-        const method = trip.paymentMethod || trip.method;
-        if (method === 'LipaLater') {
-          // Only count if settled today
-          if (trip.lipaLater?.settled) {
-            const paymentDate = trip.lipaLater.paymentDate
-              ? new Date(trip.lipaLater.paymentDate).toDateString()
-              : null;
-            if (paymentDate === today) {
-              total += trip.amount || 0;
+  // ✅ LOAD DATA ON MOUNT - Single execution
+  // ✅ CRITICAL: Only effectiveRiderId and isInitialized in dependencies
+  // Removed t, clearCriticalError, and callback functions which can be recreated each render
+  // hasLoadedRef.current is set IMMEDIATELY on entry to prevent race conditions and re-runs
+  // This prevents the infinite loop where state updates cause effect re-execution
+  useEffect(() => {
+    if (!effectiveRiderId || !isInitialized || hasLoadedRef.current) {
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadHistoryOnMount() {
+      try {
+        // ✅ CRITICAL: Mark as loaded FIRST to prevent race conditions
+        hasLoadedRef.current = true;
+        
+        setLoading(true);
+        clearCriticalError();
+
+        const cacheKey = `fuel_history_${effectiveRiderId}`;
+
+        // Try cache first
+        console.log('📦 Checking cache...');
+        const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+        if (cachedData) {
+          try {
+            const items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+            if (Array.isArray(items) && items.length > 0) {
+              if (isMounted) {
+                setAllEntries(items);
+                setPage(1);
+                console.log(`✅ Loaded ${items.length} items from cache`);
+              }
+            } else {
+              // Cache is empty, reconstruct from entries
+              const reconstructed = await reconstructHistoryFromIndividualEntries();
+              if (isMounted && reconstructed.length > 0) {
+                setAllEntries(reconstructed);
+                setPage(1);
+              }
+            }
+          } catch (parseErr) {
+            const reconstructed = await reconstructHistoryFromIndividualEntries();
+            if (isMounted && reconstructed.length > 0) {
+              setAllEntries(reconstructed);
+              setPage(1);
             }
           }
         } else {
-          // Cash/M-Pesa: count on trip date
-          total += trip.amount || 0;
+          // No cache, reconstruct from individual entries
+          const reconstructed = await reconstructHistoryFromIndividualEntries();
+          if (isMounted && reconstructed.length > 0) {
+            setAllEntries(reconstructed);
+            setPage(1);
+          }
         }
-      });
 
-      return { total, count: todaysActiveTrips.length };
-    } catch (err) {
-      console.error('[HomeScreen] Error calculating total:', err);
-      return { total: 0, count: 0 };
-    }
-  }, []);
+        // Try to sync fresh data if online
+        if (isConnected && isMounted) {
+          console.log('📡 Syncing with API...');
+          try {
+            const response = await api.get('/fuel-maintenance/fuel-entry/history', {
+              params: {
+                rider_id: effectiveRiderId,
+                page: 1,
+                limit: 100,
+              }
+            });
 
-  /**
-   * ✅ Calculate yesterday's total from trip cache
-   * Reads all trips from cache and sums yesterday's amounts
-   */
-  const calculateYesterdaysTotal = useCallback(async (riderIdParam) => {
-    try {
-      const cacheKey = `trip_history_${riderIdParam}`;
-      const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+            if (isMounted) {
+              const items = (response.data?.entries || [])
+                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-      let items = [];
-      if (cachedData) {
-        try {
-          items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
-          if (!Array.isArray(items)) items = [];
-        } catch (parseErr) {
-          console.warn('⚠️ Cache parse error');
-          items = [];
+              setAllEntries(items);
+              
+              // Cache it for next time using IndexedDB
+              await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(items));
+              console.log(`✅ Synced ${items.length} entries and cached`);
+            }
+          } catch (apiErr) {
+            console.warn('⚠️ API sync failed (using cached data):', apiErr.message);
+          }
+        }
+
+        if (isMounted) {
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('❌ Fetch error:', err);
+        if (isMounted) {
+          showCriticalError(
+            t('error_loadHistoryFailed') || 'Failed to load history. Please try again.',
+            'data_load'
+          );
+          setLoading(false);
         }
       }
-
-      // Filter to yesterday's active trips
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayString = yesterday.toDateString();
-
-      const yesterdaysActiveTrips = items.filter(t => {
-        const tripDate = new Date(t.ts || t.timestamp || 0).toDateString();
-        return t.status === 'active' && tripDate === yesterdayString;
-      });
-
-      // Calculate total for yesterday
-      let total = 0;
-      yesterdaysActiveTrips.forEach(trip => {
-        const method = trip.paymentMethod || trip.method;
-        if (method === 'LipaLater') {
-          // Only count if settled
-          if (trip.lipaLater?.settled) {
-            total += trip.amount || 0;
-          }
-        } else {
-          total += trip.amount || 0;
-        }
-      });
-
-      return total;
-    } catch (err) {
-      console.error('[HomeScreen] Error calculating yesterday total:', err);
-      return null;
     }
-  }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      // ✅ Guard: Can't refresh without riderId
-      if (!riderId) {
-        console.warn('[HomeScreen] Cannot refresh - no riderId');
+    loadHistoryOnMount();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [effectiveRiderId, isInitialized]);
+
+  /**
+   * ✅ Refresh on screen focus (soft refresh only)
+   * Does NOT trigger full data reload - just updates from current cache
+   */
+  useFocusEffect(
+    useCallback(() => {
+      if (!effectiveRiderId || !isInitialized || !hasLoadedRef.current) {
         return;
       }
 
-      setRefreshing(true);
-      setHasError(false);
-      setErrorMsg(null);
-
-      // ✅ CRITICAL: Check if account is ALREADY locked
-      // This is the first check - if locked, don't load any home screen content
-      const state = await getSubscriptionState(riderId);
-      
-      if (state?.lockedAt) {
-        console.log('🔒 [HomeScreen] Account is already locked - navigating to AccountLockedScreen');
-        if (navigation && navigation.reset) {
-          navigation.reset({
-            index: 0,
-            routes: [{ name: 'AccountLocked' }],
-          });
-        }
-        return; // Stop, don't load home screen
-      }
-
-      // ✅ Check if trial expired and account not yet locked
-      if (state?.trialStarted && state?.trialEndDate) {
-        const trialEndMs = new Date(state.trialEndDate).getTime();
-        if (trialEndMs <= Date.now()) {
-          // Trial expired - lock account NOW
-          await lockAccount(riderId, 'Free trial expired');
-          console.log('🔒 [HomeScreen] Trial expired - account locked, navigating to AccountLockedScreen');
-          // Navigate to lock screen
-          if (navigation && navigation.reset) {
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'AccountLocked' }],
-            });
+      async function softRefreshCache() {
+        try {
+          const cacheKey = `fuel_history_${effectiveRiderId}`;
+          const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+          
+          if (cachedData) {
+            const items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+            if (Array.isArray(items) && items.length > 0) {
+              setAllEntries(items);
+              console.log('✅ Refreshed cache on focus');
+            }
           }
-          return;
-        }
-      }
-      
-      // ✅ Check if subscription expired and account not yet locked
-      const subscription = await getActiveSubscription(riderId);
-      if (subscription?.expiryDate) {
-        const expiryMs = new Date(subscription.expiryDate).getTime();
-        if (expiryMs <= Date.now()) {
-          // Subscription expired - lock account NOW
-          await lockAccount(riderId, 'Subscription expired');
-          console.log('🔒 [HomeScreen] Subscription expired - account locked, navigating to AccountLockedScreen');
-          // Navigate to lock screen
-          if (navigation && navigation.reset) {
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'AccountLocked' }],
-            });
-          }
-          return;
+        } catch (err) {
+          console.warn('⚠️ Error in focus refresh:', err);
         }
       }
 
-      const activeBike = await getActiveBikeProfile();
-      if (activeBike) {
-        setBike(activeBike);
-      } else {
-        console.warn('[HomeScreen] No active bike profile found - using default');
-        setBike(null);
-      }
-
-      const accountSummary = await getRiderAccountSummary();
-      if (accountSummary) {
-        setAccount(accountSummary);
-      } else {
-        console.warn('[HomeScreen] No account summary found - using defaults');
-        setAccount(null);
-      }
-
-      // ✅ Load today's total from IndexedDB trip cache (fuel pattern)
-      const todayData = await calculateTodaysTotal(riderId);
-      setRunningTotal(todayData.total);
-      setTripsToday(todayData.count);
-
-      // ✅ Load yesterday's total from IndexedDB trip cache
-      const yest = await calculateYesterdaysTotal(riderId);
-      setYesterdayTotal(yest);
-
-      const queued = await getQueuedRecords();
-      setQueuedCount(queued?.length || 0);
-
-      const hours = await hoursSinceLastSync();
-      setOfflineHours(Math.floor(hours) || 0);
-
-      if (!isInitialized) {
-        setIsInitialized(true);
-      }
-
-      console.log('[HomeScreen] ✅ Refresh completed:', {
-        runningTotal: todayData.total,
-        tripsToday: todayData.count,
-        yesterdayTotal: yest,
-      });
-    } catch (err) {
-      console.error('[HomeScreen] Refresh error:', err);
-      setHasError(true);
-      setErrorMsg(err.message || 'Error loading home screen');
-      showToast('Error loading home screen', 'error');
-      if (!isInitialized) {
-        setIsInitialized(true);
-      }
-    } finally {
-      setRefreshing(false);
-    }
-  }, [riderId, isInitialized, showToast, calculateTodaysTotal, calculateYesterdaysTotal, navigation]);
-
-  // ✅ Load data on mount
-  // ✅ refresh() handles subscription status checking and lock enforcement
-  useEffect(() => {
-    if (!riderIdLoading && riderId && !hasLoadedRef.current) {
-      hasLoadedRef.current = true;
-      refresh();
-    }
-  }, [riderIdLoading, riderId, refresh]);
-
-  // ✅ CRITICAL: Auto-refresh when returning to HomeScreen
-  // Always refresh on focus to ensure Hero Fare Card reflects new trips
-  // ✅ Also checks subscription status and locks account if needed
-  useFocusEffect(
-    useCallback(() => {
-      if (!riderIdLoading && riderId && hasLoadedRef.current) {
-        console.log('[HomeScreen] 🔄 Refreshing on focus');
-        refresh();
-      }
-    }, [riderIdLoading, riderId, refresh])
+      softRefreshCache();
+    }, [effectiveRiderId, isInitialized])
   );
 
-  const handleRecordTrip = useCallback(() => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate('NewTrip');
+  // Filter by period
+  useEffect(() => {
+    const { start, end } = getPeriodRange(period);
+    const filtered = allEntries.filter(entry => {
+      const entryTime = new Date(entry.created_at || entry.createdAt).getTime();
+      return entryTime >= start && entryTime <= end;
+    });
+    setEntries(filtered);
+    setPage(1);
+  }, [period, allEntries, getPeriodRange]);
+
+  const totalPages = Math.ceil(entries.length / PAGE_SIZE);
+  const pageItems = entries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '—';
+    try {
+      const date = new Date(dateString);
+      const dateStr = date.toLocaleDateString('en-KE', { month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = date.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', hour12: true });
+      return `${dateStr} ${timeStr}`;
+    } catch {
+      return dateString;
+    }
+  };
+
+  // ✅ FIXED: Back navigation goes directly to Home (customer-friendly)
+  const handleBackPress = useCallback(() => {
+    try {
+      if (navigation && navigation.navigate) {
+        // Navigate directly to Home instead of goBack (customer prefers this)
+        navigation.navigate('Home');
+      } else {
+        console.warn('⚠️ Navigation not available');
+      }
+    } catch (err) {
+      console.error('❌ Navigation error:', err);
+      if (navigation && navigation.navigate) {
+        navigation.navigate('Home');
+      }
     }
   }, [navigation]);
-  
-  
-  const handleDailyTradeSummary = useCallback(() => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate('DailyTradeSummary');
-    }
-  }, [navigation]);
 
-  const handleLogout = useCallback(async () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', onPress: () => {} },
-      {
-        text: 'Logout',
-        onPress: async () => {
-          try {
-            await clearSession();
-            if (navigation && navigation.reset) {
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-              });
-            }
-          } catch (err) {
-            console.error('Logout error:', err);
-            showToast('Error logging out', 'error');
-          }
-        },
-      },
-    ]);
-  }, [navigation, showToast]);
-
-  const handleNavigateTile = useCallback((route) => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate(route);
-    }
-  }, [navigation]);
-
-  if (riderIdLoading || !isInitialized) {
-    return <LoadingSkeleton />;
-  }
-
-  if (hasError) {
+  if (!isInitialized) {
     return (
-      <ErrorDisplay
-        error={errorMsg}
-        onRetry={() => {
-          setHasError(false);
-          setErrorMsg(null);
-          if (riderId) {
-            refresh();
-          }
-        }}
-      />
+      <ScrollView style={styles.container}>
+        <BackLink onPress={handleBackPress} label={t('backLabel') || '← Back'} />
+        <Text style={styles.title}>{title}</Text>
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+      </ScrollView>
     );
   }
 
-  const handleViewFinancialHistory = () => {
-    navigation.navigate('FinancialHistory');
-  };
-  
-  const energyTile = bike?.fuel_type_code ? ENERGY_TILE_BY_FUEL[bike.fuel_type_code] : null;
-
   return (
-    <HomeScreenErrorBoundary onRetry={() => refresh()}>
-      <ScrollView style={styles.container}>
-        <View style={styles.topBar}>
-          <View style={styles.brand}>
-            <View style={styles.logo}>
-              <Text style={styles.logoText}>🚕</Text>
-            </View>
-            <Text style={styles.brandName}>Smart Boda</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.notifBell}
-            onPress={() => handleNavigateTile('Notifications')}
-          >
-            <Text style={styles.bellIcon}>🔔</Text>
-            {queuedCount > 0 && (
-              <View style={styles.notifBadge}>
-                <Text style={styles.badgeText}>{Math.min(queuedCount, 9)}</Text>
-              </View>
-            )}
+    <ScrollView style={styles.container}>
+      <BackLink onPress={handleBackPress} label={t('backLabel') || '← Back'} />
+      
+      <Text style={styles.title}>{title}</Text>
+
+      {/* CRITICAL ERROR ONLY - Never show status/offline info */}
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
         </View>
+      )}
 
-        <View style={styles.screenBody}>
-          {/* ✅ HERO FARE CARD - Updates instantly when trip is recorded */}
-          <HeroFareCard
-            totalFare={runningTotal}
-            onOpenDailySummary={handleDailyTradeSummary}
-            onNewTrip={handleRecordTrip}
-          />
-
-          {/* ✅ SUBSCRIPTION BANNERS - Displayed below Hero Fare Card */}
-          {/* Display logic controlled by subscriptionUtils (trial, reminder, locked) */}
-          <SubscriptionBanners navigation={navigation} />
-
-          {/* Yesterday's Total */}
-          {yesterdayTotal !== null && (
-            <View style={styles.yesterdayCard}>
-              <View style={styles.yesterdayHeader}>
-                <Text style={styles.yesterdayLabel}>Yesterday's Total</Text>
-                <TouchableOpacity onPress={handleDailyTradeSummary}>
-                  <Text style={styles.viewBreakdownLink}>View →</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.yesterdayAmount}>KSh {(yesterdayTotal || 0).toLocaleString()}</Text>
-            </View>
-          )}
-
-          {/* Offline Warning */}
-          {offlineHours > 0 && (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>
-                📡 Last sync {offlineHours} hour{offlineHours === 1 ? '' : 's'} ago
-              </Text>
-            </View>
-          )}
-
-          {/* Tiles Grid - Aligned with cleaned.html */}
-          {/* Row 1: Fuel/Charge + Service */}
-          <View style={styles.tileRow}>
-            {energyTile && (
-              <TouchableOpacity
-                style={styles.homeTile}
-                onPress={() => {
-                  try {
-                    // Try direct navigation first (MainNavigator context)
-                    navigation.navigate(energyTile.route);
-                  } catch (err) {
-                    console.error('[HomeScreen] Navigation error:', err);
-                    // Fallback: try navigating through parent if nested
-                    try {
-                      navigation.navigate('Home', { screen: energyTile.route });
-                    } catch (fallbackErr) {
-                      console.error('[HomeScreen] Fallback navigation failed:', fallbackErr);
-                    }
-                  }
-                }}
-              >
-                <Text style={styles.tileEmoji}>{energyTile.emoji}</Text>
-                <Text style={styles.tileLabel}>{t(energyTile.label)}</Text>
-              </TouchableOpacity>
-            )}
-
+      {/* Period Tabs */}
+      <View style={styles.periodTabs}>
+        {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => (
           <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => {
-                console.log('[HomeScreen] Navigating to MaintenanceHub');
-                try {
-                  navigation.navigate('MaintenanceHub');
-                } catch (err) {
-                  console.error('[HomeScreen] MaintenanceHub navigation error:', err);
-                  showToast('Navigation failed', 'error');
-                }
-              }}
-            >
-              <Text style={styles.tileEmoji}>🔧</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_service_motorcycle')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Row 2: Financial Performance + My Subscription */}
-          <View style={styles.tileRow}>
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('MoneyMastery')}
-            >
-              <Text style={styles.tileEmoji}>💰</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_financial_performance')}</Text>
-            </TouchableOpacity>
-          
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('Subscription')}
-            >
-              <Text style={styles.tileEmoji}>📲</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_my_subscription')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Row 3: Sync Status Card (Clickable) */}
-          <TouchableOpacity 
-            style={styles.cardContainer}
-            onPress={() => navigation.navigate('SyncStatus')}
-            activeOpacity={0.7}
+            key={p}
+            style={[styles.periodTab, period === p && styles.periodTabActive]}
+            onPress={() => setPeriod(p)}
           >
-            <View style={styles.cardTitleRow}>
-              <Text style={styles.cardStatusEmoji}>
-                {queuedCount > 0 ? '🟠' : '🟢'}
-              </Text>
-              <Text style={styles.cardTitle}>Sync Status</Text>
-              <View style={[
-                styles.badge,
-                queuedCount > 0 ? styles.badgeAmber : styles.badgeGreen
-              ]}>
-                <Text style={styles.badgeText}>
-                  {queuedCount > 0 ? `Queued: ${queuedCount}` : 'All Synced'}
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.cardHint}>
-              {queuedCount > 0 ? 'Tap to view queue and retry.' : 'Everything is safely backed up.'}
+            <Text style={[styles.periodTabText, period === p && styles.periodTabTextActive]}>
+              {p === 'thisMonth' && (t('thisMonth') || 'This Month')}
+              {p === 'lastMonth' && (t('lastMonth') || 'Last Month')}
+              {p === 'last6' && (t('last6Months') || 'Last 6')}
+              {p === 'sinceJoining' && (t('sinceJoining') || 'All Time')}
             </Text>
           </TouchableOpacity>
-          
-		  
-          {/* Account Card */}
-          <View style={styles.cardContainer}>
-            <View style={styles.kvRow}>
-              <Text style={styles.kvKey}>Trips today</Text>
-              <Text style={styles.kvValue}>{tripsToday}</Text>
-            </View>
-          </View>
-		  
-		  
-		  
-		  {/* Settings List Items */}
-          <View style={styles.settingsListContainer}>
-            <TouchableOpacity 
-              style={styles.settingsListItem}
-              onPress={handleDailyTradeSummary}
-            >
-              <Text style={styles.settingsListLabel}>📊 My Daily Trade Summary</Text>
-              <Text style={styles.settingsListArrow}>›</Text>
-            </TouchableOpacity>
+        ))}
+      </View>
 
-            <TouchableOpacity 
-              style={styles.settingsListItem}
-              onPress={handleViewFinancialHistory}
-            >
-              <Text style={styles.settingsListLabel}>📈 My Financial History & Statements</Text>
-              <Text style={styles.settingsListArrow}>›</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.settingsListItem, styles.logoutListItem]}
-              onPress={() => navigation.navigate('PinLogin')}
-            >
-              <Text style={[styles.settingsListLabel, styles.logoutText]}>🚪 Logout</Text>
-              <Text style={styles.settingsListArrow}>›</Text>
-            </TouchableOpacity>
+      {/* Summary Card */}
+      <View style={styles.summaryCard}>
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryCol}>
+            <Text style={styles.summaryLabel}>{t('totalSpent') || 'Total Spent'}</Text>
+            <Text style={styles.summaryValue}>KSh {entries.reduce((sum, e) => sum + (e.cost || 0), 0).toLocaleString()}</Text>
           </View>
-  
-          
+          <View style={styles.summarySpacer} />
+          <View style={styles.summaryCol}>
+            <Text style={styles.summaryLabel}>{t('entries') || 'Entries'}</Text>
+            <Text style={styles.summaryValue}>{entries.length}</Text>
+          </View>
         </View>
-      </ScrollView>
-    </HomeScreenErrorBoundary>
+      </View>
+
+      {/* Entries List */}
+      <View style={styles.entriesCard}>
+        {pageItems.length > 0 ? (
+          pageItems.map((entry, idx) => (
+            <View key={entry.id || idx}>
+              <View style={styles.entryRow}>
+                <View style={styles.entryLeft}>
+                  <Text style={styles.entryMode}>
+                    {isElectric ? '🔋 Charge' : '⛽ Fuel'}
+                  </Text>
+                  <Text style={styles.entryTime}>
+                    {formatDate(entry.created_at)}
+                  </Text>
+                </View>
+                <View style={styles.entryRight}>
+                  <Text style={styles.entryAmount}>KSh {entry.cost.toLocaleString()}</Text>
+                </View>
+              </View>
+              {idx < pageItems.length - 1 && <View style={styles.entryDivider} />}
+            </View>
+          ))
+        ) : (
+          <Text style={styles.emptyMessage}>{t('noEntriesForPeriod') || 'No entries for this period'}</Text>
+        )}
+      </View>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <View style={styles.paginationContainer}>
+          <Text style={styles.paginationInfo}>
+            {t('showing') || 'Showing'} {pageItems.length ? (page - 1) * PAGE_SIZE + 1 : 0}–{Math.min(page * PAGE_SIZE, entries.length)} {t('of') || 'of'} {entries.length}
+          </Text>
+          <View style={styles.paginationControls}>
+            <TouchableOpacity
+              style={[styles.pageBtn, page === 1 && styles.pageBtnDisabled]}
+              onPress={() => setPage(Math.max(1, page - 1))}
+              disabled={page === 1}
+            >
+              <Text style={styles.pageBtnText}>‹</Text>
+            </TouchableOpacity>
+
+            {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => i + 1).map((p) => (
+              <TouchableOpacity
+                key={p}
+                style={[styles.pageBtn, p === page && styles.pageBtnActive]}
+                onPress={() => setPage(p)}
+              >
+                <Text style={[styles.pageBtnText, p === page && styles.pageBtnTextActive]}>
+                  {p}
+                </Text>
+              </TouchableOpacity>
+            ))}
+
+            <TouchableOpacity
+              style={[styles.pageBtn, page === totalPages && styles.pageBtnDisabled]}
+              onPress={() => setPage(Math.min(totalPages, page + 1))}
+              disabled={page === totalPages}
+            >
+              <Text style={styles.pageBtnText}>›</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+    </ScrollView>
   );
 }
 
@@ -670,279 +414,207 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f6f4ef',
+    padding: 0
   },
-  errorContainer: {
-    flex: 1,
-    backgroundColor: '#f6f4ef',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#d32f2f',
-    marginBottom: 8,
-  },
-  errorMessage: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  retryButton: {
-    backgroundColor: '#ff7a1a',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db',
-  },
-  brand: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  logo: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#ff7a1a',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  logoText: {
-    fontSize: 16,
-  },
-  brandName: {
-    fontSize: 14,
+  title: {
+    fontFamily: 'SpaceGrotesk-Bold',
+    fontSize: 24,
     fontWeight: '700',
     color: '#1a1c20',
+    marginBottom: 20,
+    paddingHorizontal: 20,
+    marginTop: 16
   },
-  notifBell: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
+
+  // CRITICAL ERROR ONLY
+  criticalErrorBanner: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1.5,
+    borderColor: '#f6cac7',
+    borderRadius: 14,
+    padding: 12,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
   },
-  bellIcon: {
-    fontSize: 20,
+  criticalErrorText: {
+    fontSize: 12,
+    color: '#a5312c',
+    fontWeight: '600',
+    flex: 1
   },
-  notifBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#ff7a1a',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 10,
+  dismissText: {
+    fontSize: 11,
+    color: '#a5312c',
     fontWeight: '700',
+    marginLeft: 12
   },
-  screenBody: {
-    padding: 20,
+
+  // Period tabs
+  periodTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginHorizontal: 20,
+    marginBottom: 16
   },
-  energyTile: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 14,
+  periodTab: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     borderWidth: 1.5,
     borderColor: '#e7e4db',
-    alignItems: 'center',
-  },
-  yesterdayCard: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#e7e4db',
+    alignItems: 'center'
   },
-  yesterdayHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+  periodTabActive: {
+    backgroundColor: '#ff7a1a',
+    borderColor: '#ff7a1a'
   },
-  yesterdayLabel: {
-    fontSize: 12,
-    color: '#5b606c',
-    fontWeight: '600',
-  },
-  yesterdayAmount: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  viewBreakdownLink: {
-    color: '#ff7a1a',
+  periodTabText: {
     fontSize: 11,
     fontWeight: '600',
+    color: colors.inkSoft || '#5b606c'
   },
-  warningBox: {
-    backgroundColor: '#fff3e0',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: '#ff9800',
+  periodTabTextActive: {
+    color: '#fff'
   },
-  warningText: {
-    color: '#e65100',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  tileRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
-  homeTile: {
-    flex: 1,
+
+  // Summary card
+  summaryCard: {
     backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    alignItems: 'center',
     borderWidth: 1.5,
     borderColor: '#e7e4db',
-    minHeight: 100,
-  },
-  fullWidth: {
-    flex: 1,
-  },
-  logoutTile: {
-    backgroundColor: '#fce4e1',
-    borderColor: '#e0453f',
-  },
-  tileEmoji: {
-    fontSize: 32,
-    marginBottom: 8,
-  },
-  tileLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1a1c20',
-    textAlign: 'center',
-  },
-  settingsRow: {
-    gap: 12,
-    marginBottom: 20,
-  },
-  skeleton: {
-    backgroundColor: '#e0e0e0',
-    opacity: 0.5,
-  },
-  skeletonGrid: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  heroFare: {
-    height: 140,
-  },
-  cardContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e7e4db',
+    marginHorizontal: 20,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 }
   },
-  cardTitleRow: {
+  summaryRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 8,
+    justifyContent: 'space-between'
   },
-  cardStatusEmoji: {
-    fontSize: 18,
+  summaryCol: {
+    flex: 1
   },
-  cardTitle: {
-    fontSize: 14,
+  summarySpacer: {
+    width: 1,
+    backgroundColor: '#e7e4db',
+    marginHorizontal: 16
+  },
+  summaryLabel: {
+    fontSize: 11,
+    color: colors.inkSoft || '#5b606c',
     fontWeight: '600',
-    color: '#1a1c20',
-    flex: 1,
+    textTransform: 'uppercase',
+    letterSpacing: 0.04,
+    marginBottom: 6
   },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  badgeAmber: {
-    backgroundColor: '#fff3e0',
-  },
-  badgeGreen: {
-    backgroundColor: '#e8f5e9',
-  },
-  cardHint: {
-    fontSize: 12,
-    color: '#5b606c',
-    marginLeft: 30,
-  },
-  kvRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  kvKey: {
-    fontSize: 13,
-    color: '#5b606c',
-    fontWeight: '500',
-  },
-  kvValue: {
+  summaryValue: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#1a1c20',
+    color: '#1a1c20'
   },
-  settingsListContainer: {
+
+  // Entries list
+  entriesCard: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#e7e4db',
-    overflow: 'hidden',
+    borderRadius: 14,
+    marginHorizontal: 20,
+    marginBottom: 16,
+    overflow: 'hidden'
   },
-  settingsListItem: {
+  entryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 14,
     paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db',
+    paddingVertical: 12,
+    alignItems: 'center'
   },
-  logoutListItem: {
-    borderBottomWidth: 0,
+  entryLeft: {
+    flex: 1
   },
-  settingsListLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1a1c20',
-  },
-  logoutText: {
-    color: '#e0453f',
+  entryMode: {
+    fontSize: 13,
     fontWeight: '600',
+    color: '#1a1c20',
+    marginBottom: 4
   },
-  settingsListArrow: {
-    fontSize: 16,
-    color: '#5b606c',
+  entryTime: {
+    fontSize: 11,
+    color: colors.inkSoft || '#5b606c',
+    fontWeight: '500'
   },
+  entryRight: {
+    alignItems: 'flex-end'
+  },
+  entryAmount: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1a1c20'
+  },
+  entryDivider: {
+    height: 1,
+    backgroundColor: '#f0ede7',
+    marginHorizontal: 16
+  },
+  emptyMessage: {
+    fontSize: 13,
+    color: colors.inkSoft || '#5b606c',
+    fontWeight: '500',
+    paddingVertical: 16,
+    textAlign: 'center'
+  },
+
+  // Pagination
+  paginationContainer: {
+    marginHorizontal: 20,
+    marginBottom: 24
+  },
+  paginationInfo: {
+    fontSize: 11,
+    color: colors.inkSoft || '#5b606c',
+    fontWeight: '500',
+    marginBottom: 10,
+    textAlign: 'center'
+  },
+  paginationControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 4
+  },
+  pageBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    backgroundColor: '#fff',
+    minWidth: 36,
+    alignItems: 'center'
+  },
+  pageBtnActive: {
+    backgroundColor: '#ff7a1a',
+    borderColor: '#ff7a1a'
+  },
+  pageBtnDisabled: {
+    backgroundColor: '#f0ede7',
+    borderColor: '#e7e4db'
+  },
+  pageBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.inkSoft || '#5b606c'
+  },
+  pageBtnTextActive: {
+    color: '#fff'
+  }
 });
