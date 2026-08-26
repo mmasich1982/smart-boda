@@ -497,7 +497,7 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
 export async function initializeFreeTrial(riderId) {
   try {
     const now = Date.now();
-    const trialEndMs = now + (FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+    const trialEndMs = now + 120000;
 
     const state = {
       trialStarted: true,
