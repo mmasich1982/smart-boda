@@ -5,6 +5,7 @@
 // ✅ BUSINESS LOGIC: Bi-Weekly (500), Monthly (1000), Free Trial
 // ✅ FIXED EXPORTS: Clean named exports (no conflicting default export)
 // ✅ AUTO-INIT: Ensures free trial initialized for new riders on first load
+// ✅ IMPROVED: Better state handling and return values
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { addToSyncQueue } from './syncQueue';
@@ -43,7 +44,8 @@ import { addToSyncQueue } from './syncQueue';
  * 
  * FREE TRIAL:
  * • All new riders get 1-day free trial automatically
- * • Trial banner shown on Home Screen + Subscription Card
+ * • Trial banner shown on Home Screen immediately on first load
+ * • Trial status persisted in IndexedDB
  * • Can pay before or after trial expiry
  *
  * REMINDERS:
@@ -144,24 +146,52 @@ export async function getSubscriptionState(riderId) {
 /**
  * ✅ ENSURE FREE TRIAL EXISTS FOR NEW RIDERS
  * Called on first home screen load to auto-initialize trial for new riders
- * If rider has no subscription state, automatically initializes 1-day free trial
+ * Returns the current state (whether just created or existing)
  */
 export async function ensureFreeTrial(riderId) {
   try {
+    console.log('🔍 [ensureFreeTrial] Checking trial status for rider:', riderId);
+    
     const state = await getSubscriptionState(riderId);
     
     // ✅ If trial not started, initialize it now
     if (!state.trialStarted) {
-      console.log('✨ New rider detected - initializing free trial...');
-      const initializedState = await initializeFreeTrial(riderId);
-      console.log('✅ Free trial initialized on first load:', initializedState);
-      return initializedState;
+      console.log('✨ [ensureFreeTrial] New rider detected - initializing free trial');
+      
+      const now = Date.now();
+      const trialEndMs = now + (FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+
+      const newState = {
+        trialStarted: true,
+        trialStartDate: new Date(now).toISOString(),
+        trialEndDate: new Date(trialEndMs).toISOString(),
+        trialEndMs: trialEndMs,
+        reminderCount: 0,
+        lastReminderCheck: null,
+        lockedAt: null,
+        lockReason: null,
+      };
+
+      const key = `subscription_state_${riderId}`;
+      await indexedDbAdapter.kvSet(key, JSON.stringify(newState));
+      
+      console.log('✅ [ensureFreeTrial] Free trial created:', {
+        trialStartDate: newState.trialStartDate,
+        trialEndDate: newState.trialEndDate,
+        daysRemaining: FREE_TRIAL_DAYS,
+      });
+      
+      return newState;
     }
     
-    console.log('✅ Trial already exists for rider:', riderId);
+    console.log('✅ [ensureFreeTrial] Trial already exists:', {
+      trialStarted: state.trialStarted,
+      trialEndDate: state.trialEndDate,
+    });
+    
     return state;
   } catch (err) {
-    console.error('❌ Error ensuring free trial:', err);
+    console.error('❌ [ensureFreeTrial] Error ensuring free trial:', err);
     return null;
   }
 }
@@ -182,16 +212,39 @@ export async function isSubscriptionExpired(riderId) {
 
 /**
  * Check if free trial is still active
+ * ✅ IMPROVED: Better null checking
  */
 export async function isFreTrialActive(riderId) {
-  const state = await getSubscriptionState(riderId);
-  
-  if (!state.trialStarted || !state.trialEndDate) {
+  try {
+    const state = await getSubscriptionState(riderId);
+    
+    // Must have trial started and end date
+    if (!state || !state.trialStarted || !state.trialEndDate) {
+      console.log('ℹ️ [isFreTrialActive] No trial data for rider:', riderId);
+      return false;
+    }
+
+    const trialEndMs = new Date(state.trialEndDate).getTime();
+    const now = Date.now();
+    const isActive = trialEndMs > now;
+
+    if (isActive) {
+      const daysLeft = Math.ceil((trialEndMs - now) / (1000 * 60 * 60 * 24));
+      console.log('✨ [isFreTrialActive] Trial is ACTIVE:', {
+        trialEndDate: state.trialEndDate,
+        daysLeft: daysLeft,
+      });
+    } else {
+      console.log('⏰ [isFreTrialActive] Trial has EXPIRED:', {
+        trialEndDate: state.trialEndDate,
+      });
+    }
+
+    return isActive;
+  } catch (err) {
+    console.error('❌ [isFreTrialActive] Error checking trial status:', err);
     return false;
   }
-
-  const trialEndMs = new Date(state.trialEndDate).getTime();
-  return trialEndMs > Date.now();
 }
 
 /**
@@ -284,7 +337,7 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
     // Initialize trial state if new rider
     const state = await getSubscriptionState(riderId);
     if (!state.trialStarted) {
-      await initializeFreeTrial(riderId);
+      await ensureFreeTrial(riderId);
     }
 
     // Queue for sync
@@ -418,7 +471,4 @@ export async function getSubscriptionHistory(riderId) {
 // ✅ CLEAN NAMED EXPORTS (No conflicting default export)
 // ============================================================================
 // All functions available via named imports:
-// import { getActiveSubscription, getSubscriptionState, ensureFreeTrial, ... } from './subscriptionUtils'
-// 
-// Constants available via named imports:
-// import { SUBSCRIPTION_PLANS, FREE_TRIAL_DAYS, REMINDER_DAYS_BEFORE, REMINDER_CHECKS_PER_DAY } from './subscriptionUtils'
+// import { getActiveSubscription, getSubscriptionState, ensureFreeTrial, isFreTrialActive, ... } from './subscriptionUtils'
