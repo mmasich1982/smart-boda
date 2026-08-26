@@ -1,21 +1,19 @@
 // rider-app/src/components/SubscriptionBanners.js
 // ✅ REFACTORED: Subscription banners for Home Screen
 // ✅ DISPLAYS BELOW HERO FARE CARD: Free Trial, Reminder, Account Lock
-// ✅ UI/UX: Matches index.html design system
+// ✅ UI/UX: 100% ALIGNED WITH index.html design system
 // ✅ BUSINESS LOGIC: Trial status, reminder rate limiting, lock detection
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
 // ✅ AUTO-INIT: Ensures free trial is initialized for new riders on first home screen load
-// ✅ IMPROVED: Better state management and direct state usage after initialization
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import {
   getActiveSubscription,
   getSubscriptionState,
   isFreTrialActive,
   shouldShowReminderBanner,
   recordReminderShown,
-  isSubscriptionExpired,
   ensureFreeTrial,
 } from '../offline/subscriptionUtils';
 import { getLocalRiderId } from '../offline/db';
@@ -62,7 +60,6 @@ export default function SubscriptionBanners({ navigation }) {
         console.log('🔍 [SubscriptionBanners] Starting subscription check for rider:', riderId);
         
         // ✅ CRITICAL: Ensure free trial is initialized for new riders
-        // This returns the current state (whether just created or existing)
         const ensuredState = await ensureFreeTrial(riderId);
         console.log('📊 [SubscriptionBanners] ensureFreeTrial returned:', {
           trialStarted: ensuredState?.trialStarted,
@@ -139,7 +136,7 @@ export default function SubscriptionBanners({ navigation }) {
   }
 
   // ========================================================================
-  // FREE TRIAL BANNER
+  // FREE TRIAL BANNER - Matches index.html success/green banner style
   // ========================================================================
   if (bannerType === 'trial' && state?.trialEndDate) {
     const trialEndMs = new Date(state.trialEndDate).getTime();
@@ -148,31 +145,27 @@ export default function SubscriptionBanners({ navigation }) {
     console.log('🎨 [SubscriptionBanners] Rendering trial banner with', daysLeft, 'days left');
 
     return (
-      <View style={[styles.banner, styles.bannerTrial]}>
-        <View style={styles.bannerIcon}>
-          <Text style={styles.bannerIconText}>✨</Text>
-        </View>
+      <TouchableOpacity 
+        style={styles.bannerSuccess}
+        onPress={() => navigation.navigate('SubscriptionScreen')}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.bannerIcon}>✨</Text>
         <View style={styles.bannerContent}>
-          <Text style={styles.bannerTitle}>Enjoy 1-Day Free Trial</Text>
-          <Text style={styles.bannerDesc}>
+          <Text style={[styles.bannerText, styles.bannerSuccessText]}>
+            <Text style={styles.bannerSuccessBold}>Enjoy 1-Day Free Trial</Text>
+            {'\n'}
             {daysLeft > 0
               ? `${daysLeft} day${daysLeft > 1 ? 's' : ''} left · Pay before or after`
               : 'Trial ending soon · Subscribe now'}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.bannerAction}
-          onPress={() => navigation.navigate('SubscriptionScreen')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.bannerActionText}>→</Text>
-        </TouchableOpacity>
-      </View>
+      </TouchableOpacity>
     );
   }
 
   // ========================================================================
-  // REMINDER BANNER (2 days before expiry)
+  // REMINDER BANNER - Matches index.html warn/amber banner style
   // ========================================================================
   if (bannerType === 'reminder' && subscription?.expiryDate) {
     const expiryMs = new Date(subscription.expiryDate).getTime();
@@ -181,52 +174,44 @@ export default function SubscriptionBanners({ navigation }) {
     console.log('🎨 [SubscriptionBanners] Rendering reminder banner with', daysLeft, 'days left');
 
     return (
-      <View style={[styles.banner, styles.bannerReminder]}>
-        <View style={styles.bannerIcon}>
-          <Text style={styles.bannerIconText}>👉</Text>
-        </View>
+      <TouchableOpacity 
+        style={styles.bannerWarn}
+        onPress={() => navigation.navigate('SubscriptionScreen')}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.bannerIcon}>👉</Text>
         <View style={styles.bannerContent}>
-          <Text style={styles.bannerTitle}>Subscription Expiring Soon</Text>
-          <Text style={styles.bannerDesc}>
+          <Text style={[styles.bannerText, styles.bannerWarnText]}>
+            <Text style={styles.bannerWarnBold}>Subscription Expiring Soon</Text>
+            {'\n'}
             {daysLeft} day{daysLeft === 1 ? '' : 's'} remaining · Renew now to stay active
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.bannerAction}
-          onPress={() => navigation.navigate('SubscriptionScreen')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.bannerActionText}>→</Text>
-        </TouchableOpacity>
-      </View>
+      </TouchableOpacity>
     );
   }
 
   // ========================================================================
-  // ACCOUNT LOCKED BANNER
+  // ACCOUNT LOCKED BANNER - Matches index.html error/red banner style
   // ========================================================================
   if (bannerType === 'locked') {
     console.log('🎨 [SubscriptionBanners] Rendering locked banner');
 
     return (
-      <View style={[styles.banner, styles.bannerLocked]}>
-        <View style={styles.bannerIcon}>
-          <Text style={styles.bannerIconText}>🔒</Text>
-        </View>
+      <TouchableOpacity 
+        style={styles.bannerError}
+        onPress={() => navigation.navigate('SubscriptionScreen')}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.bannerIcon}>🔒</Text>
         <View style={styles.bannerContent}>
-          <Text style={styles.bannerTitle}>Account Locked</Text>
-          <Text style={styles.bannerDesc}>
+          <Text style={[styles.bannerText, styles.bannerErrorText]}>
+            <Text style={styles.bannerErrorBold}>Account Locked</Text>
+            {'\n'}
             Subscription expired · {state?.lockReason || 'Payment required to continue'}
           </Text>
         </View>
-        <TouchableOpacity
-          style={styles.bannerAction}
-          onPress={() => navigation.navigate('SubscriptionScreen')}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.bannerActionText}>→</Text>
-        </TouchableOpacity>
-      </View>
+      </TouchableOpacity>
     );
   }
 
@@ -234,74 +219,108 @@ export default function SubscriptionBanners({ navigation }) {
 }
 
 // ============================================================================
-// STYLES
+// STYLES - 100% Aligned with index.html design system
 // ============================================================================
 
 const styles = StyleSheet.create({
-  // Container & Layout
-  banner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 14,
+  // Base banner styles - matches index.html .banner class
+  bannerBase: {
     borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
     marginBottom: 14,
-    gap: 12,
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'flex-start',
   },
 
-  // Free Trial Banner - Green/Success styling
-  bannerTrial: {
-    backgroundColor: '#e6f5ef',
-    borderLeftWidth: 4,
-    borderLeftColor: '#1e9e6f',
+  // Success/Green banner - matches index.html .banner.success
+  bannerSuccess: {
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'flex-start',
+    backgroundColor: '#e6f5ef', // --signal-green-bg
   },
 
-  // Reminder Banner - Amber/Warning styling
-  bannerReminder: {
-    backgroundColor: '#fdf3df',
-    borderLeftWidth: 4,
-    borderLeftColor: '#c98a12',
+  // Warn/Amber banner - matches index.html .banner.warn
+  bannerWarn: {
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'flex-start',
+    backgroundColor: '#fdf3df', // --signal-amber-bg
   },
 
-  // Locked Banner - Red/Error styling
-  bannerLocked: {
-    backgroundColor: '#fdecea',
-    borderLeftWidth: 4,
-    borderLeftColor: '#e0453f',
+  // Error/Red banner - matches index.html .banner.error
+  bannerError: {
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'flex-start',
+    backgroundColor: '#fdecea', // --signal-red-bg
   },
 
-  // Icon
+  // Icon - emoji
   bannerIcon: {
-    fontSize: 24,
-  },
-  bannerIconText: {
-    fontSize: 20,
+    fontSize: 18,
+    lineHeight: 20,
   },
 
-  // Content
+  // Content wrapper
   bannerContent: {
     flex: 1,
   },
-  bannerTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 2,
-  },
-  bannerDesc: {
-    fontSize: 11.5,
-    color: '#5b606c',
-    lineHeight: 16,
+
+  // Text - matches index.html .banner base font-size: 12.5px
+  bannerText: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: '#5b606c', // Default text color for success
   },
 
-  // Action Button
-  bannerAction: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  bannerActionText: {
-    fontSize: 18,
-    color: '#ff7a1a',
+  // Bold text inside banner - title
+  bannerBold: {
     fontWeight: '700',
+    color: '#1a1c20', // Dark ink for emphasis
+  },
+
+  // Override text color for warn banner
+  bannerWarnText: {
+    color: '#8a5c0d', // Warn text color from index.html
+  },
+
+  bannerWarnBold: {
+    fontWeight: '700',
+    color: '#8a5c0d',
+  },
+
+  // Override text color for error banner
+  bannerErrorText: {
+    color: '#a5312c', // Error text color from index.html
+  },
+
+  bannerErrorBold: {
+    fontWeight: '700',
+    color: '#a5312c',
+  },
+
+  // Override text color for success banner
+  bannerSuccessText: {
+    color: '#146142', // Success text color from index.html
+  },
+
+  bannerSuccessBold: {
+    fontWeight: '700',
+    color: '#146142',
   },
 });
