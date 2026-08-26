@@ -516,7 +516,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
 
           <TouchableOpacity
             style={styles.buttonPrimary}
-            onPress={() => navigation.navigate('SelectFrequency')}
+            onPress={() => navigation.navigate('ConfirmSubscriptionScreen', {
+              selectedFrequency: 'biweekly'
+            })}
             activeOpacity={0.8}
           >
             <Text style={styles.buttonPrimaryText}>🔓 Pay & Unlock Now →</Text>

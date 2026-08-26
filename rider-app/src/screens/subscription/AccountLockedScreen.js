@@ -152,10 +152,17 @@ const AccountLockedScreen = () => {
   // HANDLE ACTIONS
   // ========================================================================
   const handlePayAndUnlock = () => {
-    navigation.navigate('FrequencySelectScreen');
+    // ✅ For locked accounts, skip frequency selection - go straight to confirm payment
+    // Use their previous subscription frequency (default to biweekly if not found)
+    const frequency = subscription?.plan || 'biweekly';
+    console.log('🔓 [AccountLocked] Pay & Unlock - using frequency:', frequency);
+    navigation.navigate('ConfirmSubscriptionScreen', {
+      selectedFrequency: frequency
+    });
   };
 
   const handleChooseDifferentPlan = () => {
+    // ✅ Let them change their plan if they want
     navigation.navigate('FrequencySelectScreen');
   };
 
