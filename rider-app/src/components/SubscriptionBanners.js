@@ -1,8 +1,17 @@
 // rider-app/src/components/SubscriptionBanners.js
-// ✅ DIAGNOSTIC VERSION: Includes detailed logging for navigation debugging
+// ✅ REFACTORED: Subscription banners for Home Screen
+// ✅ DISPLAYS BELOW HERO FARE CARD: Free Trial, Reminder, Account Lock
+// ✅ UI/UX: Matches index.html design system
+// ✅ BUSINESS LOGIC: Trial status, reminder rate limiting, lock detection
+// ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
+// ✅ AUTO-INIT: Ensures free trial is initialized for new riders on first home screen load
+// ✅ IMPROVED: Better state management and direct state usage after initialization
+// ✅ UPDATED: "Subscribe Now" button on all banners instead of arrow
+// ✅ FIXED: Navigation screen names corrected to match actual registration
+//           'SelectFrequency' instead of 'FrequencySelectScreen'
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import {
   getActiveSubscription,
   getSubscriptionState,
@@ -19,23 +28,7 @@ export default function SubscriptionBanners({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [subscription, setSubscription] = useState(null);
   const [state, setState] = useState(null);
-  const [bannerType, setBannerType] = useState(null);
-
-  // ========================================================================
-  // DIAGNOSTIC: Log navigation on mount
-  // ========================================================================
-  useEffect(() => {
-    console.log('🔍 [SubscriptionBanners] ===== NAVIGATION DIAGNOSTIC =====');
-    console.log('📱 Navigation prop:', navigation);
-    console.log('📱 Navigation.navigate:', navigation?.navigate);
-    console.log('📱 Navigation.getState():', navigation?.getState?.());
-    
-    if (navigation?.getState?.()) {
-      const navState = navigation.getState();
-      console.log('✅ Available route names:', navState.routeNames);
-      console.log('✅ FrequencySelectScreen available?', navState.routeNames?.includes('FrequencySelectScreen'));
-    }
-  }, [navigation]);
+  const [bannerType, setBannerType] = useState(null); // 'trial' | 'reminder' | 'locked' | null
 
   // ========================================================================
   // LOAD RIDER ID ON MOUNT
@@ -71,15 +64,19 @@ export default function SubscriptionBanners({ navigation }) {
       try {
         console.log('🔍 [SubscriptionBanners] Starting subscription check for rider:', riderId);
         
+        // ✅ CRITICAL: Ensure free trial is initialized for new riders
+        // This returns the current state (whether just created or existing)
         const ensuredState = await ensureFreeTrial(riderId);
         console.log('📊 [SubscriptionBanners] ensureFreeTrial returned:', {
           trialStarted: ensuredState?.trialStarted,
           trialEndDate: ensuredState?.trialEndDate,
         });
 
+        // Get the subscription (if any paid plan is active)
         const sub = await getActiveSubscription(riderId);
         console.log('💳 [SubscriptionBanners] Active subscription:', sub ? 'YES' : 'NO');
 
+        // Get full state (trial, reminders, lock)
         const fullState = await getSubscriptionState(riderId);
         console.log('📋 [SubscriptionBanners] Full subscription state:', {
           trialStarted: fullState?.trialStarted,
@@ -90,16 +87,24 @@ export default function SubscriptionBanners({ navigation }) {
         setSubscription(sub);
         setState(fullState);
 
+        // ========================================================================
+        // DETERMINE WHICH BANNER TO SHOW (Priority Order)
+        // ========================================================================
         console.log('🎯 [SubscriptionBanners] Determining banner type...');
         
+        // PRIORITY 1: Account is locked
         if (fullState?.lockedAt) {
           console.log('🔒 [SubscriptionBanners] >>> SHOWING LOCKED BANNER');
           setBannerType('locked');
-        } else if (sub && await shouldShowReminderBanner(riderId)) {
+        }
+        // PRIORITY 2: Reminder for expiring subscription (only if active paid subscription)
+        else if (sub && await shouldShowReminderBanner(riderId)) {
           console.log('👉 [SubscriptionBanners] >>> SHOWING REMINDER BANNER');
           setBannerType('reminder');
           await recordReminderShown(riderId);
-        } else if (fullState?.trialStarted && fullState?.trialEndDate) {
+        }
+        // PRIORITY 3: Free trial is active
+        else if (fullState?.trialStarted && fullState?.trialEndDate) {
           const trialEndMs = new Date(fullState.trialEndDate).getTime();
           const isTrialActive = trialEndMs > Date.now();
           
@@ -112,7 +117,9 @@ export default function SubscriptionBanners({ navigation }) {
             console.log('⏰ [SubscriptionBanners] Trial expired, no banner');
             setBannerType(null);
           }
-        } else {
+        }
+        // No banner to show
+        else {
           console.log('ℹ️ [SubscriptionBanners] >>> NO BANNER TO SHOW');
           setBannerType(null);
         }
@@ -128,34 +135,6 @@ export default function SubscriptionBanners({ navigation }) {
   }, [riderId]);
 
   // ========================================================================
-  // HANDLE NAVIGATION - WITH DETAILED LOGGING
-  // ========================================================================
-  const handleNavigateFrequencySelect = () => {
-    console.log('🔵 [SubscriptionBanners] handleNavigate TRIGGERED');
-    console.log('📱 Navigation object exists?', !!navigation);
-    console.log('📱 Navigation.navigate exists?', !!navigation?.navigate);
-    
-    const navState = navigation?.getState?.();
-    if (navState) {
-      console.log('📱 Available screens:', navState.routeNames);
-      console.log('📱 FrequencySelectScreen in routes?', navState.routeNames?.includes('FrequencySelectScreen'));
-    } else {
-      console.warn('⚠️ Cannot get navigation state');
-    }
-
-    try {
-      console.log('➡️ Attempting navigation to: FrequencySelectScreen');
-      navigation.navigate('FrequencySelectScreen');
-      console.log('✅ Navigation.navigate() call executed');
-    } catch (error) {
-      console.error('❌ Navigation error caught:', error);
-      console.error('❌ Error message:', error.message);
-      console.error('❌ Error name:', error.name);
-      Alert.alert('Navigation Error', `Cannot navigate: ${error.message}`);
-    }
-  };
-
-  // ========================================================================
   // DON'T RENDER IF LOADING, NO RIDER, OR NO BANNER TO SHOW
   // ========================================================================
   if (loading || !riderId || !bannerType) {
@@ -163,7 +142,7 @@ export default function SubscriptionBanners({ navigation }) {
   }
 
   // ========================================================================
-  // FREE TRIAL BANNER
+  // FREE TRIAL BANNER - "Subscribe Now" button (✅ FIXED SCREEN NAME)
   // ========================================================================
   if (bannerType === 'trial' && state?.trialEndDate) {
     const trialEndMs = new Date(state.trialEndDate).getTime();
@@ -186,7 +165,10 @@ export default function SubscriptionBanners({ navigation }) {
         </View>
         <TouchableOpacity
           style={styles.bannerButton}
-          onPress={handleNavigateFrequencySelect}
+          onPress={() => {
+            console.log('🔵 [Trial Banner] Navigating to SelectFrequency');
+            navigation.navigate('SelectFrequency');
+          }}
           activeOpacity={0.7}
         >
           <Text style={styles.bannerButtonText}>Subscribe Now →</Text>
@@ -196,7 +178,7 @@ export default function SubscriptionBanners({ navigation }) {
   }
 
   // ========================================================================
-  // REMINDER BANNER
+  // REMINDER BANNER (2 days before expiry) - "Subscribe Now" button (✅ FIXED SCREEN NAME)
   // ========================================================================
   if (bannerType === 'reminder' && subscription?.expiryDate) {
     const expiryMs = new Date(subscription.expiryDate).getTime();
@@ -217,7 +199,10 @@ export default function SubscriptionBanners({ navigation }) {
         </View>
         <TouchableOpacity
           style={styles.bannerButton}
-          onPress={handleNavigateFrequencySelect}
+          onPress={() => {
+            console.log('🔵 [Reminder Banner] Navigating to SelectFrequency');
+            navigation.navigate('SelectFrequency');
+          }}
           activeOpacity={0.7}
         >
           <Text style={styles.bannerButtonText}>Subscribe Now →</Text>
@@ -227,7 +212,7 @@ export default function SubscriptionBanners({ navigation }) {
   }
 
   // ========================================================================
-  // ACCOUNT LOCKED BANNER
+  // ACCOUNT LOCKED BANNER - "Subscribe Now" button (✅ FIXED SCREEN NAME)
   // ========================================================================
   if (bannerType === 'locked') {
     console.log('🎨 [SubscriptionBanners] Rendering locked banner');
@@ -245,7 +230,10 @@ export default function SubscriptionBanners({ navigation }) {
         </View>
         <TouchableOpacity
           style={styles.bannerButton}
-          onPress={handleNavigateFrequencySelect}
+          onPress={() => {
+            console.log('🔵 [Locked Banner] Navigating to SelectFrequency');
+            navigation.navigate('SelectFrequency');
+          }}
           activeOpacity={0.7}
         >
           <Text style={styles.bannerButtonText}>Subscribe Now →</Text>
@@ -262,6 +250,7 @@ export default function SubscriptionBanners({ navigation }) {
 // ============================================================================
 
 const styles = StyleSheet.create({
+  // Container & Layout
   banner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -272,24 +261,28 @@ const styles = StyleSheet.create({
     gap: 12,
   },
 
+  // Free Trial Banner - Green/Success styling
   bannerTrial: {
     backgroundColor: '#e6f5ef',
     borderLeftWidth: 4,
     borderLeftColor: '#1e9e6f',
   },
 
+  // Reminder Banner - Amber/Warning styling
   bannerReminder: {
     backgroundColor: '#fdf3df',
     borderLeftWidth: 4,
     borderLeftColor: '#c98a12',
   },
 
+  // Locked Banner - Red/Error styling
   bannerLocked: {
     backgroundColor: '#fdecea',
     borderLeftWidth: 4,
     borderLeftColor: '#e0453f',
   },
 
+  // Icon
   bannerIcon: {
     fontSize: 24,
   },
@@ -297,6 +290,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
 
+  // Content
   bannerContent: {
     flex: 1,
   },
@@ -312,6 +306,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
 
+  // Subscribe Now Button (✅ UNIFIED for all banners)
   bannerButton: {
     paddingHorizontal: 12,
     paddingVertical: 10,
