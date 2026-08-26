@@ -34,6 +34,7 @@ import {
   lockAccount,
   unlockAccount,
   getSubscriptionHistory,
+  checkAndEnforceLock,
   SUBSCRIPTION_PLANS
 } from '../../offline/subscriptionUtils';
 
@@ -145,20 +146,45 @@ const SubscriptionScreen = () => {
   }, [localRiderId]);
 
   // ========================================================================
-  // FOCUS EFFECT: Load on screen focus
+  // FOCUS EFFECT: Check if locked, then load subscription data
   // ========================================================================
   useFocusEffect(
     useCallback(() => {
       if (!hasLoadedRef.current && localRiderId) {
-        console.log('📌 SubscriptionScreen focused, loading data...');
-        hasLoadedRef.current = true;
-        loadSubscriptionData();
+        const checkLockAndLoadData = async () => {
+          try {
+            // ✅ Check if account is locked before showing subscription screen
+            const lockStatus = await checkAndEnforceLock(localRiderId);
+            
+            if (lockStatus?.isLocked) {
+              console.log('🔒 [SubscriptionScreen] Account is locked - redirecting to HomeScreen');
+              // Navigate back to HomeScreen, where it will catch the lock and show AccountLockedScreen
+              navigation.reset({
+                index: 0,
+                routes: [{ name: 'HomeScreen' }],
+              });
+              return; // Don't load subscription data
+            }
+
+            // ✅ Account is not locked, safe to show subscription screen
+            console.log('📌 SubscriptionScreen focused, loading data...');
+            hasLoadedRef.current = true;
+            loadSubscriptionData();
+          } catch (err) {
+            console.error('[SubscriptionScreen] Error checking account lock:', err);
+            // Fail-safe: allow subscription screen to load on error
+            hasLoadedRef.current = true;
+            loadSubscriptionData();
+          }
+        };
+
+        checkLockAndLoadData();
       }
 
       return () => {
         // Keep loaded state on unfocus
       };
-    }, [loadSubscriptionData, localRiderId])
+    }, [loadSubscriptionData, localRiderId, navigation])
   );
 
   // ========================================================================
