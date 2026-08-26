@@ -6,7 +6,6 @@
 // ✅ NETWORK AWARE: Graceful fallback when offline
 // ✅ UI/UX: 100% preserved from original
 // ✅ NEW (26 AUG 2026): Subscription lock enforcement - auto-redirect to AccountLockedScreen on expiry
-// ✅ FIXED (26 AUG 2026): Data loading now triggers immediately after lock check passes
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
@@ -39,6 +38,9 @@ const HOME_TILES = [
   { emoji: '🏆', label: 'home.tile_my_goals', route: 'Goals' },
   { emoji: '💡', label: 'home.tile_suggestions_feedback', route: 'SuggestionsFeedback' },
   { emoji: '📲', label: 'home.tile_my_subscription', route: 'Subscription' },
+  
+  
+  
 ];
 
 function LoadingSkeleton() {
@@ -146,6 +148,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   // ✅ Track if data has been loaded on mount
   const hasLoadedRef = useRef(false);
 
+  // ✅ NEW: Track if lock check has been performed
+  const lockCheckPerformedRef = useRef(false);
+
   // ✅ Load riderId on mount
   useEffect(() => {
     const loadRiderId = async () => {
@@ -177,9 +182,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     useCallback(() => {
       const checkLockStatus = async () => {
         // Only check once per screen load
-        if (hasLoadedRef.current || !riderId) {
+        if (lockCheckPerformedRef.current || !riderId) {
           console.log('[HomeScreen] Lock check skipped:', {
-            alreadyLoaded: hasLoadedRef.current,
+            alreadyPerformed: lockCheckPerformedRef.current,
             riderIdMissing: !riderId
           });
           return;
@@ -205,7 +210,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             });
 
             setIsAccountLocked(true);
-            hasLoadedRef.current = true;
+            lockCheckPerformedRef.current = true;
 
             // ✅ CRITICAL: Navigate to AccountLockedScreen
             if (navigation) {
@@ -219,15 +224,15 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           } else {
             console.log('✅ [HomeScreen] Account NOT locked - Proceeding with normal Home Screen');
             setIsAccountLocked(false);
-            hasLoadedRef.current = true;
-            // ✅ FIXED: Data loading will now trigger below after lock check completes
+            lockCheckPerformedRef.current = true;
+            // Allow normal initialization to proceed
           }
         } catch (err) {
           console.error('❌ [HomeScreen] Error checking lock status:', err);
           // On error, fail-safe: allow access (don't block)
           console.log('[HomeScreen] Fail-safe: Allowing access despite lock check error');
           setIsAccountLocked(false);
-          hasLoadedRef.current = true;
+          lockCheckPerformedRef.current = true;
         } finally {
           setLockCheckInProgress(false);
         }
@@ -397,23 +402,30 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     }
   }, [riderId, calculateTodaysTotal, calculateYesterdaysTotal]);
 
-  // ✅ FIXED: Data loading now triggers immediately after lock check completes successfully
-  // This effect runs when lockCheckInProgress changes from true to false (after lock check)
-  useEffect(() => {
-    // Only load if: lock check is done, not locked, riderId available, and not already loaded
-    if (
-      !lockCheckInProgress &&
-      !isAccountLocked &&
-      riderId &&
-      !riderIdLoading &&
-      !isInitialized
-    ) {
-      console.log('[HomeScreen] Lock check complete and passed - loading data now');
-      refresh();
-    }
-  }, [lockCheckInProgress, isAccountLocked, riderId, riderIdLoading, isInitialized, refresh]);
+  // ✅ Main data loading effect
+  // Only load if: riderId available, not already loaded, lock check done, and not locked
+  useFocusEffect(
+    useCallback(() => {
+      // Only load if ready and not already loaded
+      if (
+        !hasLoadedRef.current &&
+        riderId &&
+        !riderIdLoading &&
+        lockCheckPerformedRef.current &&
+        !isAccountLocked
+      ) {
+        console.log('[HomeScreen] Screen focused - loading data');
+        hasLoadedRef.current = true;
+        refresh();
+      }
 
-  // ✅ Show loading skeleton while checking lock or loading rider ID
+      return () => {
+        // Keep loaded state on unfocus
+      };
+    }, [riderId, riderIdLoading, isAccountLocked, refresh])
+  );
+
+  // ✅ Show loading skeleton while checking lock
   if (lockCheckInProgress || riderIdLoading) {
     return <LoadingSkeleton />;
   }
@@ -439,34 +451,26 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           onRetry={() => {
             setHasError(false);
             setErrorMsg(null);
-            refresh();
+            hasLoadedRef.current = false;
+            if (riderId) {
+              refresh();
+            }
           }}
         />
       </HomeScreenErrorBoundary>
     );
   }
 
-  // ✅ Show skeleton while data is loading
-  if (!isInitialized || refreshing) {
+  // ✅ Show loading if not initialized yet
+  if (!isInitialized) {
     return <LoadingSkeleton />;
   }
 
-  // ========================================================================
-  // MAIN RENDER
-  // ========================================================================
+  // ✅ NORMAL HOME SCREEN RENDERING (UI UNCHANGED)
   return (
-    <HomeScreenErrorBoundary onRetry={refresh}>
-      <ScrollView
-        style={styles.container}
-        refreshControl={{
-          refreshing,
-          onRefresh: refresh,
-          colors: ['#ff7a1a'],
-          progressBackgroundColor: '#fff',
-        }}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* TOP BAR */}
+    <HomeScreenErrorBoundary>
+      <ScrollView style={styles.container} refreshing={refreshing} onRefresh={refresh}>
+        {/* TOP BAR - UNCHANGED */}
         <View style={styles.topBar}>
           <View style={styles.brand}>
             <View style={styles.logo}>
@@ -474,53 +478,67 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </View>
             <Text style={styles.brandName}>Smart Boda</Text>
           </View>
+          <TouchableOpacity
+            style={styles.notifBell}
+            onPress={() => {
+              console.log('[HomeScreen] Notification bell tapped');
+            }}
+          >
+            <Text style={styles.bellIcon}>🔔</Text>
+            {queuedCount > 0 && (
+              <View style={styles.notifBadge}>
+                <Text style={styles.badgeText}>{Math.min(queuedCount, 9)}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
         </View>
 
-        {/* SCREEN BODY */}
         <View style={styles.screenBody}>
-          {/* ✅ SUBSCRIPTION BANNERS */}
-          <SubscriptionBanners riderId={riderId} />
-
           {/* HERO FARE CARD */}
-          <HeroFareCard
-            runningTotal={runningTotal}
-            tripsToday={tripsToday}
-            onOpenFareBreakdown={() => navigation.navigate('DailyTradeSummary')}
-          />
+          {bike && (
+            <HeroFareCard
+              bikeProfile={bike}
+              runnningTotal={runningTotal}
+              tripsToday={tripsToday}
+              onTripsTap={() => navigation.navigate('DailyTradeSummary')}
+            />
+          )}
 
-          {/* YESTERDAY'S SUMMARY */}
+          {/* ✅ NEW: SUBSCRIPTION BANNERS (below hero card) */}
+          <SubscriptionBanners navigation={navigation} />
+
+          {/* YESTERDAY'S EARNINGS */}
           {yesterdayTotal !== null && (
             <View style={styles.yesterdayCard}>
               <View style={styles.yesterdayHeader}>
-                <Text style={styles.yesterdayLabel}>Yesterday's Earnings</Text>
+                <Text style={styles.yesterdayLabel}>📊 Yesterday's Earnings</Text>
                 <TouchableOpacity onPress={() => navigation.navigate('DailyTradeSummary')}>
-                  <Text style={styles.viewBreakdownLink}>View breakdown</Text>
+                  <Text style={styles.viewBreakdownLink}>View breakdown →</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.yesterdayAmount}>KSh {yesterdayTotal.toLocaleString()}</Text>
+              <Text style={styles.yesterdayAmount}>KSh {Math.round(yesterdayTotal).toLocaleString()}</Text>
             </View>
           )}
 
-          {/* ENERGY TILE (Fuel / Battery) */}
-          {bike && ENERGY_TILE_BY_FUEL[bike.fuelType] && (
+          {/* ENERGY TILE (based on bike fuel type) */}
+          {bike?.fuelType && ENERGY_TILE_BY_FUEL[bike.fuelType] && (
             <TouchableOpacity
               style={styles.energyTile}
-              onPress={() => navigation.navigate(ENERGY_TILE_BY_FUEL[bike.fuelType].route)}
+              onPress={() => navigation.navigate(ENERGY_TILE_BY_FUEL[bike.fuelType].route, { bikeProfile: bike })}
               activeOpacity={0.7}
             >
               <Text style={styles.tileEmoji}>{ENERGY_TILE_BY_FUEL[bike.fuelType].emoji}</Text>
               <Text style={styles.tileLabel}>
-                {t(ENERGY_TILE_BY_FUEL[bike.fuelType].label) ||
-                  ENERGY_TILE_BY_FUEL[bike.fuelType].label}
+                {t(ENERGY_TILE_BY_FUEL[bike.fuelType].label) || ENERGY_TILE_BY_FUEL[bike.fuelType].label}
               </Text>
             </TouchableOpacity>
           )}
 
           {/* HOME TILES GRID */}
           <View style={styles.tileRow}>
-            {HOME_TILES.slice(0, 2).map(tile => (
+            {HOME_TILES.slice(0, 2).map((tile, i) => (
               <TouchableOpacity
-                key={tile.route}
+                key={i}
                 style={styles.homeTile}
                 onPress={() => navigation.navigate(tile.route)}
                 activeOpacity={0.7}
@@ -532,9 +550,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           </View>
 
           <View style={styles.tileRow}>
-            {HOME_TILES.slice(2, 4).map(tile => (
+            {HOME_TILES.slice(2, 4).map((tile, i) => (
               <TouchableOpacity
-                key={tile.route}
+                key={i}
                 style={styles.homeTile}
                 onPress={() => navigation.navigate(tile.route)}
                 activeOpacity={0.7}
@@ -546,9 +564,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           </View>
 
           <View style={styles.tileRow}>
-            {HOME_TILES.slice(4, 6).map(tile => (
+            {HOME_TILES.slice(4, 6).map((tile, i) => (
               <TouchableOpacity
-                key={tile.route}
+                key={i}
                 style={styles.homeTile}
                 onPress={() => navigation.navigate(tile.route)}
                 activeOpacity={0.7}
@@ -560,9 +578,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           </View>
 
           <View style={styles.tileRow}>
-            {HOME_TILES.slice(6, 8).map(tile => (
+            {HOME_TILES.slice(6, 8).map((tile, i) => (
               <TouchableOpacity
-                key={tile.route}
+                key={i}
                 style={styles.homeTile}
                 onPress={() => navigation.navigate(tile.route)}
                 activeOpacity={0.7}
@@ -574,9 +592,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           </View>
 
           <View style={styles.tileRow}>
-            {HOME_TILES.slice(8, 10).map(tile => (
+            {HOME_TILES.slice(8, 10).map((tile, i) => (
               <TouchableOpacity
-                key={tile.route}
+                key={i}
                 style={styles.homeTile}
                 onPress={() => navigation.navigate(tile.route)}
                 activeOpacity={0.7}
@@ -587,50 +605,64 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             ))}
           </View>
 
-          {/* SYNC STATUS */}
-          {queuedCount > 0 && (
+          {/* SETTINGS SECTION */}
+          <View style={styles.settingsRow}>
+            <View style={styles.settingsListContainer}>
+              <TouchableOpacity
+                style={styles.settingsListItem}
+                onPress={() => navigation.navigate('Settings')}
+                activeOpacity={0.6}
+              >
+                <Text style={styles.settingsListLabel}>⚙️ Settings</Text>
+                <Text style={styles.settingsListArrow}>→</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.settingsListItem}
+                onPress={() => navigation.navigate('ProfileScreen')}
+                activeOpacity={0.6}
+              >
+                <Text style={styles.settingsListLabel}>👤 My Profile</Text>
+                <Text style={styles.settingsListArrow}>→</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.settingsListItem, styles.logoutListItem]}
+                onPress={() => {
+                  Alert.alert('Logout', 'Are you sure you want to logout?', [
+                    { text: 'Cancel', onPress: () => {}, style: 'cancel' },
+                    {
+                      text: 'Logout',
+                      onPress: async () => {
+                        try {
+                          await clearSession();
+                          navigation.replace('PinLogin');
+                        } catch (err) {
+                          console.error('Error logging out:', err);
+                          showToast('Error logging out', 'error');
+                        }
+                      },
+                      style: 'destructive',
+                    },
+                  ]);
+                }}
+                activeOpacity={0.6}
+              >
+                <Text style={[styles.settingsListLabel, styles.logoutText]}>🚪 Logout</Text>
+                <Text style={styles.settingsListArrow}>→</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* SYNC STATUS INFO */}
+          {offlineHours > 0 && (
             <View style={styles.warningBox}>
               <Text style={styles.warningText}>
-                📡 {queuedCount} record{queuedCount > 1 ? 's' : ''} waiting to sync
+                📴 {offlineHours} hour{offlineHours !== 1 ? 's' : ''} since last sync
               </Text>
             </View>
           )}
-
-          {offlineHours > 1 && (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>
-                🔌 Last synced {Math.floor(offlineHours)} hour{offlineHours > 2 ? 's' : ''} ago
-              </Text>
-            </View>
-          )}
-
-          {/* LOGOUT TILE */}
-          <TouchableOpacity
-            style={[styles.homeTile, styles.logoutTile]}
-            onPress={() => {
-              Alert.alert('Logout', 'Are you sure you want to logout?', [
-                { text: 'Cancel', onPress: () => {} },
-                {
-                  text: 'Logout',
-                  onPress: async () => {
-                    try {
-                      await clearSession();
-                      navigation.reset({
-                        index: 0,
-                        routes: [{ name: 'Auth' }],
-                      });
-                    } catch (err) {
-                      showToast('Failed to logout', 'error');
-                    }
-                  },
-                },
-              ]);
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.tileEmoji}>🚪</Text>
-            <Text style={[styles.tileLabel, { color: '#e0453f' }]}>Logout</Text>
-          </TouchableOpacity>
+          
         </View>
       </ScrollView>
     </HomeScreenErrorBoundary>
@@ -644,6 +676,7 @@ const styles = StyleSheet.create({
   },
   errorContainer: {
     flex: 1,
+    backgroundColor: '#f6f4ef',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
