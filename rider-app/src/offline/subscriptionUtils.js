@@ -298,12 +298,12 @@ export async function ensureFreeTrial(riderId) {
       console.log('✨ [ensureFreeTrial] New rider detected - initializing free trial');
       
       const now = Date.now();
-      const trialEndMs = now + (FREE_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+      const trialEndMs = now + 120000; // 2 minutes for testing
 
       const newState = {
         trialStarted: true,
-        trialStartDate: new Date(now).toISOString(),
-        trialEndDate: new Date(trialEndMs).toISOString(),
+        trialStartDate: toEATString(now),
+        trialEndDate: toEATString(trialEndMs),
         trialEndMs: trialEndMs,
         reminderCount: 0,
         lastReminderCheck: null,
@@ -317,7 +317,7 @@ export async function ensureFreeTrial(riderId) {
       console.log('✅ [ensureFreeTrial] Free trial created:', {
         trialStartDate: newState.trialStartDate,
         trialEndDate: newState.trialEndDate,
-        daysRemaining: FREE_TRIAL_DAYS,
+        daysRemaining: 0.00138, // 2 minutes in days
       });
       
       return newState;
