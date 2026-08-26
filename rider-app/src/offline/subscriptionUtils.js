@@ -46,14 +46,14 @@ function toEATString(timestamp) {
  * ============================================================================
  * Bi-Weekly Plan:  KSh 500  (14 days)
  * Monthly Plan:    KSh 1000 (30 days)
- * Free Trial:      1 day (default for new subscribers)
+ * Free Trial:      2 Hours (default for new subscribers)
  * 
  * ============================================================================
  * BUSINESS RULES
  * ============================================================================
  * 
  * FREE TRIAL:
- * • All new riders get 1-day free trial automatically
+ * • All new riders get a 2-hour free trial automatically
  * • Trial banner shown on Home Screen immediately on first load
  * • Trial status persisted in IndexedDB
  * • Can pay before or after trial expiry
@@ -92,7 +92,9 @@ export const SUBSCRIPTION_PLANS = {
   },
 };
 
-export const FREE_TRIAL_DAYS = 1;
+// ✅ 2-HOUR FREE TRIAL (7,200,000 milliseconds)
+export const FREE_TRIAL_HOURS = 2;
+export const FREE_TRIAL_MS = 2 * 60 * 60 * 1000; // 7200000 ms
 export const REMINDER_DAYS_BEFORE = 2;
 export const REMINDER_CHECKS_PER_DAY = 3;
 
@@ -506,7 +508,7 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
 export async function initializeFreeTrial(riderId) {
   try {
     const now = Date.now();
-    const trialEndMs = now + 120000; // 2 minutes for testing
+    const trialEndMs = now + FREE_TRIAL_MS; // 2 hours
 
     const state = {
       trialStarted: true,
@@ -523,6 +525,7 @@ export async function initializeFreeTrial(riderId) {
     await indexedDbAdapter.kvSet(key, JSON.stringify(state));
 
     console.log('✅ Free trial initialized for rider:', riderId);
+    console.log('   Trial duration: 2 hours');
     console.log('   Trial ends at:', toEATString(trialEndMs));
     return state;
   } catch (err) {
@@ -635,7 +638,7 @@ export async function resetSubscriptionForTesting(riderId) {
     
     // Initialize fresh free trial
     const now = Date.now();
-    const trialEndMs = now + 120000; // 2 minutes for testing
+    const trialEndMs = now + FREE_TRIAL_MS; // 2 hours
     
     const freshState = {
       trialStarted: true,
@@ -652,7 +655,7 @@ export async function resetSubscriptionForTesting(riderId) {
     await indexedDbAdapter.kvSet(stateKey, JSON.stringify(freshState));
     
     console.log('✅ [resetSubscriptionForTesting] Subscription state reset successfully');
-    console.log('   Trial period: 2 minutes');
+    console.log('   Trial period: 2 hours');
     console.log('   Trial expires:', toEATString(trialEndMs));
     
     return freshState;

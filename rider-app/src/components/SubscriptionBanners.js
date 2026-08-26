@@ -172,9 +172,9 @@ export default function SubscriptionBanners({ navigation }) {
   // ========================================================================
   if (bannerType === 'trial' && state?.trialEndDate) {
     const trialEndMs = new Date(state.trialEndDate).getTime();
-    const daysLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60 * 24));
+    const hoursLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60));
 
-    console.log('🎨 [SubscriptionBanners] Rendering trial banner with', daysLeft, 'days left');
+    console.log('🎨 [SubscriptionBanners] Rendering trial banner with', hoursLeft, 'hours left');
 
     return (
       <View style={[styles.banner, styles.bannerTrial]}>
@@ -182,10 +182,10 @@ export default function SubscriptionBanners({ navigation }) {
           <Text style={styles.bannerIconText}>✨</Text>
         </View>
         <View style={styles.bannerContent}>
-          <Text style={styles.bannerTitle}>Enjoy 1-Day Free Trial</Text>
+          <Text style={styles.bannerTitle}>Enjoy 2-Hour Free Trial</Text>
           <Text style={styles.bannerDesc}>
-            {daysLeft > 0
-              ? `${daysLeft} day${daysLeft > 1 ? 's' : ''} left · Pay before or after`
+            {hoursLeft > 0
+              ? `${hoursLeft} hour${hoursLeft > 1 ? 's' : ''} left · Pay before or after`
               : 'Trial ending soon · Subscribe now'}
           </Text>
         </View>
