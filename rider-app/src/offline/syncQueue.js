@@ -1,7 +1,6 @@
 // rider-app/src/offline/syncQueue.js
 // ✅ MIGRATION: Fully migrated to IndexedDB from LocalStore
 // ✅ FIXED: processPendingSync() now calls REAL backend API (not simulated)
-// ✅ CRITICAL: Payment sync includes proper header and query param formatting
 // Uses existing indexedDbAdapter for non-blocking, structured queries
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
@@ -234,11 +233,11 @@ export const getSyncStats = async () => {
 
 /**
  * ✅ ENQUEUE FUNCTION: Main entry point for queuing offline operations
- * Used by screens like FuelEntryScreen, SendMoneyHomeScreen, ConfirmSubscriptionScreen, etc.
+ * Used by screens like FuelEntryScreen, SendMoneyHomeScreen, etc.
  * Signature: enqueue(type, data) -> creates record with auto-generated id
  * 
- * @param {string} type - Type of record (fuel_entry, subscription_payment, etc.)
- * @param {object} data - Data object to enqueue (already normalized)
+ * @param {string} type - Type of record (fuel_entry, compliance_document, etc.)
+ * @param {object} data - Data object to enqueue
  * @returns {Promise<boolean>} - True if queued successfully
  */
 export const enqueue = async (type, data) => {
@@ -248,48 +247,30 @@ export const enqueue = async (type, data) => {
       return false;
     }
 
-    // ✅ CRITICAL: For subscription_payment, data should already be normalized
-    // by normalizePaymentRecord() in subscriptionUtils.js
-    let recordData = data;
-    let recordId = data.id;
-    let endpoint = data.endpoint;
+    // Generate unique ID based on type and timestamp
+    const id = `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // ✅ Type-specific handling
-    if (type === 'subscription_payment') {
-      // ✅ Payment data must already include: id, endpoint, and normalized fields
-      if (!recordId || !endpoint) {
-        console.error('enqueue: subscription_payment missing id or endpoint');
-        return false;
-      }
-      console.log('📤 [enqueue] subscription_payment with endpoint:', endpoint);
-    } else {
-      // For other types, generate endpoint from type if not provided
-      const endpointMap = {
-        'bike_profile': '/api/bike-profile',
-        'fuel_entry': '/api/fuel-entries',
-        'battery_entry': '/api/battery-entries',
-        'odometer_reading': '/api/odometer-readings',
-        'maintenance_entry': '/api/maintenance-entries',
-        'compliance_document': '/api/compliance-documents',
-        'remittance': '/api/remittances',
-        'trip': '/api/trips',
-        'lipa_later': '/api/lipa-later',
-        'subscription': '/subscriptions',
-      };
+    // Map type to endpoint (if needed by backend)
+    const endpointMap = {
+      'bike_profile': '/api/bike-profile',
+      'fuel_entry': '/api/fuel-entries',
+      'battery_entry': '/api/battery-entries',
+      'odometer_reading': '/api/odometer-readings',
+      'maintenance_entry': '/api/maintenance-entries',
+      'compliance_document': '/api/compliance-documents',
+      'remittance': '/api/remittances',
+      'trip': '/api/trips',
+      'lipa_later': '/api/lipa-later',
+      'subscription_payment': '/subscriptions/payment',
+    };
 
-      // Generate unique ID if not provided
-      if (!recordId) {
-        recordId = `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      }
-
-      endpoint = endpoint || endpointMap[type] || `/api/${type}`;
-    }
+    const endpoint = endpointMap[type] || `/api/${type}`;
 
     const record = {
-      id: recordId,
+      id,
       type,
       endpoint,
-      data: recordData,
+      data,
       timestamp: new Date().toISOString(),
       retries: 0,
     };
@@ -298,7 +279,7 @@ export const enqueue = async (type, data) => {
     const result = await addToSyncQueue(record);
     
     if (result) {
-      console.log(`✅ enqueue: Queued ${type} with ID: ${recordId}`);
+      console.log(`✅ enqueue: Queued ${type} for sync`);
     } else {
       console.error(`❌ enqueue: Failed to queue ${type}`);
     }
@@ -381,11 +362,7 @@ export const startSyncMonitor = async () => {
  * ✅ PROCESS PENDING SYNC: Attempts to sync all pending records
  * Called when app comes online or periodically
  * 
- * ⭐ KEY IMPLEMENTATION:
- * - Calls REAL backend API with proper headers and formatting
- * - For subscription_payment: includes X-Sync-ID, X-Client-Timestamp headers
- * - Handles idempotency via sync_id
- * - Handles 4xx vs 5xx errors differently
+ * ⭐ KEY FIX: This now calls REAL backend API instead of simulating success
  * 
  * @returns {Promise<object>} - Sync results {succeeded, failed, retried}
  */
@@ -416,29 +393,21 @@ export const processPendingSync = async () => {
           continue;
         }
 
+        // ✅ ⭐ CRITICAL FIX: Actually call your backend API
         console.log(`[ProcessSync] 📤 Syncing ${record.type}: ${record.id} → ${record.endpoint}`);
         
-        // ✅ CRITICAL: Build request with proper headers for subscription payments
-        const requestOptions = {
+        const response = await fetch(record.endpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'X-Sync-ID': record.id,
+            'X-Client-Timestamp': record.timestamp,
           },
-          body: JSON.stringify(record.data),
-        };
-
-        // ✅ For subscription_payment, add sync headers
-        if (record.type === 'subscription_payment') {
-          requestOptions.headers['X-Sync-ID'] = record.data.sync_id || record.id;
-          requestOptions.headers['X-Client-Timestamp'] = record.data.createdAt || new Date().toISOString();
-          console.log(`[ProcessSync] 💳 Payment sync headers:`, {
-            'X-Sync-ID': requestOptions.headers['X-Sync-ID'],
-            'X-Client-Timestamp': requestOptions.headers['X-Client-Timestamp'],
-          });
-        }
-
-        // ✅ Make the API call
-        const response = await fetch(record.endpoint, requestOptions);
+          body: JSON.stringify({
+            ...record.data,
+            sync_id: record.id,
+          }),
+        });
 
         // ✅ Handle response status
         if (response.ok) {
