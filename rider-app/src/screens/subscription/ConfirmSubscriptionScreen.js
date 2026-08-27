@@ -3,6 +3,7 @@
 // ✅ BUSINESS LOGIC: Confirm subscription, capture M-Pesa code, create record
 // ✅ UI/UX: Matches index.html design system (cards, buttons, M-Pesa flow)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
+// ✅ FIXED: Payment sync data structure aligned with backend expectations
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -27,7 +28,7 @@ import {
   SUBSCRIPTION_PLANS,
   getSubscriptionState
 } from '../../offline/subscriptionUtils';
-import { addToSyncQueue } from '../../offline/syncQueue';
+import { addToSyncQueue, processPendingSync } from '../../offline/syncQueue';
 
 const ConfirmSubscriptionScreen = () => {
   const navigation = useNavigation();
@@ -134,25 +135,29 @@ const ConfirmSubscriptionScreen = () => {
         throw new Error('Failed to create subscription');
       }
 
-      // ✅ Log the payment record with M-Pesa code
+      // ✅ FIXED: Generate unique payment ID with consistent format
+      const paymentId = `payment_${localRiderId}_${Date.now()}`;
+      const currentTimestamp = new Date().toISOString();
+      const currentTimestampMs = Date.now();
+
+      // ✅ FIXED: Payment record structure aligned with backend expectations
       const paymentRecord = {
-        id: `payment_${localRiderId}_${Date.now()}`,
-        riderId: localRiderId,
+        id: paymentId,
         type: 'subscription',
         amount: plan.amount,
-        plan: selectedFrequency,
         currency: 'KES',
         status: 'pending_verification',
         channel: 'Manual (Lipa na M-Pesa / Pochi / Send Money)',
-        mpesaCode: validatedCode,
-        createdAt: new Date().toISOString(),
-        ts: Date.now(),
-        timestamp: Date.now(),
+        mpesa_code: validatedCode,
+        plan: selectedFrequency,
+        createdAt: currentTimestamp,
+        ts: currentTimestampMs,
+        timestamp: currentTimestampMs,
         syncStatus: 'pending',
       };
 
       // ✅ Save payment record to IndexedDB
-      const paymentKey = `payment_${localRiderId}_${paymentRecord.id}`;
+      const paymentKey = `payment_${localRiderId}_${paymentId}`;
       await indexedDbAdapter.kvSet(paymentKey, JSON.stringify(paymentRecord));
 
       // ✅ Add to payment history
@@ -177,16 +182,26 @@ const ConfirmSubscriptionScreen = () => {
         console.log('🔓 Account unlocked after payment');
       }
 
-      // ✅ Queue for backend sync
+      // ✅ FIXED: Queue for backend sync with proper data structure
+      // The data sent must match what subscriptions.js POST /subscriptions/payment expects
       await addToSyncQueue({
-        id: paymentRecord.id,
+        id: paymentId,
         type: 'subscription_payment',
-        endpoint: `/subscriptions/payment?rider_id=${localRiderId}`,
+        endpoint: `/subscriptions/payment`,
         data: paymentRecord,
-        timestamp: new Date(),
+        timestamp: currentTimestamp,
+        riderId: localRiderId,
       });
 
-      console.log('✅ Subscription created & payment logged');
+      console.log('✅ Subscription created & payment queued for sync');
+
+      // ✅ CRITICAL FIX: Trigger immediate sync attempt
+      // This ensures payment is sent to backend as soon as network is available
+      setTimeout(() => {
+        processPendingSync().catch(err => {
+          console.error('⚠️ Sync attempt failed (will retry on next check):', err.message);
+        });
+      }, 100);
 
       // ✅ CRITICAL FIX: Navigate immediately after payment success
       // This prevents duplicate payment capture and ensures user goes to Home
@@ -285,61 +300,53 @@ const ConfirmSubscriptionScreen = () => {
 
       {/* M-PESA PAYMENT CARD */}
       <View style={styles.mpesaCard}>
-        <Text style={styles.mpesaCardTitle}>📲 Payment Instructions</Text>
+        <Text style={styles.mpesaCardTitle}>📱 How to Pay</Text>
         <Text style={styles.mpesaCardText}>
-          Please use "Send Money" to the Safaricom number below.
+          Open M-Pesa on your phone and select <Text style={{ fontWeight: '700' }}>Lipa na M-Pesa Online</Text>, then follow these steps:
         </Text>
 
         <View style={styles.paymentNumberBox}>
           <View>
-            <Text style={styles.paymentNumberLabel}>Safaricom Number</Text>
-            <Text style={styles.paymentNumber}>0757 334 481</Text>
+            <Text style={styles.paymentNumberLabel}>Business / Paybill Number</Text>
+            <Text style={styles.paymentNumber}>102883</Text>
           </View>
-          <TouchableOpacity
-            onPress={() => {
-              // Copy to clipboard logic
-              console.log('📋 Copy number to clipboard');
-            }}
-          >
-            <Text style={styles.copyIcon}>📋</Text>
-          </TouchableOpacity>
+          <Text style={styles.copyIcon}>📋</Text>
         </View>
 
         <View style={styles.paymentAmountBox}>
-          <Text style={styles.paymentAmountLabel}>Amount To Send</Text>
-          <Text style={styles.paymentAmount}>KSh {plan.amount.toLocaleString()}</Text>
+          <Text style={styles.paymentAmountLabel}>Amount to Send</Text>
+          <Text style={styles.paymentAmount}>KSh {plan.amount}</Text>
         </View>
 
         <Text style={styles.mpesaCardNote}>
-          ✅ Tap below once you've sent the payment and we'll activate your plan right away.
+          You'll receive an M-Pesa confirmation message. Copy the code and paste it below to complete your subscription.
         </Text>
       </View>
 
-      {/* ERROR MESSAGE */}
+      {/* ERROR BANNER */}
       {error && (
         <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>⚠️ {error}</Text>
+          <Text style={styles.errorText}>{error}</Text>
         </View>
       )}
 
       {/* M-PESA CODE INPUT */}
       <View style={styles.fieldGroup}>
         <Text style={styles.fieldLabel}>
-          M-Pesa Confirmation Code <Text style={styles.fieldRequired}>*</Text>
+          M-Pesa Confirmation Code
+          <Text style={styles.fieldRequired}> *</Text>
         </Text>
         <TextInput
-          style={[
-            styles.textInput,
-            fieldErrors.mpesaCode && styles.textInputError
-          ]}
-          placeholder="e.g. QK71X9Y2AB"
-          placeholderTextColor="#c9c2b6"
-          maxLength={15}
+          style={[styles.textInput, fieldErrors.mpesaCode && styles.textInputError]}
+          placeholder="E.g., ABC123XYZ"
+          placeholderTextColor="#b4b0a6"
           value={mpesaCode}
-          onChangeText={(text) => {
-            setMpesaCode(text.toUpperCase());
-            if (fieldErrors.mpesaCode) {
-              setFieldErrors({ ...fieldErrors, mpesaCode: null });
+          onChangeText={setMpesaCode}
+          maxLength={50}
+          keyboardType="default"
+          onSubmitEditing={() => {
+            if (!loading) {
+              handleSubmitPayment();
             }
           }}
           editable={!loading}

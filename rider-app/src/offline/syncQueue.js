@@ -1,6 +1,7 @@
 // rider-app/src/offline/syncQueue.js
 // ✅ MIGRATION: Fully migrated to IndexedDB from LocalStore
-// ✅ FIXED: processPendingSync() now calls REAL backend API (not simulated)
+// ✅ FIXED: processPendingSync() now properly sends rider_id in query params and correct headers
+// ✅ FIXED: Headers match backend expectations (X-Sync-ID, X-Client-Timestamp)
 // Uses existing indexedDbAdapter for non-blocking, structured queries
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
@@ -40,7 +41,7 @@ export const getQueuedRecords = async () => {
 
 /**
  * Add record to sync queue (persisted in IndexedDB)
- * @param {object} record - Record to add {id, type, endpoint, data, timestamp}
+ * @param {object} record - Record to add {id, type, endpoint, data, timestamp, riderId}
  * @returns {Promise<boolean>} - True if successful
  */
 export const addToSyncQueue = async (record) => {
@@ -65,6 +66,7 @@ export const addToSyncQueue = async (record) => {
       endpoint: record.endpoint,
       data: record.data,
       timestamp: record.timestamp || new Date().toISOString(),
+      riderId: record.riderId,
       retries: 0,
     };
 
@@ -362,7 +364,7 @@ export const startSyncMonitor = async () => {
  * ✅ PROCESS PENDING SYNC: Attempts to sync all pending records
  * Called when app comes online or periodically
  * 
- * ⭐ KEY FIX: This now calls REAL backend API instead of simulating success
+ * ⭐ FIXED: Properly constructs fetch URL with rider_id query param and headers
  * 
  * @returns {Promise<object>} - Sync results {succeeded, failed, retried}
  */
@@ -393,20 +395,25 @@ export const processPendingSync = async () => {
           continue;
         }
 
-        // ✅ ⭐ CRITICAL FIX: Actually call your backend API
-        console.log(`[ProcessSync] 📤 Syncing ${record.type}: ${record.id} → ${record.endpoint}`);
+        // ✅ ⭐ FIXED: Construct proper URL with rider_id query parameter
+        let url = record.endpoint;
+        if (record.riderId) {
+          // If endpoint doesn't already have query params, add rider_id
+          const separator = url.includes('?') ? '&' : '?';
+          url = `${url}${separator}rider_id=${record.riderId}`;
+        }
+
+        console.log(`[ProcessSync] 📤 Syncing ${record.type}: ${record.id} → ${url}`);
         
-        const response = await fetch(record.endpoint, {
+        // ✅ FIXED: Send proper headers that match backend expectations
+        const response = await fetch(url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-Sync-ID': record.id,
-            'X-Client-Timestamp': record.timestamp,
+            'X-Client-Timestamp': record.timestamp || new Date().toISOString(),
           },
-          body: JSON.stringify({
-            ...record.data,
-            sync_id: record.id,
-          }),
+          body: JSON.stringify(record.data),
         });
 
         // ✅ Handle response status
