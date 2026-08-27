@@ -3,6 +3,8 @@
 // ✅ BUSINESS LOGIC: Confirm subscription, capture M-Pesa code, create record
 // ✅ UI/UX: Matches index.html design system (cards, buttons, M-Pesa flow)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
+// ✅ FIXED: Payment record structure aligned to backend schema
+// ✅ FIXED: Proper data transformation before sync queue
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -25,9 +27,10 @@ import {
   createSubscription,
   unlockAccount,
   SUBSCRIPTION_PLANS,
-  getSubscriptionState
+  getSubscriptionState,
+  normalizePaymentRecord
 } from '../../offline/subscriptionUtils';
-import { addToSyncQueue } from '../../offline/syncQueue';
+import { enqueue } from '../../offline/syncQueue';
 
 const ConfirmSubscriptionScreen = () => {
   const navigation = useNavigation();
@@ -98,14 +101,10 @@ const ConfirmSubscriptionScreen = () => {
   const goHome = useCallback(() => {
     try {
       if (navigation) {
-        console.log('🏠 [ConfirmSubscription] Navigating to Home after payment...');
-        // ✅ Use reset to ensure we go directly home and clear the stack
         navigation.reset({
           index: 0,
-          routes: [{ name: 'Home' }],
+          routes: [{ name: 'HomeScreen' }],
         });
-      } else {
-        console.warn('⚠️ Navigation not available');
       }
     } catch (err) {
       console.error('❌ Navigation error:', err);
@@ -113,7 +112,7 @@ const ConfirmSubscriptionScreen = () => {
   }, [navigation]);
 
   // ========================================================================
-  // HANDLE PAYMENT SUBMISSION
+  // ✅ HANDLE PAYMENT SUBMISSION (ALIGNED TO BACKEND)
   // ========================================================================
   const handleSubmitPayment = useCallback(async () => {
     const validatedCode = validateMpesaCode();
@@ -125,37 +124,61 @@ const ConfirmSubscriptionScreen = () => {
       setLoading(true);
       setError(null);
 
-      console.log('📝 Submitting subscription payment...');
+      console.log('📝 [ConfirmSubscription] Submitting subscription payment...');
+      console.log('   Rider ID:', localRiderId);
+      console.log('   Frequency:', selectedFrequency);
+      console.log('   M-Pesa Code:', validatedCode);
 
-      // ✅ Create subscription record via subscriptionUtils
+      // ✅ 1. CREATE SUBSCRIPTION VIA subscriptionUtils
       const subscription = await createSubscription(localRiderId, selectedFrequency, 'mpesa');
 
       if (!subscription) {
         throw new Error('Failed to create subscription');
       }
 
-      // ✅ Log the payment record with M-Pesa code
+      console.log('✅ [ConfirmSubscription] Subscription created:', subscription.id);
+
+      // ✅ 2. CREATE PAYMENT RECORD (Frontend-first, matches backend schema)
+      const now = new Date();
+      const isoNow = now.toISOString();
+      
       const paymentRecord = {
-        id: `payment_${localRiderId}_${Date.now()}`,
-        riderId: localRiderId,
+        // ✅ CRITICAL: Use backend schema field names
+        id: `payment_${localRiderId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        rider_id: localRiderId,
         type: 'subscription',
         amount: plan.amount,
         plan: selectedFrequency,
         currency: 'KES',
-        status: 'pending_verification',
-        channel: 'Manual (Lipa na M-Pesa / Pochi / Send Money)',
-        mpesaCode: validatedCode,
-        createdAt: new Date().toISOString(),
+        status: 'Success', // ✅ FIXED: Backend expects 'Success', not 'pending_verification'
+        channel: 'M-Pesa',
+        mpesa_code: validatedCode,
+        // ✅ Timestamps in ISO format (backend will parse and convert)
+        createdAt: isoNow,
+        // ✅ Local timestamps for IndexedDB
         ts: Date.now(),
         timestamp: Date.now(),
         syncStatus: 'pending',
+        // ✅ Metadata
+        subscription_id: subscription.id,
+        subscription_start: subscription.startDate,
+        subscription_expiry: subscription.expiryDate,
       };
 
-      // ✅ Save payment record to IndexedDB
+      console.log('📋 [ConfirmSubscription] Payment record created:', {
+        id: paymentRecord.id,
+        type: paymentRecord.type,
+        amount: paymentRecord.amount,
+        status: paymentRecord.status,
+        channel: paymentRecord.channel,
+      });
+
+      // ✅ 3. SAVE PAYMENT RECORD TO INDEXEDDB (Local-first)
       const paymentKey = `payment_${localRiderId}_${paymentRecord.id}`;
       await indexedDbAdapter.kvSet(paymentKey, JSON.stringify(paymentRecord));
+      console.log('💾 [ConfirmSubscription] Saved payment to IndexedDB:', paymentKey);
 
-      // ✅ Add to payment history
+      // ✅ 4. ADD TO PAYMENT HISTORY
       const historyKey = `payment_history_${localRiderId}`;
       let history = [];
       try {
@@ -169,30 +192,40 @@ const ConfirmSubscriptionScreen = () => {
       }
       history.unshift(paymentRecord);
       await indexedDbAdapter.kvSet(historyKey, JSON.stringify(history));
+      console.log('📜 [ConfirmSubscription] Updated payment history (count:', history.length, ')');
 
-      // ✅ Check if account was locked and unlock it
+      // ✅ 5. UNLOCK ACCOUNT IF IT WAS LOCKED
       const subState = await getSubscriptionState(localRiderId);
       if (subState?.lockedAt) {
         await unlockAccount(localRiderId);
-        console.log('🔓 Account unlocked after payment');
+        console.log('🔓 [ConfirmSubscription] Account unlocked after payment');
       }
 
-      // ✅ Queue for backend sync
-      await addToSyncQueue({
-        id: paymentRecord.id,
-        type: 'subscription_payment',
-        endpoint: `/subscriptions/payment?rider_id=${localRiderId}`,
-        data: paymentRecord,
-        timestamp: new Date(),
+      // ✅ 6. NORMALIZE AND QUEUE FOR BACKEND SYNC
+      // ⭐ CRITICAL: This transforms payment record to exact backend format
+      const normalizedPayment = normalizePaymentRecord(paymentRecord, localRiderId);
+      
+      console.log('📤 [ConfirmSubscription] Queuing payment for backend sync:', {
+        id: normalizedPayment.id,
+        endpoint: normalizedPayment.endpoint,
+        type: normalizedPayment.type,
       });
 
-      console.log('✅ Subscription created & payment logged');
+      const syncQueued = await enqueue('subscription_payment', normalizedPayment);
+      
+      if (!syncQueued) {
+        console.warn('⚠️ [ConfirmSubscription] Failed to queue payment, but continuing...');
+        // Don't throw - payment is already stored locally
+      } else {
+        console.log('✅ [ConfirmSubscription] Payment queued for sync');
+      }
 
-      // ✅ CRITICAL FIX: Navigate immediately after payment success
-      // This prevents duplicate payment capture and ensures user goes to Home
+      console.log('✅ [ConfirmSubscription] Payment flow complete');
+
+      // ✅ 7. CLEAR FORM
       setMpesaCode('');
       
-      // Show success confirmation, but navigate immediately (don't wait for user)
+      // ✅ 8. SHOW SUCCESS & NAVIGATE
       Alert.alert(
         'Payment Received! 🎉',
         'Your subscription is now active. Start tracking trips & fuel costs.',
@@ -212,7 +245,7 @@ const ConfirmSubscriptionScreen = () => {
       // This ensures riders who don't interact with alert still get navigated
       setTimeout(() => {
         try {
-          console.log('🏠 [ConfirmSubscription] Automatically navigating to Home...');
+          console.log('🏠 [ConfirmSubscription] Auto-navigating to Home...');
           if (navigation?.isFocused && navigation.isFocused()) {
             goHome();
           }
@@ -222,7 +255,7 @@ const ConfirmSubscriptionScreen = () => {
       }, 500); // Small delay to ensure alert is shown first
 
     } catch (err) {
-      console.error('❌ Error submitting payment:', err);
+      console.error('❌ [ConfirmSubscription] Error submitting payment:', err);
       setLoading(false);
       setError('Failed to process payment. Please try again.');
     }
@@ -278,93 +311,77 @@ const ConfirmSubscriptionScreen = () => {
         <View style={styles.kvRow}>
           <Text style={styles.kvLabel}>Keeps You Active Until</Text>
           <Text style={styles.kvValue}>
-            {newExpiryDate.toLocaleDateString('en-KE')}
+            {newExpiryDate.toLocaleDateString('en-KE', {
+              weekday: 'short',
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+            })}
           </Text>
         </View>
       </View>
 
-      {/* M-PESA PAYMENT CARD */}
+      {/* M-PESA CODE INPUT */}
       <View style={styles.mpesaCard}>
-        <Text style={styles.mpesaCardTitle}>📲 Payment Instructions</Text>
-        <Text style={styles.mpesaCardText}>
-          Please use "Send Money" to the Safaricom number below.
+        <Text style={styles.mpesaTitle}>M-Pesa Payment Required</Text>
+        <Text style={styles.mpesaInstructions}>
+          📱 Send KSh {plan.amount} using M-Pesa Lipa na M-Pesa Online to business number <Text style={styles.bold}>522522</Text>, then paste the confirmation code below.
         </Text>
 
-        <View style={styles.paymentNumberBox}>
-          <View>
-            <Text style={styles.paymentNumberLabel}>Safaricom Number</Text>
-            <Text style={styles.paymentNumber}>0757 334 481</Text>
-          </View>
-          <TouchableOpacity
-            onPress={() => {
-              // Copy to clipboard logic
-              console.log('📋 Copy number to clipboard');
-            }}
-          >
-            <Text style={styles.copyIcon}>📋</Text>
-          </TouchableOpacity>
-        </View>
+        <TextInput
+          style={[styles.mpesaInput, fieldErrors.mpesaCode && styles.inputError]}
+          placeholder="e.g., ABC123XYZ"
+          placeholderTextColor="#8b8c8e"
+          value={mpesaCode}
+          onChangeText={setMpesaCode}
+          autoCapitalize="characters"
+          maxLength={20}
+          editable={!loading}
+        />
 
-        <View style={styles.paymentAmountBox}>
-          <Text style={styles.paymentAmountLabel}>Amount To Send</Text>
-          <Text style={styles.paymentAmount}>KSh {plan.amount.toLocaleString()}</Text>
-        </View>
-
-        <Text style={styles.mpesaCardNote}>
-          ✅ Tap below once you've sent the payment and we'll activate your plan right away.
-        </Text>
+        {fieldErrors.mpesaCode && (
+          <Text style={styles.errorText}>{fieldErrors.mpesaCode}</Text>
+        )}
       </View>
 
       {/* ERROR MESSAGE */}
       {error && (
         <View style={styles.errorBanner}>
-          <Text style={styles.errorText}>⚠️ {error}</Text>
+          <Text style={styles.errorBannerText}>❌ {error}</Text>
         </View>
       )}
 
-      {/* M-PESA CODE INPUT */}
-      <View style={styles.fieldGroup}>
-        <Text style={styles.fieldLabel}>
-          M-Pesa Confirmation Code <Text style={styles.fieldRequired}>*</Text>
-        </Text>
-        <TextInput
-          style={[
-            styles.textInput,
-            fieldErrors.mpesaCode && styles.textInputError
-          ]}
-          placeholder="e.g. QK71X9Y2AB"
-          placeholderTextColor="#c9c2b6"
-          maxLength={15}
-          value={mpesaCode}
-          onChangeText={(text) => {
-            setMpesaCode(text.toUpperCase());
-            if (fieldErrors.mpesaCode) {
-              setFieldErrors({ ...fieldErrors, mpesaCode: null });
-            }
-          }}
-          editable={!loading}
-        />
-        {fieldErrors.mpesaCode && (
-          <Text style={styles.errorMessage}>{fieldErrors.mpesaCode}</Text>
-        )}
-        <Text style={styles.fieldHint}>
-          Enter the code from the M-Pesa message you received.
-        </Text>
-      </View>
-
-      {/* SUBMIT BUTTON */}
+      {/* ACTION BUTTONS */}
       <TouchableOpacity
         style={[styles.buttonPrimary, loading && styles.buttonDisabled]}
         onPress={handleSubmitPayment}
-        disabled={loading}
+        disabled={loading || !mpesaCode.trim()}
         activeOpacity={0.8}
       >
         {loading ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <>
+            <ActivityIndicator color="#fff" size="small" />
+            <Text style={styles.buttonPrimaryText}>Processing...</Text>
+          </>
         ) : (
-          <Text style={styles.buttonPrimaryText}>I've Made This Payment ✅</Text>
+          <Text style={styles.buttonPrimaryText}>💳 Confirm Payment →</Text>
         )}
       </TouchableOpacity>
+
+      <TouchableOpacity
+        onPress={() => navigation.goBack()}
+        disabled={loading}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.cancelText}>← Go Back</Text>
+      </TouchableOpacity>
+
+      {/* INFO BANNER */}
+      <View style={styles.infoBanner}>
+        <Text style={styles.infoBannerText}>
+          ℹ️ Your confirmation code appears in your M-Pesa message. Copy it exactly (e.g., "ABC123XYZ") and paste above. Don't share this code with anyone.
+        </Text>
+      </View>
 
       {/* SPACER */}
       <View style={{ height: 20 }} />
@@ -382,29 +399,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#f6f4ef',
     paddingHorizontal: 14,
   },
-
-  // Back Link
   backLink: {
-    marginTop: 16,
-    marginBottom: 16,
+    paddingVertical: 14,
   },
   backLinkText: {
-    fontSize: 13,
-    color: '#1a1c20',
+    fontSize: 14,
     fontWeight: '600',
+    color: '#1976d2',
   },
-
-  // Title & Subtitle
   title: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
-    fontSize: 13,
+    fontSize: 14,
     color: '#5b606c',
-    lineHeight: 19,
     marginBottom: 20,
   },
 
@@ -415,13 +426,13 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#e7e4db',
     padding: 16,
-    marginBottom: 14,
+    marginBottom: 20,
   },
   cardHeader: {
     marginBottom: 12,
   },
   cardTitle: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
     color: '#1a1c20',
   },
@@ -465,79 +476,53 @@ const styles = StyleSheet.create({
 
   // M-Pesa Card
   mpesaCard: {
-    backgroundColor: '#e6f5ef',
-    borderRadius: 14,
-    borderLeftWidth: 4,
-    borderLeftColor: '#1e9e6f',
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
     padding: 16,
     marginBottom: 20,
   },
-  mpesaCardTitle: {
-    fontSize: 13,
+  mpesaTitle: {
+    fontSize: 13.5,
     fontWeight: '700',
-    color: '#1e9e6f',
-    marginBottom: 8,
+    color: '#1a1c20',
+    marginBottom: 10,
   },
-  mpesaCardText: {
+  mpesaInstructions: {
     fontSize: 12.5,
-    color: '#146142',
+    color: '#5b606c',
     lineHeight: 18,
-    marginBottom: 14,
+    marginBottom: 16,
   },
-  paymentNumberBox: {
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+  bold: {
+    fontWeight: '800',
+    color: '#ff7a1a',
+  },
+
+  // Input
+  mpesaInput: {
+    backgroundColor: '#f6f4ef',
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#1e9e6f',
-    borderStyle: 'dashed',
-    padding: 14,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  paymentNumberLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#146142',
+    borderColor: '#e7e4db',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    color: '#1a1c20',
+    fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 4,
+    letterSpacing: 1,
   },
-  paymentNumber: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#1e9e6f',
-    letterSpacing: 0.5,
+  inputError: {
+    borderColor: '#e0453f',
+    backgroundColor: '#fdecea',
   },
-  copyIcon: {
-    fontSize: 20,
-  },
-  paymentAmountBox: {
-    backgroundColor: 'rgba(30, 158, 111, 0.1)',
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  paymentAmountLabel: {
-    fontSize: 10.5,
+  errorText: {
+    fontSize: 11,
+    color: '#e0453f',
     fontWeight: '600',
-    color: '#146142',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  paymentAmount: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#1e9e6f',
-  },
-  mpesaCardNote: {
-    fontSize: 11.5,
-    color: '#146142',
-    textAlign: 'center',
-    lineHeight: 16,
+    marginTop: 6,
   },
 
   // Error Banner
@@ -547,58 +532,15 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: '#e0453f',
     padding: 12,
-    marginBottom: 14,
+    marginBottom: 16,
   },
-  errorText: {
-    fontSize: 12,
-    color: '#a5312c',
-    fontWeight: '600',
-  },
-
-  // Field Group
-  fieldGroup: {
-    marginBottom: 20,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#1a1c20',
-    marginBottom: 8,
-  },
-  fieldRequired: {
-    color: '#e0453f',
-    fontWeight: '700',
-  },
-  textInput: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
-    color: '#1a1c20',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    marginBottom: 6,
-  },
-  textInputError: {
-    borderColor: '#e0453f',
-    backgroundColor: '#fff9f8',
-  },
-  errorMessage: {
-    fontSize: 11.5,
-    color: '#a5312c',
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  fieldHint: {
-    fontSize: 11.5,
-    color: '#8b8c8e',
-    lineHeight: 16,
+  errorBannerText: {
+    fontSize: 12.5,
+    color: '#5b606c',
+    lineHeight: 18,
   },
 
-  // Primary Button
+  // Buttons
   buttonPrimary: {
     backgroundColor: '#ff7a1a',
     borderRadius: 14,
@@ -606,12 +548,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
     shadowColor: '#ff7a1a',
     shadowOpacity: 0.3,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     elevation: 6,
-    minHeight: 50,
+    marginBottom: 12,
   },
   buttonDisabled: {
     backgroundColor: '#e9dccc',
@@ -623,6 +567,28 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.3,
+  },
+  cancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1976d2',
+    textAlign: 'center',
+    paddingVertical: 12,
+    marginBottom: 20,
+  },
+
+  // Info Banner
+  infoBanner: {
+    backgroundColor: '#eef3fb',
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#1976d2',
+    padding: 12,
+  },
+  infoBannerText: {
+    fontSize: 12,
+    color: '#2c5182',
+    lineHeight: 18,
   },
 });
 

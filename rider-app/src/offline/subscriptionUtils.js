@@ -7,6 +7,7 @@
 // ✅ AUTO-INIT: Ensures free trial initialized for new riders on first load
 // ✅ IMPROVED: Better state handling and return values
 // ✅ NEW: CRITICAL LOCK ENFORCEMENT - checkAndEnforceLock function for instant expiry detection
+// ✅ NEW: normalizePaymentRecord - transforms frontend payment to backend schema
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { addToSyncQueue } from './syncQueue';
@@ -100,6 +101,76 @@ export const REMINDER_CHECKS_PER_DAY = 3;
 
 /**
  * ============================================================================
+ * ✅ NEW: NORMALIZE PAYMENT RECORD FOR BACKEND SYNC
+ * ============================================================================
+ * Transforms frontend payment record to exact backend schema expected by
+ * POST /subscriptions/payment endpoint
+ * 
+ * Frontend schema (IndexedDB):
+ *   id, rider_id, type, amount, plan, currency, status, channel, 
+ *   mpesa_code, createdAt, subscription_id, subscription_start, subscription_expiry
+ * 
+ * Backend schema (expected by API):
+ *   id, type, amount, currency, status, channel, mpesa_code, plan, createdAt
+ * 
+ * Headers sent:
+ *   X-Sync-ID: ${payment.id}
+ *   X-Client-Timestamp: ${payment.createdAt}
+ *
+ * Query param:
+ *   rider_id=${riderId}
+ */
+export function normalizePaymentRecord(paymentRecord, riderId) {
+  try {
+    if (!paymentRecord || !riderId) {
+      throw new Error('Payment record and rider ID are required');
+    }
+
+    console.log('🔄 [normalizePaymentRecord] Transforming payment for backend...');
+    console.log('   Input:', {
+      id: paymentRecord.id,
+      type: paymentRecord.type,
+      amount: paymentRecord.amount,
+      status: paymentRecord.status,
+    });
+
+    // ✅ Backend expects these exact fields
+    const normalized = {
+      // ✅ CRITICAL: Use fields exactly as backend expects
+      id: paymentRecord.id,
+      type: paymentRecord.type || 'subscription',
+      amount: parseFloat(paymentRecord.amount) || 0,
+      currency: paymentRecord.currency || 'KES',
+      status: paymentRecord.status || 'Success', // Backend expects: 'Success', 'Pending', 'Failed'
+      channel: paymentRecord.channel || 'M-Pesa',
+      mpesa_code: paymentRecord.mpesa_code || null,
+      plan: paymentRecord.plan || 'biweekly',
+      // ✅ Timestamp in ISO format (backend will parse)
+      createdAt: paymentRecord.createdAt || new Date().toISOString(),
+    };
+
+    // ✅ Additional metadata for sync tracking
+    normalized.sync_id = paymentRecord.id; // For idempotency
+    normalized.rider_id = riderId;
+    normalized.endpoint = `/subscriptions/payment?rider_id=${riderId}`;
+
+    console.log('✅ [normalizePaymentRecord] Normalized output:', {
+      id: normalized.id,
+      type: normalized.type,
+      amount: normalized.amount,
+      status: normalized.status,
+      endpoint: normalized.endpoint,
+    });
+
+    return normalized;
+  } catch (err) {
+    console.error('❌ [normalizePaymentRecord] Error normalizing payment:', err);
+    throw err;
+  }
+}
+
+/**
+ * ============================================================================
  * ✅ CRITICAL: CHECK AND ENFORCE ACCOUNT LOCK
  * ============================================================================
  * This is the master function for determining if account should be locked.
@@ -148,218 +219,198 @@ export async function checkAndEnforceLock(riderId) {
       const expiryMs = subscription.expiryDate 
         ? new Date(subscription.expiryDate).getTime() 
         : subscription.expiry_ms;
-      
-      if (expiryMs && expiryMs > now) {
-        // Subscription is still valid - DO NOT LOCK
-        console.log('✅ [checkAndEnforceLock] Active valid subscription found - NOT locking');
+
+      if (expiryMs > now) {
+        // Subscription active
+        console.log('✅ [checkAndEnforceLock] Subscription is ACTIVE');
         shouldLock = false;
-      } else if (expiryMs && expiryMs <= now) {
+      } else {
         // Subscription expired
+        console.log('⏰ [checkAndEnforceLock] Subscription has EXPIRED');
         shouldLock = true;
-        lockReason = 'Subscription expired';
-        console.log('🔒 [checkAndEnforceLock] Subscription expired:', {
-          expiryDate: subscription.expiryDate,
-          now: toEATString(now),
-        });
+        lockReason = 'subscription_expired';
       }
-    } 
-    // ✅ PRIORITY 2: Check trial only if NO paid subscription exists
+    }
+    // ✅ PRIORITY 2: Check free trial
     else if (state?.trialStarted && state?.trialEndDate) {
       const trialEndMs = new Date(state.trialEndDate).getTime();
+
       if (trialEndMs > now) {
-        // Trial still active - DO NOT LOCK
-        console.log('✅ [checkAndEnforceLock] Active trial found - NOT locking');
+        // Trial active
+        console.log('✨ [checkAndEnforceLock] FREE TRIAL is ACTIVE');
         shouldLock = false;
-      } else if (trialEndMs <= now) {
-        // Trial expired and no paid subscription
+      } else {
+        // Trial expired
+        console.log('⏰ [checkAndEnforceLock] FREE TRIAL has EXPIRED');
         shouldLock = true;
-        lockReason = 'Trial period expired';
-        console.log('🔒 [checkAndEnforceLock] Trial expired:', {
-          trialEndDate: state.trialEndDate,
-          now: toEATString(now),
-        });
+        lockReason = 'trial_expired';
       }
-    } 
-    // ✅ PRIORITY 3: No subscription and no trial = new rider
-    else if (!state?.trialStarted) {
-      console.log('ℹ️ [checkAndEnforceLock] No subscription or trial - initializing trial');
-      await ensureFreeTrial(riderId);
-      return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
+    }
+    // ✅ PRIORITY 3: No subscription and no trial
+    else {
+      console.log('⚠️ [checkAndEnforceLock] No active subscription or trial');
+      shouldLock = true;
+      lockReason = 'no_subscription';
     }
 
-    // ✅ 5. Update lock state if needed
+    // ✅ 5. Determine if lock status changed
+    let justLocked = false;
     if (shouldLock && !isCurrentlyLocked) {
-      // Lock account
-      await lockAccount(riderId, lockReason);
-      console.log('🔒 [checkAndEnforceLock] ACCOUNT LOCKED:', {
-        riderId,
-        reason: lockReason,
-        timestamp: toEATString(now),
-      });
-      return {
-        isLocked: true,
-        reason: lockReason,
-        lockedSince: toEATString(now),
-        justLocked: true,
-      };
+      // Just locked
+      justLocked = true;
+      const now_iso = new Date().toISOString();
+      state.lockedAt = now_iso;
+      state.lockReason = lockReason;
+      const stateKey = `subscription_state_${riderId}`;
+      await indexedDbAdapter.kvSet(stateKey, JSON.stringify(state));
+      console.log('🔒 [checkAndEnforceLock] ACCOUNT LOCKED - saving to IndexedDB');
     } else if (!shouldLock && isCurrentlyLocked) {
-      // Already paid - unlock account
-      await unlockAccount(riderId);
-      console.log('🔓 [checkAndEnforceLock] ACCOUNT UNLOCKED (payment received):', {
-        riderId,
-        timestamp: toEATString(now),
-      });
-      return {
-        isLocked: false,
-        reason: null,
-        lockedSince: null,
-        justLocked: false,
-      };
-    } else if (shouldLock && isCurrentlyLocked) {
-      // Already locked
-      console.log('🔒 [checkAndEnforceLock] Account already locked');
-      return {
-        isLocked: true,
-        reason: state?.lockReason || lockReason,
-        lockedSince: state?.lockedAt,
-        justLocked: false,
-      };
+      // Just unlocked
+      state.lockedAt = null;
+      state.lockReason = null;
+      const stateKey = `subscription_state_${riderId}`;
+      await indexedDbAdapter.kvSet(stateKey, JSON.stringify(state));
+      console.log('🔓 [checkAndEnforceLock] ACCOUNT UNLOCKED');
     }
 
-    // ✅ 6. No lock needed
-    console.log('✅ [checkAndEnforceLock] No lock required');
     return {
-      isLocked: false,
-      reason: null,
-      lockedSince: null,
-      justLocked: false,
+      isLocked: shouldLock,
+      reason: lockReason,
+      lockedSince: state?.lockedAt,
+      justLocked: justLocked,
     };
   } catch (err) {
-    console.error('❌ [checkAndEnforceLock] Error checking lock status:', err);
-    // FAIL-SAFE: On error, do NOT lock account - allow access
+    console.error('❌ [checkAndEnforceLock] Error:', err);
     return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
   }
 }
 
 /**
- * Get active subscription for rider
+ * Get active subscription for a rider
+ * Returns null if no active subscription
  */
 export async function getActiveSubscription(riderId) {
   try {
-    const key = `subscription_${riderId}`;
-    const cached = await indexedDbAdapter.kvGet(key);
-
-    if (cached) {
-      const subscription = typeof cached === 'string' ? JSON.parse(cached) : cached;
-      
-      // Check if expired
-      const expiryMs = subscription.expiryDate 
-        ? new Date(subscription.expiryDate).getTime() 
-        : subscription.expiry_ms || 0;
-      
-      if (expiryMs > 0 && expiryMs <= Date.now()) {
-        console.log('⚠️ [getActiveSubscription] Subscription expired');
-        return null;
-      }
-
-      return subscription;
+    if (!riderId || riderId === 'undefined' || riderId === 'null') {
+      console.warn('⚠️ [getActiveSubscription] Invalid rider ID:', riderId);
+      return null;
     }
-    return null;
+
+    const key = `subscription_${riderId}`;
+    const data = await indexedDbAdapter.kvGet(key);
+
+    if (!data) {
+      console.log('ℹ️ [getActiveSubscription] No subscription found for rider:', riderId);
+      return null;
+    }
+
+    const subscription = typeof data === 'string' ? JSON.parse(data) : data;
+    
+    // Check if still valid
+    const expiryMs = subscription.expiryDate 
+      ? new Date(subscription.expiryDate).getTime() 
+      : subscription.expiry_ms || 0;
+
+    if (expiryMs <= Date.now()) {
+      console.log('⏰ [getActiveSubscription] Subscription expired:', riderId);
+      return null;
+    }
+
+    console.log('✅ [getActiveSubscription] Found active subscription:', {
+      plan: subscription.plan,
+      expiryDate: subscription.expiryDate,
+    });
+
+    return subscription;
   } catch (err) {
-    console.error('❌ Error getting active subscription:', err);
+    console.error('❌ [getActiveSubscription] Error:', err);
     return null;
   }
 }
 
 /**
- * Get subscription state (trial, reminders, lock status)
+ * Get subscription state (trial, reminders, lock)
  */
 export async function getSubscriptionState(riderId) {
   try {
-    const key = `subscription_state_${riderId}`;
-    const cached = await indexedDbAdapter.kvGet(key);
-
-    if (cached) {
-      return typeof cached === 'string' ? JSON.parse(cached) : cached;
+    if (!riderId || riderId === 'undefined' || riderId === 'null') {
+      console.warn('⚠️ [getSubscriptionState] Invalid rider ID:', riderId);
+      return {
+        trialStarted: false,
+        trialEndDate: null,
+        reminderCount: 0,
+        lastReminderCheck: null,
+        lockedAt: null,
+      };
     }
 
-    // Return default state
-    return {
-      trialStarted: false,
-      trialEndDate: null,
-      reminderCount: 0,
-      lastReminderCheck: null,
-      lockedAt: null,
-      lockReason: null,
-    };
+    const key = `subscription_state_${riderId}`;
+    const data = await indexedDbAdapter.kvGet(key);
+
+    if (!data) {
+      console.log('ℹ️ [getSubscriptionState] No state found, initializing for rider:', riderId);
+      return {
+        trialStarted: false,
+        trialEndDate: null,
+        reminderCount: 0,
+        lastReminderCheck: null,
+        lockedAt: null,
+      };
+    }
+
+    const state = typeof data === 'string' ? JSON.parse(data) : data;
+    console.log('✅ [getSubscriptionState] Retrieved state for rider:', riderId);
+    return state;
   } catch (err) {
-    console.error('❌ Error getting subscription state:', err);
+    console.error('❌ [getSubscriptionState] Error:', err);
     return {
       trialStarted: false,
       trialEndDate: null,
       reminderCount: 0,
       lastReminderCheck: null,
       lockedAt: null,
-      lockReason: null,
     };
   }
 }
 
 /**
- * ✅ ENSURE FREE TRIAL EXISTS FOR NEW RIDERS
- * Called on first home screen load to auto-initialize trial for new riders
- * Returns the current state (whether just created or existing)
+ * Initialize free trial for new rider
  */
 export async function ensureFreeTrial(riderId) {
   try {
-    console.log('🔍 [ensureFreeTrial] Checking trial status for rider:', riderId);
-    
-    if (!riderId) {
-      console.error('❌ [ensureFreeTrial] No rider ID provided');
+    if (!riderId || riderId === 'undefined' || riderId === 'null') {
+      console.error('❌ [ensureFreeTrial] Invalid rider ID:', riderId);
       return null;
     }
-    
+
     const state = await getSubscriptionState(riderId);
-    
-    // ✅ If trial not started, initialize it now
-    if (!state.trialStarted) {
-      console.log('✨ [ensureFreeTrial] New rider detected - initializing free trial');
-      
-      const now = Date.now();
-      const trialEndMs = now + FREE_TRIAL_MS; // 2 hours
 
-      const newState = {
-        trialStarted: true,
-        trialStartDate: toEATString(now),
-        trialEndDate: toEATString(trialEndMs),
-        trialEndMs: trialEndMs,
-        reminderCount: 0,
-        lastReminderCheck: null,
-        lockedAt: null,
-        lockReason: null,
-      };
-
-      const key = `subscription_state_${riderId}`;
-      await indexedDbAdapter.kvSet(key, JSON.stringify(newState));
-      
-      console.log('✅ [ensureFreeTrial] Free trial created for rider:', riderId);
-      console.log('   Trial duration: 2 hours (7,200,000 ms)');
-      console.log('   Trial start:', newState.trialStartDate);
-      console.log('   Trial end:', newState.trialEndDate);
-      
-      return newState;
+    // Already initialized?
+    if (state.trialStarted) {
+      console.log('✅ [ensureFreeTrial] Trial already exists for rider:', riderId);
+      return state;
     }
-    
-    console.log('✅ [ensureFreeTrial] Trial already exists for rider:', riderId);
-    console.log('   Trial status:', {
-      trialStarted: state.trialStarted,
-      trialEndDate: state.trialEndDate,
-      lockedAt: state.lockedAt,
-    });
-    
-    return state;
+
+    // Initialize trial
+    const now = Date.now();
+    const trialEnd = now + FREE_TRIAL_MS;
+
+    const newState = {
+      trialStarted: true,
+      trialEndDate: toEATString(trialEnd),
+      reminderCount: 0,
+      lastReminderCheck: null,
+      lockedAt: null,
+    };
+
+    const stateKey = `subscription_state_${riderId}`;
+    await indexedDbAdapter.kvSet(stateKey, JSON.stringify(newState));
+
+    console.log('✅ [ensureFreeTrial] Trial initialized for rider:', riderId);
+    console.log('   Trial ends at:', newState.trialEndDate);
+    return newState;
   } catch (err) {
-    console.error('❌ [ensureFreeTrial] Error ensuring free trial:', err);
+    console.error('❌ [ensureFreeTrial] Error:', err);
     return null;
   }
 }
@@ -453,22 +504,22 @@ export async function shouldShowReminderBanner(riderId) {
 }
 
 /**
- * Record reminder shown (for rate limiting)
+ * Update reminder check time
  */
-export async function recordReminderShown(riderId) {
+export async function updateLastReminderCheck(riderId) {
   try {
     const state = await getSubscriptionState(riderId);
-    state.lastReminderCheck = toEATString(Date.now());
-
-    const key = `subscription_state_${riderId}`;
-    await indexedDbAdapter.kvSet(key, JSON.stringify(state));
+    state.lastReminderCheck = new Date().toISOString();
+    const stateKey = `subscription_state_${riderId}`;
+    await indexedDbAdapter.kvSet(stateKey, JSON.stringify(state));
   } catch (err) {
-    console.error('❌ Error recording reminder:', err);
+    console.error('❌ Error updating reminder check:', err);
   }
 }
 
 /**
- * Create new subscription
+ * ✅ CREATE SUBSCRIPTION: Main subscription purchase flow
+ * Called by ConfirmSubscriptionScreen after M-Pesa payment
  */
 export async function createSubscription(riderId, plan, paymentMethod = 'mpesa') {
   try {
@@ -548,60 +599,34 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
     
     return subscription;
   } catch (err) {
-    console.error('❌ [createSubscription] Error creating subscription:', err);
-    return null;
+    console.error('❌ [createSubscription] Error:', err);
+    throw err;
   }
 }
 
 /**
- * Initialize free trial for new rider
+ * Add subscription to history
  */
-export async function initializeFreeTrial(riderId) {
+export async function addToSubscriptionHistory(riderId, subscription) {
   try {
-    const now = Date.now();
-    const trialEndMs = now + FREE_TRIAL_MS; // 2 hours
+    const historyKey = `subscription_history_${riderId}`;
+    let history = [];
 
-    const state = {
-      trialStarted: true,
-      trialStartDate: toEATString(now),
-      trialEndDate: toEATString(trialEndMs),
-      trialEndMs: trialEndMs,
-      reminderCount: 0,
-      lastReminderCheck: null,
-      lockedAt: null,
-      lockReason: null,
-    };
+    try {
+      const cached = await indexedDbAdapter.kvGet(historyKey);
+      if (cached) {
+        history = typeof cached === 'string' ? JSON.parse(cached) : cached;
+        if (!Array.isArray(history)) history = [];
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to load subscription history:', err);
+    }
 
-    const key = `subscription_state_${riderId}`;
-    await indexedDbAdapter.kvSet(key, JSON.stringify(state));
-
-    console.log('✅ Free trial initialized for rider:', riderId);
-    console.log('   Trial duration: 2 hours');
-    console.log('   Trial ends at:', toEATString(trialEndMs));
-    return state;
+    history.unshift(subscription);
+    await indexedDbAdapter.kvSet(historyKey, JSON.stringify(history));
+    console.log('📜 [addToSubscriptionHistory] Updated subscription history (count:', history.length, ')');
   } catch (err) {
-    console.error('❌ Error initializing trial:', err);
-    return null;
-  }
-}
-
-/**
- * Lock account due to expired subscription
- */
-export async function lockAccount(riderId, reason = 'Subscription expired') {
-  try {
-    const state = await getSubscriptionState(riderId);
-    state.lockedAt = toEATString(Date.now());
-    state.lockReason = reason;
-
-    const key = `subscription_state_${riderId}`;
-    await indexedDbAdapter.kvSet(key, JSON.stringify(state));
-
-    console.log('🔒 Account locked for rider:', riderId);
-    return state;
-  } catch (err) {
-    console.error('❌ Error locking account:', err);
-    return null;
+    console.error('❌ [addToSubscriptionHistory] Error:', err);
   }
 }
 
@@ -613,119 +638,52 @@ export async function unlockAccount(riderId) {
     const state = await getSubscriptionState(riderId);
     state.lockedAt = null;
     state.lockReason = null;
-
-    const key = `subscription_state_${riderId}`;
-    await indexedDbAdapter.kvSet(key, JSON.stringify(state));
-
-    console.log('🔓 Account unlocked for rider:', riderId);
-    return state;
-  } catch (err) {
-    console.error('❌ Error unlocking account:', err);
-    return null;
-  }
-}
-
-/**
- * Add subscription to history
- */
-async function addToSubscriptionHistory(riderId, subscription) {
-  try {
-    const key = `subscription_history_${riderId}`;
-    let history = [];
-
-    const cached = await indexedDbAdapter.kvGet(key);
-    if (cached) {
-      history = typeof cached === 'string' ? JSON.parse(cached) : cached;
-      if (!Array.isArray(history)) history = [];
-    }
-
-    history.unshift(subscription);
-    await indexedDbAdapter.kvSet(key, JSON.stringify(history));
-  } catch (err) {
-    console.error('❌ Error updating subscription history:', err);
-  }
-}
-
-/**
- * Get subscription history
- */
-export async function getSubscriptionHistory(riderId) {
-  try {
-    const key = `subscription_history_${riderId}`;
-    const cached = await indexedDbAdapter.kvGet(key);
-
-    if (cached) {
-      return typeof cached === 'string' ? JSON.parse(cached) : cached;
-    }
-    return [];
-  } catch (err) {
-    console.error('❌ Error getting subscription history:', err);
-    return [];
-  }
-}
-
-/**
- * ============================================================================
- * ✅ TESTING & DEBUG UTILITIES
- * ============================================================================
- */
-
-/**
- * RESET SUBSCRIPTION STATE FOR TESTING
- * Call this to clear locked state and reinitialize trial
- * Usage: await resetSubscriptionForTesting(riderId)
- */
-export async function resetSubscriptionForTesting(riderId) {
-  try {
-    console.log('🔄 [resetSubscriptionForTesting] Resetting subscription state for:', riderId);
-    
-    // Clear subscription
-    const subKey = `subscription_${riderId}`;
-    await indexedDbAdapter.kvSet(subKey, null);
-    
-    // Clear subscription history
-    const historyKey = `subscription_history_${riderId}`;
-    await indexedDbAdapter.kvSet(historyKey, null);
-    
-    // Initialize fresh free trial
-    const now = Date.now();
-    const trialEndMs = now + FREE_TRIAL_MS; // 2 hours
-    
-    const freshState = {
-      trialStarted: true,
-      trialStartDate: toEATString(now),
-      trialEndDate: toEATString(trialEndMs),
-      trialEndMs: trialEndMs,
-      reminderCount: 0,
-      lastReminderCheck: null,
-      lockedAt: null,
-      lockReason: null,
-    };
     
     const stateKey = `subscription_state_${riderId}`;
-    await indexedDbAdapter.kvSet(stateKey, JSON.stringify(freshState));
-    
-    console.log('✅ [resetSubscriptionForTesting] Subscription state reset successfully');
-    console.log('   Trial period: 2 hours');
-    console.log('   Trial expires:', toEATString(trialEndMs));
-    
-    return freshState;
+    await indexedDbAdapter.kvSet(stateKey, JSON.stringify(state));
+    console.log('🔓 [unlockAccount] Account unlocked for rider:', riderId);
   } catch (err) {
-    console.error('❌ [resetSubscriptionForTesting] Error resetting state:', err);
-    return null;
+    console.error('❌ [unlockAccount] Error:', err);
   }
 }
 
-// ============================================================================
-// ✅ CLEAN NAMED EXPORTS (No conflicting default export)
-// ============================================================================
-// All functions available via named imports:
-// import { 
-//   getActiveSubscription, 
-//   getSubscriptionState, 
-//   ensureFreeTrial, 
-//   isFreTrialActive,
-//   checkAndEnforceLock,     // ← CRITICAL FUNCTION
-//   resetSubscriptionForTesting, // ← FOR TESTING ONLY
-//   ... 
-// } from './subscriptionUtils'
+/**
+ * Get payment history for rider
+ */
+export async function getPaymentHistory(riderId) {
+  try {
+    const historyKey = `payment_history_${riderId}`;
+    const cached = await indexedDbAdapter.kvGet(historyKey);
+
+    if (!cached) {
+      return [];
+    }
+
+    const history = typeof cached === 'string' ? JSON.parse(cached) : cached;
+    return Array.isArray(history) ? history : [];
+  } catch (err) {
+    console.error('❌ [getPaymentHistory] Error:', err);
+    return [];
+  }
+}
+
+export default {
+  SUBSCRIPTION_PLANS,
+  FREE_TRIAL_HOURS,
+  FREE_TRIAL_MS,
+  REMINDER_DAYS_BEFORE,
+  REMINDER_CHECKS_PER_DAY,
+  normalizePaymentRecord,
+  checkAndEnforceLock,
+  getActiveSubscription,
+  getSubscriptionState,
+  ensureFreeTrial,
+  isSubscriptionExpired,
+  isFreTrialActive,
+  shouldShowReminderBanner,
+  updateLastReminderCheck,
+  createSubscription,
+  addToSubscriptionHistory,
+  unlockAccount,
+  getPaymentHistory,
+};
