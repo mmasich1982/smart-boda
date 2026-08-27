@@ -300,17 +300,24 @@ const ConfirmSubscriptionScreen = () => {
 
       {/* M-PESA PAYMENT CARD */}
       <View style={styles.mpesaCard}>
-        <Text style={styles.mpesaCardTitle}>📱 How to Pay</Text>
+        <Text style={styles.mpesaCardTitle}>📲 Payment Instructions</Text>
         <Text style={styles.mpesaCardText}>
-          Open M-Pesa on your phone and select <Text style={{ fontWeight: '700' }}>Lipa na M-Pesa Online</Text>, then follow these steps:
+          Please use "Send Money" to the Safaricom number below.
         </Text>
 
         <View style={styles.paymentNumberBox}>
           <View>
             <Text style={styles.paymentNumberLabel}>Business / Paybill Number</Text>
-            <Text style={styles.paymentNumber}>102883</Text>
+            <Text style={styles.paymentNumber}>0757 334 481</Text>
           </View>
-          <Text style={styles.copyIcon}>📋</Text>
+          <TouchableOpacity
+            onPress={() => {
+              // Copy to clipboard logic
+              console.log('📋 Copy number to clipboard');
+            }}
+          >
+            <Text style={styles.copyIcon}>📋</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.paymentAmountBox}>
