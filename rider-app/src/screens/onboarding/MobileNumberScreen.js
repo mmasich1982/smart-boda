@@ -49,7 +49,7 @@ export default function MobileNumberScreen({ navigation }) {
       
       {/* Bonus banner */}
       <View style={styles.bonusBanner}>
-        <Text style={styles.bonusText}>{t('number.bonus_banner') || '🎁 Unlock 2 free days of Smart Boda Access — clear, simple insights into your earnings and expenses from your very first trip.'}</Text>
+        <Text style={styles.bonusText}>{t('number.bonus_banner') || '🎁 Unlock 2 free hours of Smart Boda Access — clear, simple insights into your earnings and expenses from your very first trip.'}</Text>
       </View>
       
       <FormField 

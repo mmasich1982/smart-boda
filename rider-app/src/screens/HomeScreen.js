@@ -430,6 +430,12 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     }
   }, [navigation]);
 
+  const handleViewYesterdayTrips = useCallback(() => {
+    if (navigation && navigation.navigate) {
+      navigation.navigate('DailyTradeSummary', { period: 'yesterday' });
+    }
+  }, [navigation]);
+
   const handleLogout = useCallback(async () => {
     Alert.alert('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', onPress: () => {} },
@@ -582,7 +588,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             <View style={styles.yesterdayCard}>
               <View style={styles.yesterdayHeader}>
                 <Text style={styles.yesterdayLabel}>Yesterday's Total</Text>
-                <TouchableOpacity onPress={handleDailyTradeSummary}>
+                <TouchableOpacity onPress={handleViewYesterdayTrips}>
                   <Text style={styles.viewBreakdownLink}>View →</Text>
                 </TouchableOpacity>
               </View>

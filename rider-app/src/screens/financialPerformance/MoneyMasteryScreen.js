@@ -395,7 +395,7 @@ export default function MoneyMasteryScreen({ navigation }) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={() => navigation.goBack()} label="← Back" />
-        <Text style={styles.title}>{t('moneyMastery') || 'Money Mastery'}</Text>
+        <Text style={styles.title}>{t('financialPerformance') || 'Financial Performance'}</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
@@ -409,7 +409,7 @@ export default function MoneyMasteryScreen({ navigation }) {
   return (
     <ScrollView style={styles.container}>
       <BackLink onPress={() => navigation.goBack()} label="← Back" />
-      <Text style={styles.title}>{t('moneyMastery') || 'Money Mastery'}</Text>
+      <Text style={styles.title}>{t('financialPerformance') || 'Financial Performance'}</Text>
 
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
@@ -417,32 +417,6 @@ export default function MoneyMasteryScreen({ navigation }) {
           <TouchableOpacity onPress={clearCriticalError}>
             <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
-        </View>
-      )}
-
-      {/* PERIOD SUMMARY */}
-      {allTotals && (
-        <View style={styles.periodSummaryContainer}>
-          <View style={styles.periodSummaryItem}>
-            <Text style={styles.periodSummaryLabel}>Today</Text>
-            <Text style={[styles.periodSummaryValue, (allTotals.today.net_profit || 0) < 0 && styles.summaryNegative]}>
-              KSh {(allTotals.today.net_profit || 0).toLocaleString()}
-            </Text>
-          </View>
-          <View style={styles.periodSummaryDivider} />
-          <View style={styles.periodSummaryItem}>
-            <Text style={styles.periodSummaryLabel}>This Week</Text>
-            <Text style={[styles.periodSummaryValue, (allTotals.this_week.net_profit || 0) < 0 && styles.summaryNegative]}>
-              KSh {(allTotals.this_week.net_profit || 0).toLocaleString()}
-            </Text>
-          </View>
-          <View style={styles.periodSummaryDivider} />
-          <View style={styles.periodSummaryItem}>
-            <Text style={styles.periodSummaryLabel}>This Month</Text>
-            <Text style={[styles.periodSummaryValue, (allTotals.this_month.net_profit || 0) < 0 && styles.summaryNegative]}>
-              KSh {(allTotals.this_month.net_profit || 0).toLocaleString()}
-            </Text>
-          </View>
         </View>
       )}
 
