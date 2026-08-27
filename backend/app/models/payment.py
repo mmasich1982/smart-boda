@@ -1,50 +1,65 @@
-# backend/app/models/payment.py
-# COMPREHENSIVE FIX: Extended Payment model to support Lipa Later payments
-# ✓ FIXED: Added lipa_later_id foreign key for payment tracking
-# ✓ FIXED: Added payment_date for Lipa Later payment history
-# ✓ FIXED: Added reference field for transaction tracking
-# ✓ FIXED: Added amount_ksh for consistency with other financial models
+"""
+CORRECTED Payment Model
+Aligns with actual database schema
+"""
 
-import uuid
-from sqlalchemy import Column, String, Numeric, DateTime, ForeignKey, Date, func
+from sqlalchemy import Column, String, Numeric, DateTime, Integer, Boolean, Text, ForeignKey, JSON
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
+from datetime import datetime, timezone
+import uuid
+
 from app.database import Base
 
 
 class Payment(Base):
     """
-    Represents payments made by riders.
-    Supports:
-    - Subscription payments (payment plan subscriptions)
-    - Lipa Later payments (individual customer payments)
+    Payment model - stores payment transactions from riders
+    
+    Database columns:
+    - id: Unique payment identifier (UUID)
+    - rider_id: Reference to rider (FK)
+    - type: Payment type (e.g., 'subscription', 'topup')
+    - amount: Payment amount in KES
+    - currency: Currency code (default: KES)
+    - status: Payment status (e.g., 'Success', 'Pending', 'Failed')
+    - channel: Payment channel (e.g., 'M-Pesa', 'Card')
+    - mpesa_code: M-Pesa confirmation code
+    - plan: Subscription plan (e.g., 'biweekly', 'monthly')
+    - data: Additional metadata as JSON
+    - sync_id: Idempotency key from mobile app (X-Sync-ID header)
+    - created_at: When record was created
+    - synced_at: When payment was synced/confirmed
     """
+    
     __tablename__ = "payment"
     
+    # Primary Key
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    rider_id = Column(UUID(as_uuid=True), ForeignKey("rider.id"), nullable=False)
     
-    # Subscription payment fields (optional)
+    # Foreign Keys
+    rider_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("rider.id"),
+        nullable=False,
+        index=True
+    )
+    
+    # Payment Details
+    type = Column(String(100), nullable=True)
     amount = Column(Numeric(10, 2), nullable=True)
-    label = Column(String(255), nullable=True)  # e.g. "Weekly Plan", "7-Day Prepayment"
-    channel = Column(String(100), default="Manual (Lipa na M-Pesa / Pochi / Send Money)", nullable=True)
-    mpesa_code = Column(String(50), nullable=True)  # rider-entered M-Pesa confirmation code
-    status = Column(String(20), default="Success")  # self-declared success is immediate
-    reconciliation = Column(String(50), default="Pending Super Admin Review")  # "Verified" only via back-office
-    reconciled_at = Column(DateTime(timezone=True), nullable=True)
-    reconciled_by_admin = Column(String(100), nullable=True)
+    currency = Column(String(5), default="KES", nullable=True)
+    status = Column(String(50), nullable=True, index=True)
+    channel = Column(String(100), nullable=True)
+    mpesa_code = Column(String(100), nullable=True)
+    plan = Column(String(50), nullable=True)
     
-    # Lipa Later payment fields (optional)
-    lipa_later_id = Column(UUID(as_uuid=True), ForeignKey("lipa_later_record.id"), nullable=True)
-    amount_ksh = Column(Numeric(10, 2), nullable=True)  # For Lipa Later payments
-    payment_date = Column(Date, nullable=True)  # When the payment was made
-    reference = Column(String(255), nullable=True)  # Optional payment reference/note
+    # Metadata
+    data = Column(JSON, nullable=True)
+    sync_id = Column(String(255), nullable=True, unique=True, index=True)
     
-    # Common tracking fields
-    sync_status = Column(String(20), default="pending", nullable=False)
-    submitted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    synced_at = Column(DateTime(timezone=True), nullable=True)
     
-    # Relationships
-    rider = relationship("Rider")
-    lipa_later = relationship("LipaLaterRecord")
+    def __repr__(self):
+        return f"<Payment(id={self.id}, rider_id={self.rider_id}, amount={self.amount}, status={self.status})>"

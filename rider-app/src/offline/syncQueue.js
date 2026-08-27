@@ -1,5 +1,6 @@
 // rider-app/src/offline/syncQueue.js
 // ✅ MIGRATION: Fully migrated to IndexedDB from LocalStore
+// ✅ FIXED: processPendingSync() now calls REAL backend API (not simulated)
 // Uses existing indexedDbAdapter for non-blocking, structured queries
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
@@ -260,6 +261,7 @@ export const enqueue = async (type, data) => {
       'remittance': '/api/remittances',
       'trip': '/api/trips',
       'lipa_later': '/api/lipa-later',
+      'subscription_payment': '/subscriptions/payment',
     };
 
     const endpoint = endpointMap[type] || `/api/${type}`;
@@ -360,6 +362,8 @@ export const startSyncMonitor = async () => {
  * ✅ PROCESS PENDING SYNC: Attempts to sync all pending records
  * Called when app comes online or periodically
  * 
+ * ⭐ KEY FIX: This now calls REAL backend API instead of simulating success
+ * 
  * @returns {Promise<object>} - Sync results {succeeded, failed, retried}
  */
 export const processPendingSync = async () => {
@@ -389,32 +393,55 @@ export const processPendingSync = async () => {
           continue;
         }
 
-        // TODO: Replace with actual API call to your backend
-        // const response = await fetch(record.endpoint, {
-        //   method: 'POST',
-        //   headers: { 'Content-Type': 'application/json' },
-        //   body: JSON.stringify(record.data),
-        // });
+        // ✅ ⭐ CRITICAL FIX: Actually call your backend API
+        console.log(`[ProcessSync] 📤 Syncing ${record.type}: ${record.id} → ${record.endpoint}`);
+        
+        const response = await fetch(record.endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Sync-ID': record.id,
+            'X-Client-Timestamp': record.timestamp,
+          },
+          body: JSON.stringify({
+            ...record.data,
+            sync_id: record.id,
+          }),
+        });
 
-        // For now, we'll simulate success
-        const simulatedSuccess = true;
-
-        if (simulatedSuccess) {
+        // ✅ Handle response status
+        if (response.ok) {
+          // 2xx status - success
           await removeFromSyncQueue(record.id);
-          console.log(`[ProcessSync] ✅ Synced: ${record.id}`);
+          console.log(`[ProcessSync] ✅ Synced successfully: ${record.id}`);
           succeeded++;
+        } else if (response.status >= 400 && response.status < 500) {
+          // 4xx status - client error (don't retry)
+          console.warn(`[ProcessSync] ❌ Client error (${response.status}): ${record.id}`);
+          
+          try {
+            const errData = await response.json();
+            console.error('[ProcessSync] Server error details:', errData);
+          } catch (e) {
+            // Response isn't JSON, just log status
+          }
+          
+          // Remove from queue - don't retry client errors
+          await removeFromSyncQueue(record.id);
+          failed++;
         } else {
-          // Increment retry count
+          // 5xx status - server error (retry)
+          console.warn(`[ProcessSync] ⚠️ Server error (${response.status}): ${record.id}`);
           const newRetries = (record.retries || 0) + 1;
           await updateQueuedRecord(record.id, { retries: newRetries });
-          console.log(`[ProcessSync] ⚠️ Retry: ${record.id} (attempt ${newRetries})`);
           retried++;
         }
       } catch (err) {
-        console.error(`[ProcessSync] ❌ Error syncing ${record.id}:`, err);
+        // Network error
+        console.error(`[ProcessSync] ❌ Network error syncing ${record.id}:`, err.message);
         const newRetries = (record.retries || 0) + 1;
         await updateQueuedRecord(record.id, { retries: newRetries });
-        failed++;
+        retried++;
       }
     }
 
@@ -423,10 +450,29 @@ export const processPendingSync = async () => {
       await updateLastSyncTime();
     }
 
-    console.log(`[ProcessSync] ✅ Sync complete: ${succeeded} succeeded, ${failed} failed, ${retried} retried`);
+    console.log(
+      `[ProcessSync] ✅ Sync complete: ${succeeded} succeeded, ${failed} failed, ${retried} retried`
+    );
     return { succeeded, failed, retried };
   } catch (err) {
     console.error('[ProcessSync] Fatal error:', err);
     return { succeeded: 0, failed: 0, retried: 0 };
   }
+};
+
+export default {
+  ensureSyncQueueStore,
+  getQueuedRecords,
+  addToSyncQueue,
+  removeFromSyncQueue,
+  getQueuedRecord,
+  updateQueuedRecord,
+  getPendingRecords,
+  updateLastSyncTime,
+  hoursSinceLastSync,
+  clearSyncQueue,
+  getSyncStats,
+  enqueue,
+  startSyncMonitor,
+  processPendingSync,
 };
