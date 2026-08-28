@@ -32,3 +32,4 @@ class Rider(Base):
     maintenance_entries = relationship("MaintenanceEntry", back_populates="rider", cascade="all, delete-orphan")
     remittances = relationship("Remittance", back_populates="rider", cascade="all, delete-orphan")
     saved_recipients = relationship("SavedRecipient", back_populates="rider", cascade="all, delete-orphan")
+    payments = relationship("Payment", back_populates="rider", cascade="all, delete-orphan")
