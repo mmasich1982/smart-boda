@@ -1,7 +1,7 @@
 // rider-app/src/offline/syncQueue.js
-// ✅ SURGICAL FIX: Improved sync retry logic and error handling for subscription payments
-// ✅ FIXED: Proper error logging to diagnose sync failures
-// ✅ FIXED: Ensures rider_id is properly appended to sync endpoint
+// ✅ ENHANCED: Comprehensive logging for subscription payment diagnosis
+// ✅ FIXED: Response logging to identify where payments are lost
+// ✅ COMPLETE: All original functions + enhanced processPendingSync
 // Uses existing indexedDbAdapter for non-blocking, structured queries
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
@@ -364,145 +364,260 @@ export const startSyncMonitor = async () => {
  * ✅ PROCESS PENDING SYNC: Attempts to sync all pending records
  * Called when app comes online or periodically
  * 
- * ⭐ SURGICAL FIX: Enhanced error logging and proper URL construction for subscription payments
+ * ⭐ ENHANCED: Comprehensive logging for payment flow diagnosis
+ * This version logs EVERY step of the sync process so we can identify
+ * exactly where payments are being lost between the app and database.
  * 
  * @returns {Promise<object>} - Sync results {succeeded, failed, retried}
  */
 export const processPendingSync = async () => {
   try {
+    console.log('[ProcessSync] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('[ProcessSync] 🔄 STARTING SYNC PROCESS');
+    
     const pending = await getPendingRecords();
+    
+    console.log(`[ProcessSync] 📊 Pending records found: ${pending.length}`);
     
     if (pending.length === 0) {
       console.log('[ProcessSync] ✅ No pending records to sync');
+      console.log('[ProcessSync] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       return { succeeded: 0, failed: 0, retried: 0 };
     }
 
-    console.log(`[ProcessSync] 🔄 Processing ${pending.length} pending records...`);
-    
     let succeeded = 0;
     let failed = 0;
     let retried = 0;
 
     // Process each pending record
-    for (const record of pending) {
+    for (let recordIndex = 0; recordIndex < pending.length; recordIndex++) {
+      const record = pending[recordIndex];
+      
+      console.log('[ProcessSync] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log(`[ProcessSync] 📦 RECORD ${recordIndex + 1}/${pending.length}`);
+      console.log(`[ProcessSync]   ID: ${record.id}`);
+      console.log(`[ProcessSync]   Type: ${record.type}`);
+      console.log(`[ProcessSync]   Endpoint: ${record.endpoint}`);
+      console.log(`[ProcessSync]   Rider ID: ${record.riderId || 'NOT SET'}`);
+      console.log(`[ProcessSync]   Retries: ${record.retries || 0}`);
+      
       try {
         // Check if we have internet (basic check)
         const isOnline = navigator && navigator.onLine !== false;
         
         if (!isOnline) {
-          console.log(`[ProcessSync] 📴 Still offline, deferring record: ${record.id}`);
+          console.log(`[ProcessSync] ⚠️ OFFLINE - Deferring record: ${record.id}`);
           retried++;
           continue;
         }
 
-        // ✅ SURGICAL FIX: Proper URL construction with rider_id query parameter
-        // This ensures subscription payment records are sent to the correct endpoint
+        console.log(`[ProcessSync] 🌐 Online - proceeding with sync`);
+
+        // ✅ ENHANCED: Proper URL construction with rider_id query parameter
         let url = record.endpoint;
         if (record.riderId) {
-          // ✅ CHECK: Don't add rider_id if it's already in the endpoint
           if (!url.includes('rider_id=')) {
             const separator = url.includes('?') ? '&' : '?';
             url = `${url}${separator}rider_id=${encodeURIComponent(record.riderId)}`;
-            console.log(`[ProcessSync] 📍 URL with rider_id added: ${url}`);
+            console.log(`[ProcessSync] ✅ URL constructed with rider_id: ${url}`);
           } else {
-            console.log(`[ProcessSync] 📍 Rider_id already in endpoint, using as-is: ${url}`);
+            console.log(`[ProcessSync] ℹ️ Rider_id already in endpoint: ${url}`);
           }
         } else {
-          console.warn(`[ProcessSync] ⚠️ No rider_id in record ${record.id}, URL may be incomplete: ${url}`);
+          console.warn(`[ProcessSync] ⚠️ WARNING: No rider_id in record ${record.id}`);
+          console.warn(`[ProcessSync] URL may be incomplete: ${url}`);
         }
 
-        console.log(`[ProcessSync] 📤 Syncing ${record.type}: ${record.id}`);
-        console.log(`[ProcessSync]   Endpoint: ${record.endpoint}`);
-        console.log(`[ProcessSync]   Full URL: ${url}`);
-        console.log(`[ProcessSync]   Rider ID: ${record.riderId || 'NOT SET'}`);
-        console.log(`[ProcessSync]   Payload keys: ${Object.keys(record.data).join(', ')}`);
-        
-        // ✅ SURGICAL FIX: Enhanced headers with sync tracking
+        // Prepare headers
         const headers = {
           'Content-Type': 'application/json',
           'X-Sync-ID': record.id,
           'X-Client-Timestamp': record.timestamp || new Date().toISOString(),
         };
 
-        console.log(`[ProcessSync]   Headers: X-Sync-ID=${record.id}`);
+        console.log(`[ProcessSync] 📋 Headers prepared:`);
+        console.log(`[ProcessSync]   X-Sync-ID: ${record.id}`);
+        console.log(`[ProcessSync]   X-Client-Timestamp: ${headers['X-Client-Timestamp']}`);
+        console.log(`[ProcessSync]   Content-Type: application/json`);
 
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: headers,
-          body: JSON.stringify(record.data),
-        });
+        // Log payload size
+        const payloadJson = JSON.stringify(record.data);
+        const payloadSize = new Blob([payloadJson]).size;
+        console.log(`[ProcessSync] 📦 Payload size: ${payloadSize} bytes`);
+        console.log(`[ProcessSync] 📝 Payload keys: ${Object.keys(record.data).join(', ')}`);
 
-        console.log(`[ProcessSync] 📥 Response status: ${response.status}`);
-
-        // ✅ SURGICAL FIX: Better response handling with detailed logging
-        if (response.ok) {
-          // 2xx status - success
-          let responseData = null;
-          try {
-            responseData = await response.json();
-            console.log(`[ProcessSync] ✅ Server response:`, responseData);
-          } catch (parseErr) {
-            // Response might not be JSON
-            console.log(`[ProcessSync] ✅ Sync successful (non-JSON response)`);
-          }
-
-          await removeFromSyncQueue(record.id);
-          console.log(`[ProcessSync] ✅ Synced successfully: ${record.id}`);
-          succeeded++;
-        } else if (response.status >= 400 && response.status < 500) {
-          // 4xx status - client error (don't retry)
-          console.warn(`[ProcessSync] ❌ Client error (${response.status}): ${record.id}`);
+        // ✅ CRITICAL: Make the actual request
+        console.log(`[ProcessSync] 🚀 Initiating FETCH request to: ${url}`);
+        console.log(`[ProcessSync]   Method: POST`);
+        console.log(`[ProcessSync]   URL: ${url}`);
+        
+        const fetchStart = Date.now();
+        
+        let response;
+        try {
+          response = await fetch(url, {
+            method: 'POST',
+            headers: headers,
+            body: payloadJson,
+          });
           
-          try {
-            const errData = await response.json();
-            console.error('[ProcessSync] Server error details:', errData);
-          } catch (e) {
-            // Response isn't JSON, try text
-            try {
-              const errText = await response.text();
-              console.error('[ProcessSync] Server error (text):', errText);
-            } catch (e2) {
-              console.error('[ProcessSync] Could not parse error response');
-            }
-          }
+          const fetchDuration = Date.now() - fetchStart;
+          console.log(`[ProcessSync] ✅ FETCH completed in ${fetchDuration}ms`);
           
-          // Remove from queue - don't retry client errors
-          await removeFromSyncQueue(record.id);
-          failed++;
-        } else {
-          // 5xx status - server error (retry)
-          console.warn(`[ProcessSync] ⚠️ Server error (${response.status}): ${record.id}`);
+        } catch (fetchErr) {
+          const fetchDuration = Date.now() - fetchStart;
+          console.error(`[ProcessSync] ❌ FETCH failed after ${fetchDuration}ms`);
+          console.error(`[ProcessSync]   Error name: ${fetchErr.name}`);
+          console.error(`[ProcessSync]   Error message: ${fetchErr.message}`);
+          console.error(`[ProcessSync]   Error type: ${typeof fetchErr}`);
+          
+          // Retry on network errors
           const newRetries = (record.retries || 0) + 1;
           await updateQueuedRecord(record.id, { retries: newRetries });
-          console.log(`[ProcessSync] Retries for ${record.id}: ${newRetries}`);
+          console.log(`[ProcessSync] 🔁 Marked for retry (attempt ${newRetries})`);
+          retried++;
+          continue;
+        }
+
+        // ✅ CRITICAL: Check response object exists
+        if (!response) {
+          console.error(`[ProcessSync] ❌ Response is null or undefined!`);
+          const newRetries = (record.retries || 0) + 1;
+          await updateQueuedRecord(record.id, { retries: newRetries });
+          console.log(`[ProcessSync] 🔁 Marked for retry due to null response`);
+          retried++;
+          continue;
+        }
+
+        // ✅ CRITICAL: Log response details
+        console.log(`[ProcessSync] 📥 RESPONSE RECEIVED:`);
+        console.log(`[ProcessSync]   Status: ${response.status} ${response.statusText || ''}`);
+        console.log(`[ProcessSync]   OK: ${response.ok}`);
+        console.log(`[ProcessSync]   Type: ${response.type}`);
+        console.log(`[ProcessSync]   URL: ${response.url}`);
+        console.log(`[ProcessSync]   Headers:`, {
+          contentType: response.headers.get('content-type'),
+          contentLength: response.headers.get('content-length'),
+        });
+
+        // ✅ CRITICAL: Handle success (2xx)
+        if (response.ok) {
+          console.log(`[ProcessSync] ✅ SUCCESS - Status ${response.status}`);
+          
+          // Try to parse response body
+          let responseData = null;
+          try {
+            const responseText = await response.text();
+            console.log(`[ProcessSync] 📄 Response body length: ${responseText.length} bytes`);
+            
+            if (responseText) {
+              try {
+                responseData = JSON.parse(responseText);
+                console.log(`[ProcessSync] ✅ Parsed JSON response:`);
+                console.log(`[ProcessSync]   Success: ${responseData.success}`);
+                console.log(`[ProcessSync]   Payment ID: ${responseData.paymentId}`);
+                console.log(`[ProcessSync]   Verified: ${responseData.verified}`);
+                console.log(`[ProcessSync]   Message: ${responseData.message}`);
+              } catch (parseErr) {
+                console.log(`[ProcessSync] ℹ️ Response is not JSON (non-JSON success response)`);
+                console.log(`[ProcessSync]   Response: ${responseText.substring(0, 100)}`);
+              }
+            } else {
+              console.log(`[ProcessSync] ℹ️ Response body is empty (204 or similar)`);
+            }
+          } catch (readErr) {
+            console.error(`[ProcessSync] ❌ Failed to read response body`);
+            console.error(`[ProcessSync]   Error: ${readErr.message}`);
+          }
+
+          // Remove from queue after successful sync
+          console.log(`[ProcessSync] 🗑️ Removing from queue: ${record.id}`);
+          await removeFromSyncQueue(record.id);
+          console.log(`[ProcessSync] ✅ Removed successfully`);
+          succeeded++;
+          
+        } else if (response.status >= 400 && response.status < 500) {
+          // ✅ CRITICAL: Handle client errors (4xx) - don't retry
+          console.warn(`[ProcessSync] ❌ CLIENT ERROR - Status ${response.status}`);
+          
+          // Try to read error response
+          try {
+            const errorText = await response.text();
+            console.error(`[ProcessSync] 📄 Error response body length: ${errorText.length} bytes`);
+            
+            if (errorText) {
+              try {
+                const errorData = JSON.parse(errorText);
+                console.error(`[ProcessSync] 🔴 Server error:`, JSON.stringify(errorData, null, 2));
+              } catch (parseErr) {
+                console.error(`[ProcessSync] 📄 Error response (non-JSON):`);
+                console.error(`[ProcessSync]   ${errorText.substring(0, 200)}`);
+              }
+            }
+          } catch (readErr) {
+            console.error(`[ProcessSync] Failed to read error response: ${readErr.message}`);
+          }
+          
+          // Remove from queue - don't retry 4xx errors
+          console.log(`[ProcessSync] 🗑️ Removing failed record from queue: ${record.id}`);
+          await removeFromSyncQueue(record.id);
+          console.log(`[ProcessSync] ❌ Removed (won't retry 4xx errors)`);
+          failed++;
+          
+        } else {
+          // ✅ CRITICAL: Handle server errors (5xx) - retry
+          console.warn(`[ProcessSync] ⚠️ SERVER ERROR - Status ${response.status}`);
+          
+          try {
+            const errorText = await response.text();
+            console.warn(`[ProcessSync] 📄 Error response: ${errorText.substring(0, 200)}`);
+          } catch (e) {
+            console.warn(`[ProcessSync] Could not read error response`);
+          }
+          
+          // Mark for retry
+          const newRetries = (record.retries || 0) + 1;
+          console.log(`[ProcessSync] 🔁 Marking for retry (attempt ${newRetries})`);
+          await updateQueuedRecord(record.id, { retries: newRetries });
           retried++;
         }
+        
       } catch (err) {
-        // Network error
-        console.error(`[ProcessSync] ❌ Network error syncing ${record.id}:`, err.message);
-        console.error(`[ProcessSync]   Error details:`, {
-          name: err.name,
-          message: err.message,
-          stack: err.stack ? err.stack.split('\n').slice(0, 3).join(' | ') : 'N/A'
-        });
+        // Unexpected error
+        console.error(`[ProcessSync] ❌ UNEXPECTED ERROR processing record: ${record.id}`);
+        console.error(`[ProcessSync]   Error name: ${err.name}`);
+        console.error(`[ProcessSync]   Error message: ${err.message}`);
+        console.error(`[ProcessSync]   Stack (first 200 chars): ${err.stack ? err.stack.substring(0, 200) : 'N/A'}`);
+        
         const newRetries = (record.retries || 0) + 1;
         await updateQueuedRecord(record.id, { retries: newRetries });
-        console.log(`[ProcessSync] Retries for ${record.id}: ${newRetries}`);
+        console.log(`[ProcessSync] 🔁 Marked for retry due to error`);
         retried++;
       }
     }
 
-    // Update last sync time on successful completion
+    // ✅ Update last sync time on successful completion
     if (succeeded > 0) {
+      console.log(`[ProcessSync] 📅 Updating last sync time...`);
       await updateLastSyncTime();
     }
 
-    console.log(
-      `[ProcessSync] ✅ Sync complete: ${succeeded} succeeded, ${failed} failed, ${retried} retried`
-    );
+    // ✅ Log final summary
+    console.log('[ProcessSync] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log(`[ProcessSync] 📊 SYNC COMPLETE`);
+    console.log(`[ProcessSync]   ✅ Succeeded: ${succeeded}`);
+    console.log(`[ProcessSync]   ❌ Failed: ${failed}`);
+    console.log(`[ProcessSync]   🔁 Retried: ${retried}`);
+    console.log(`[ProcessSync]   📊 Total: ${succeeded + failed + retried}/${pending.length}`);
+    console.log('[ProcessSync] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
     return { succeeded, failed, retried };
+    
   } catch (err) {
-    console.error('[ProcessSync] Fatal error:', err);
+    console.error('[ProcessSync] ❌ FATAL ERROR in processPendingSync:');
+    console.error(`[ProcessSync]   Error name: ${err.name}`);
+    console.error(`[ProcessSync]   Error message: ${err.message}`);
+    console.error(`[ProcessSync]   Stack: ${err.stack ? err.stack.split('\n').slice(0, 5).join(' | ') : 'N/A'}`);
     return { succeeded: 0, failed: 0, retried: 0 };
   }
 };
