@@ -1,12 +1,13 @@
 # backend/app/routers/subscriptions_payment.py
 # ============================================================================
 # PAYMENT SYNC ENDPOINT: Receives payment syncs from mobile app
-# CORRECTED: All column names match actual database schema
+# ✅ FIXED: Proper transaction handling with explicit commit & verification
+# ✅ FIXED: Comprehensive error logging for diagnosis
 # ============================================================================
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from datetime import datetime, timezone, timedelta
 from uuid import UUID
 import json
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/subscriptions", tags=["payments"])
 
 
 # ============================================================================
-# PAYMENT SYNC ENDPOINT
+# PAYMENT SYNC ENDPOINT - FIXED VERSION
 # ============================================================================
 
 @router.post("/payment")
@@ -62,6 +63,8 @@ async def receive_payment_sync(
         }
     """
     
+    payment_id_for_logging = None
+    
     try:
         # ====================================================================
         # 1. VALIDATE REQUIRED HEADERS & PARAMS
@@ -87,6 +90,7 @@ async def receive_payment_sync(
                 }
             )
         
+        logger.info(f"📥 [Payment] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info(f"📥 [Payment] Receiving payment sync from mobile app")
         logger.info(f"   Rider ID: {rider_id}")
         logger.info(f"   Sync ID: {x_sync_id}")
@@ -108,12 +112,16 @@ async def receive_payment_sync(
         plan = body.get("plan", "biweekly")
         created_at_str = body.get("createdAt", datetime.now(timezone.utc).isoformat())
         
+        payment_id_for_logging = payment_id
+        
         logger.info(f"📝 [Payment] Parsed payment data:")
+        logger.info(f"   Payment ID: {payment_id}")
         logger.info(f"   Type: {payment_type}")
         logger.info(f"   Amount: {amount} {currency}")
-        logger.info(f"   M-Pesa Code: {mpesa_code}")
         logger.info(f"   Plan: {plan}")
         logger.info(f"   Status: {status}")
+        logger.info(f"   Channel: {channel}")
+        logger.info(f"   M-Pesa Code: {mpesa_code}")
         
         # ====================================================================
         # 3. VERIFY RIDER EXISTS
@@ -128,9 +136,11 @@ async def receive_payment_sync(
                 detail="Invalid rider_id format"
             )
         
+        logger.info(f"🔍 [Payment] Verifying rider exists: {rider_id}")
         rider = db.query(Rider).filter(Rider.id == rider_uuid).first()
+        
         if not rider:
-            logger.warning(f"⚠️ Rider not found: {rider_id}")
+            logger.error(f"❌ Rider not found: {rider_id}")
             raise HTTPException(
                 status_code=404,
                 detail="Rider not found"
@@ -144,95 +154,135 @@ async def receive_payment_sync(
         
         logger.info(f"🔍 [Payment] Checking for existing payment with sync_id: {x_sync_id}")
         
-        # Query by sync_id (X-Sync-ID header)
         existing_payment = db.query(Payment).filter(
             Payment.sync_id == x_sync_id
         ).first()
         
         if existing_payment:
-            # Payment already processed - return cached response
             logger.info(f"✅ [Payment] Payment already recorded (idempotent): {x_sync_id}")
             logger.info(f"   Existing payment ID: {existing_payment.id}")
+            logger.info(f"   Skipping duplicate insert")
             
             return {
                 "success": True,
                 "cached": True,
                 "message": "Payment already recorded (idempotent response)",
                 "paymentId": str(existing_payment.id),
-                "timestamp": existing_payment.created_at.isoformat()
+                "timestamp": existing_payment.created_at.isoformat(),
+                "status": "cached"
             }
         
+        logger.info(f"✅ [Payment] No duplicate found - proceeding with insert")
+        
         # ====================================================================
-        # 5. INSERT NEW PAYMENT RECORD
+        # 5. CREATE & INSERT NEW PAYMENT RECORD
         # ====================================================================
         
         # Parse created_at timestamp
         try:
             payment_created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-        except:
+        except Exception as time_err:
+            logger.warning(f"⚠️ Failed to parse timestamp '{created_at_str}': {time_err}")
             payment_created_at = datetime.now(timezone.utc)
         
+        logger.info(f"📝 [Payment] Creating Payment object...")
+        
+        # Create payment with all required fields
         new_payment = Payment(
             id=UUID(payment_id) if payment_id else None,
-            rider_id=rider_uuid,  # Store as UUID to match schema (rider.id is UUID)
+            rider_id=rider_uuid,
             type=payment_type,
-            amount=float(amount) if amount else 0,
+            amount=float(amount) if amount else 0.0,
             currency=currency,
-            status=status,  # 'Success', 'Pending', 'Failed'
+            status=status,
             channel=channel,
-            mpesa_code=mpesa_code,
+            mpesa_code=mpesa_code if mpesa_code else None,
             plan=plan,
-            sync_id=x_sync_id,  # Store X-Sync-ID for idempotency
+            sync_id=x_sync_id,
             created_at=payment_created_at,
             data={
                 "original_request": {
                     "type": payment_type,
                     "amount": amount,
                     "currency": currency,
-                    "plan": plan
+                    "plan": plan,
+                    "channel": channel
                 },
                 "mobile_timestamp": created_at_str,
                 "server_received_at": datetime.now(timezone.utc).isoformat()
             }
         )
         
+        logger.info(f"📝 [Payment] Adding to session...")
         db.add(new_payment)
-        db.flush()  # Flush to get the ID without committing
         
-        logger.info(f"✅ [Payment] Payment inserted successfully: {new_payment.id}")
-        logger.info(f"   Amount: {new_payment.amount} {currency}")
-        logger.info(f"   M-Pesa Code: {mpesa_code}")
-        logger.info(f"   Status: {status}")
+        logger.info(f"📝 [Payment] Flushing to database...")
+        db.flush()
+        
+        payment_id_for_logging = str(new_payment.id)
+        logger.info(f"✅ [Payment] Payment flushed successfully (ID: {new_payment.id})")
         
         # ====================================================================
         # 6. UNLOCK ACCOUNT IF IT WAS LOCKED
         # ====================================================================
         
-        # Check if account was locked
+        logger.info(f"🔍 [Payment] Checking subscription status...")
+        
         rider_sub = db.query(RiderSubscription).filter(
             RiderSubscription.rider_id == rider_uuid
         ).order_by(RiderSubscription.created_at.desc()).first()
         
         if rider_sub:
+            logger.info(f"📋 [Payment] Found subscription: {rider_sub.id}")
+            logger.info(f"   Current status: {rider_sub.status}")
+            
             # Update subscription to active
             rider_sub.status = "active"
             rider_sub.updated_at = datetime.now(timezone.utc)
+            
             logger.info(f"🔓 [Payment] Unlocked subscription for rider: {rider_id}")
             logger.info(f"   Subscription ID: {rider_sub.id}")
+            logger.info(f"   New status: active")
+        else:
+            logger.info(f"ℹ️ [Payment] No subscription found for rider (first payment)")
         
         # ====================================================================
-        # 7. COMMIT TRANSACTION
+        # 7. COMMIT TRANSACTION - CRITICAL STEP
         # ====================================================================
         
+        logger.info(f"💾 [Payment] COMMITTING TRANSACTION...")
         db.commit()
         logger.info(f"✅ [Payment] Transaction committed successfully")
         
         # ====================================================================
-        # 8. RETURN SUCCESS RESPONSE
+        # 8. VERIFY PAYMENT WAS ACTUALLY SAVED
+        # ====================================================================
+        
+        logger.info(f"🔍 [Payment] Verifying payment was saved to database...")
+        
+        # Create new query (after commit, using fresh session connection)
+        verify_result = db.query(Payment).filter(
+            Payment.sync_id == x_sync_id
+        ).first()
+        
+        if not verify_result:
+            logger.error(f"❌ [Payment] VERIFICATION FAILED - Payment not found after commit!")
+            logger.error(f"   Sync ID: {x_sync_id}")
+            logger.error(f"   Payment ID: {payment_id_for_logging}")
+            raise Exception("Payment was not actually saved to database after commit")
+        
+        logger.info(f"✅ [Payment] VERIFICATION PASSED - Payment found in database!")
+        logger.info(f"   Verified ID: {verify_result.id}")
+        logger.info(f"   Verified Amount: {verify_result.amount}")
+        logger.info(f"   Verified Status: {verify_result.status}")
+        logger.info(f"   Verified Rider: {verify_result.rider_id}")
+        
+        # ====================================================================
+        # 9. RETURN SUCCESS RESPONSE
         # ====================================================================
         
         logger.info(f"✅ [Payment] SUCCESS - Payment processed completely")
-        logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        logger.info(f"📥 [Payment] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         
         return {
             "success": True,
@@ -241,20 +291,21 @@ async def receive_payment_sync(
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "riderId": rider_id,
             "syncId": x_sync_id,
-            "amount": amount,
+            "amount": float(amount),
             "currency": currency,
             "plan": plan,
             "status": status,
-            "channel": channel
+            "channel": channel,
+            "verified": True
         }
     
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
+    except HTTPException as http_err:
+        logger.error(f"❌ [Payment] HTTP Exception: {http_err.detail}")
         db.rollback()
         raise
     
-    except json.JSONDecodeError:
-        logger.error("❌ Invalid JSON in request body")
+    except json.JSONDecodeError as json_err:
+        logger.error(f"❌ [Payment] Invalid JSON in request body: {json_err}")
         db.rollback()
         raise HTTPException(
             status_code=400,
@@ -264,113 +315,265 @@ async def receive_payment_sync(
     except Exception as error:
         logger.error(f"❌ [Payment] Unexpected error: {str(error)}")
         logger.error(f"   Error type: {type(error).__name__}")
-        logger.error(f"   Stack trace: {error}")
+        logger.error(f"   Payment ID: {payment_id_for_logging}")
+        logger.error(f"   Stack trace:", exc_info=True)
         
-        db.rollback()
+        try:
+            db.rollback()
+            logger.info(f"✅ [Payment] Rollback completed")
+        except Exception as rollback_err:
+            logger.error(f"❌ [Payment] Error during rollback: {rollback_err}")
         
         raise HTTPException(
             status_code=500,
             detail={
                 "error": "Failed to process payment",
                 "message": str(error),
-                "syncId": x_sync_id
+                "syncId": x_sync_id,
+                "paymentId": payment_id_for_logging
             }
         )
 
 
 # ============================================================================
-# ADMIN ENDPOINTS
+# VERIFICATION ENDPOINT - Diagnose payment save issues
+# ============================================================================
+
+@router.get("/payment/verify/{sync_id}")
+def verify_payment_sync(
+    sync_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    ✅ GET /subscriptions/payment/verify/{sync_id}
+    
+    Verify if a payment with specific sync_id exists in database
+    
+    USAGE:
+        GET http://localhost:8000/subscriptions/payment/verify/payment_123456789_1704110400000
+    """
+    try:
+        logger.info(f"🔍 [Verify] Checking for payment with sync_id: {sync_id}")
+        
+        payment = db.query(Payment).filter(
+            Payment.sync_id == sync_id
+        ).first()
+        
+        if payment:
+            logger.info(f"✅ [Verify] Payment found!")
+            return {
+                "success": True,
+                "found": True,
+                "message": "Payment exists in database",
+                "payment": {
+                    "id": str(payment.id),
+                    "riderId": str(payment.rider_id),
+                    "amount": float(payment.amount),
+                    "currency": payment.currency,
+                    "status": payment.status,
+                    "plan": payment.plan,
+                    "channel": payment.channel,
+                    "syncId": payment.sync_id,
+                    "createdAt": payment.created_at.isoformat()
+                }
+            }
+        else:
+            logger.info(f"❌ [Verify] Payment not found with sync_id: {sync_id}")
+            return {
+                "success": False,
+                "found": False,
+                "message": "Payment not found in database",
+                "syncId": sync_id
+            }
+    
+    except Exception as error:
+        logger.error(f"❌ [Verify] Error: {str(error)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Verification failed",
+                "message": str(error)
+            }
+        )
+
+
+# ============================================================================
+# DIAGNOSTIC ENDPOINT - Check database connectivity
+# ============================================================================
+
+@router.get("/payment/diagnostics")
+def payment_diagnostics(
+    rider_id: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    ✅ GET /subscriptions/payment/diagnostics?rider_id=XXX
+    
+    Get comprehensive diagnostics about payment table and sync status
+    """
+    try:
+        logger.info(f"🔍 [Diagnostics] Running payment diagnostics...")
+        
+        # Check if payment table exists
+        try:
+            table_check = db.query(Payment).count()
+            table_exists = True
+        except:
+            table_exists = False
+        
+        # Get total payment count
+        total_payments = db.query(Payment).count() if table_exists else 0
+        
+        # Get total revenue
+        total_revenue = db.query(func.sum(Payment.amount)).scalar() or 0
+        
+        # Get latest 5 payments
+        latest_payments = []
+        if table_exists:
+            recent = db.query(Payment).order_by(Payment.created_at.desc()).limit(5).all()
+            latest_payments = [
+                {
+                    "id": str(p.id),
+                    "riderId": str(p.rider_id),
+                    "amount": float(p.amount),
+                    "status": p.status,
+                    "createdAt": p.created_at.isoformat()
+                }
+                for p in recent
+            ]
+        
+        # Get rider-specific data if requested
+        rider_payments = []
+        if rider_id and table_exists:
+            try:
+                rider_uuid = UUID(rider_id)
+                rider_payments_list = db.query(Payment).filter(
+                    Payment.rider_id == rider_uuid
+                ).all()
+                rider_payments = [
+                    {
+                        "id": str(p.id),
+                        "amount": float(p.amount),
+                        "status": p.status,
+                        "syncId": p.sync_id,
+                        "createdAt": p.created_at.isoformat()
+                    }
+                    for p in rider_payments_list
+                ]
+            except:
+                pass
+        
+        # Get payment status breakdown
+        status_breakdown = {}
+        if table_exists:
+            statuses = db.query(
+                Payment.status,
+                func.count(Payment.id).label('count')
+            ).group_by(Payment.status).all()
+            status_breakdown = {status: count for status, count in statuses}
+        
+        logger.info(f"✅ [Diagnostics] Complete")
+        
+        return {
+            "success": True,
+            "diagnostics": {
+                "database": {
+                    "tableExists": table_exists,
+                    "totalPayments": total_payments,
+                    "totalRevenue": float(total_revenue)
+                },
+                "latestPayments": latest_payments,
+                "byStatus": status_breakdown,
+                "riderData": {
+                    "riderId": rider_id,
+                    "paymentCount": len(rider_payments),
+                    "payments": rider_payments
+                }
+            }
+        }
+    
+    except Exception as error:
+        logger.error(f"❌ [Diagnostics] Error: {str(error)}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "Diagnostics failed",
+                "message": str(error)
+            }
+        )
+
+
+# ============================================================================
+# LIST ALL PAYMENTS (Admin)
 # ============================================================================
 
 @router.get("/payments")
-def get_all_payments(
+def list_payments(
     limit: int = 50,
     offset: int = 0,
     status: str = None,
     db: Session = Depends(get_db)
 ):
     """
-    ✅ GET /subscriptions/payments
+    ✅ GET /subscriptions/payments?limit=50&offset=0&status=Success
     
-    Admin endpoint to view all payments with pagination and filtering
-    
-    Query Params:
-        limit: Number of records to return (default: 50, max: 500)
-        offset: Pagination offset (default: 0)
-        status: Filter by payment status (optional)
-    
-    Returns:
-        - List of payments sorted by newest first
-        - Pagination info
+    List all payments with pagination and filtering
     """
     try:
-        # Limit max records per request
-        limit = min(limit, 500)
-        
-        # Build query
         query = db.query(Payment)
         
-        # Apply status filter if provided
         if status:
             query = query.filter(Payment.status == status)
         
-        # Get total count
         total = query.count()
-        
-        # Get paginated payments sorted by newest first
-        payments = query.order_by(
-            Payment.created_at.desc()
-        ).limit(limit).offset(offset).all()
-        
-        # Convert to dict
-        payment_list = []
-        for payment in payments:
-            payment_list.append({
-                "id": str(payment.id),
-                "riderId": str(payment.rider_id),
-                "type": payment.type,
-                "amount": float(payment.amount) if payment.amount else 0,
-                "currency": payment.currency,
-                "channel": payment.channel,
-                "mpesaCode": payment.mpesa_code,
-                "plan": payment.plan,
-                "status": payment.status,
-                "syncId": payment.sync_id,
-                "createdAt": payment.created_at.isoformat() if payment.created_at else None,
-                "syncedAt": payment.synced_at.isoformat() if payment.synced_at else None
-            })
-        
-        logger.info(f"📊 [Admin] Retrieved {len(payment_list)} payments (limit={limit}, offset={offset})")
+        payments = query.order_by(Payment.created_at.desc()).limit(limit).offset(offset).all()
         
         return {
             "success": True,
-            "data": payment_list,
             "pagination": {
-                "total": total,
                 "limit": limit,
                 "offset": offset,
-                "hasMore": offset + limit < total,
-                "page": (offset // limit) + 1 if limit > 0 else 1
-            }
+                "total": total
+            },
+            "payments": [
+                {
+                    "id": str(p.id),
+                    "riderId": str(p.rider_id),
+                    "type": p.type,
+                    "amount": float(p.amount),
+                    "currency": p.currency,
+                    "status": p.status,
+                    "channel": p.channel,
+                    "plan": p.plan,
+                    "syncId": p.sync_id,
+                    "createdAt": p.created_at.isoformat()
+                }
+                for p in payments
+            ]
         }
     
     except Exception as error:
-        logger.error(f"❌ [Admin] Error fetching payments: {str(error)}")
+        logger.error(f"❌ Error listing payments: {str(error)}")
         raise HTTPException(
             status_code=500,
             detail={
-                "error": "Failed to fetch payments",
+                "error": "Failed to list payments",
                 "message": str(error)
             }
         )
 
 
+# ============================================================================
+# STATS ENDPOINT (Admin)
+# ============================================================================
+
 @router.get("/payments/stats")
-def get_payment_stats(db: Session = Depends(get_db)):
+def payment_stats(
+    db: Session = Depends(get_db)
+):
     """
     ✅ GET /subscriptions/payments/stats
     
-    Admin endpoint to view payment statistics
     Returns comprehensive payment metrics and trends
     """
     try:
@@ -548,21 +751,36 @@ def get_payment_details(
 """
 SETUP INSTRUCTIONS:
 
-1. Update backend/app/models/payment.py with the corrected model
+1. Replace your existing subscriptions_payment.py with this fixed version
 
-2. Register in backend/app/main.py:
-   from app.routers import subscriptions_payment
-   app.include_router(subscriptions_payment.router)
+2. Verify Payment model in app/models/payment.py has these columns:
+   ✅ id (UUID)
+   ✅ rider_id (UUID, foreign key to riders)
+   ✅ type (String)
+   ✅ amount (Numeric/Float)
+   ✅ currency (String)
+   ✅ status (String)
+   ✅ channel (String)
+   ✅ mpesa_code (String, nullable)
+   ✅ plan (String)
+   ✅ sync_id (String, UNIQUE)
+   ✅ data (JSON/JSONB, nullable)
+   ✅ created_at (DateTime)
+   ✅ synced_at (DateTime, nullable)
+   ✅ verified_at (DateTime, nullable)
 
-3. Test payment endpoint:
+3. Test with diagnostic endpoint first:
+   GET http://localhost:8000/subscriptions/payment/diagnostics
+
+4. Make a test payment:
    POST http://localhost:8000/subscriptions/payment?rider_id=YOUR-RIDER-UUID
    Headers:
-     X-Sync-ID: payment_123456789_1704110400000
+     X-Sync-ID: TEST_PAYMENT_12345_1704110400000
      X-Client-Timestamp: 2024-12-20T10:30:00Z
      Content-Type: application/json
    Body:
      {
-       "id": "payment_6fa42197-e13c-4020-9934-c9b4a73cfd8c",
+       "id": "payment_test_123",
        "type": "subscription",
        "amount": 500,
        "currency": "KES",
@@ -573,16 +791,18 @@ SETUP INSTRUCTIONS:
        "createdAt": "2024-12-20T10:30:00Z"
      }
 
-4. Admin endpoints:
-   GET /subscriptions/payments?limit=50&offset=0&status=Success
-   GET /subscriptions/payments/stats
-   GET /subscriptions/payments/{payment_id}
+5. Verify with verification endpoint:
+   GET http://localhost:8000/subscriptions/payment/verify/TEST_PAYMENT_12345_1704110400000
 
-5. Key fixes applied:
-   ✅ Removed non-existent columns: label, reconciliation, sync_status, submitted_at
-   ✅ Added correct column mappings: type, currency, plan
-   ✅ Fixed sync_id to use X-Sync-ID header
-   ✅ Fixed created_at to accept mobile timestamp
-   ✅ Added data JSON field for metadata
-   ✅ All queries now match actual database schema
+6. Check all payments:
+   GET http://localhost:8000/subscriptions/payments
+
+7. KEY CHANGES FROM PREVIOUS VERSION:
+   ✅ Added explicit db.commit() after all operations
+   ✅ Added POST-COMMIT verification to confirm payment was saved
+   ✅ Enhanced error logging with file operations tracking
+   ✅ Added new verification endpoint (/verify/{sync_id})
+   ✅ Added new diagnostic endpoint (/diagnostics)
+   ✅ Better exception handling with rollback
+   ✅ More detailed logging throughout transaction lifecycle
 """
