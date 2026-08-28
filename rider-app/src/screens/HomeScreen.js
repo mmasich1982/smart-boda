@@ -5,6 +5,8 @@
 // ✅ INSTANT HERO FARE UPDATES: Trip cache read directly from IndexedDB
 // ✅ NETWORK AWARE: Graceful fallback when offline
 // ✅ UI/UX: 100% preserved from original
+// ✅ FIXED: ONLY redirect to AccountLockedScreen (keep this - CRITICAL for subscriptions)
+//          NO automatic redirect to PinLoginScreen (only logout navigates there)
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
@@ -18,7 +20,7 @@ import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
 import HeroFareCard from '../components/HeroFareCard';
 // ✅ NEW IMPORT: Subscription Banners
 import SubscriptionBanners from '../components/SubscriptionBanners';
-// ✅ CRITICAL: Account lock enforcement
+// ✅ CRITICAL: Account lock enforcement (subscription expiry)
 import { checkAndEnforceLock } from '../offline/subscriptionUtils';
 
 const ENERGY_TILE_BY_FUEL = {
@@ -176,8 +178,10 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   // ========================================================================
   // ✅ CRITICAL: LOCK ENFORCEMENT GATE ON SCREEN FOCUS
   // ========================================================================
-  // This is the MAIN GATE: Check for account lock BEFORE rendering home
-  // If locked, navigate to AccountLockedScreen immediately
+  // KEEP THIS LOGIC - It's CRITICAL for subscription expiry enforcement
+  // This ONLY redirects to AccountLockedScreen when subscription is expired
+  // It does NOT redirect to PinLoginScreen (that only happens on explicit logout)
+  // ========================================================================
   useFocusEffect(
     useCallback(() => {
       const checkAndEnforceAccountLock = async () => {
@@ -188,20 +192,21 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
         }
 
         try {
-          console.log('[HomeScreen] 🔒 MAIN GATE: Checking account lock status...');
+          console.log('[HomeScreen] 🔒 SUBSCRIPTION CHECK: Checking account lock status...');
           setLockCheckInProgress(true);
           
           const lockStatus = await checkAndEnforceLock(riderId);
 
           if (lockStatus.isLocked) {
-            console.log('[HomeScreen] 🔒 GATE CLOSED: Account is LOCKED - navigating to AccountLockedScreen', {
+            console.log('[HomeScreen] 🔒 SUBSCRIPTION EXPIRED: Account is LOCKED - navigating to AccountLockedScreen', {
               reason: lockStatus.reason,
               justLocked: lockStatus.justLocked,
             });
             
             setIsAccountLocked(true);
             
-            // ✅ ENFORCE LOCK: Navigate to AccountLockedScreen before rendering home
+            // ✅ ENFORCE LOCK: Navigate to AccountLockedScreen (CRITICAL - DO NOT REMOVE)
+            // This is for subscription expiry, which is business-critical
             navigation.reset({
               index: 0,
               routes: [{ name: 'AccountLockedScreen' }],
@@ -209,7 +214,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             return;
           }
 
-          console.log('[HomeScreen] ✅ GATE OPEN: Account is UNLOCKED - rendering home screen normally');
+          console.log('[HomeScreen] ✅ SUBSCRIPTION ACTIVE: Account is UNLOCKED - rendering home screen normally');
           setIsAccountLocked(false);
         } catch (err) {
           console.error('[HomeScreen] Error checking account lock:', err);
@@ -275,16 +280,15 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
         }
       });
 
-      return { total, count: todaysActiveTrips.length };
+      return total;
     } catch (err) {
-      console.error('[HomeScreen] Error calculating total:', err);
-      return { total: 0, count: 0 };
+      console.error('Error calculating totals:', err);
+      return 0;
     }
   }, []);
 
   /**
-   * ✅ Calculate yesterday's total from trip cache
-   * Reads all trips from cache and sums yesterday's amounts
+   * ✅ Calculate yesterday's total from trip history cache
    */
   const calculateYesterdaysTotal = useCallback(async (riderIdParam) => {
     try {
@@ -297,29 +301,30 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
           if (!Array.isArray(items)) items = [];
         } catch (parseErr) {
-          console.warn('⚠️ Cache parse error');
+          console.warn('⚠️ Cache parse error for yesterday');
           items = [];
         }
       }
 
-      // Filter to yesterday's active trips
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayString = yesterday.toDateString();
-
-      const yesterdaysActiveTrips = items.filter(t => {
+      // Filter to yesterday's completed trips
+      const yesterday = new Date(Date.now() - 86400000).toDateString();
+      const yesterdaysTrips = items.filter(t => {
         const tripDate = new Date(t.ts || t.timestamp || 0).toDateString();
-        return t.status === 'active' && tripDate === yesterdayString;
+        return t.status === 'completed' && tripDate === yesterday;
       });
 
-      // Calculate total for yesterday
+      // Calculate realized income
       let total = 0;
-      yesterdaysActiveTrips.forEach(trip => {
+      yesterdaysTrips.forEach(trip => {
         const method = trip.paymentMethod || trip.method;
         if (method === 'LipaLater') {
-          // Only count if settled
           if (trip.lipaLater?.settled) {
-            total += trip.amount || 0;
+            const paymentDate = trip.lipaLater.paymentDate
+              ? new Date(trip.lipaLater.paymentDate).toDateString()
+              : null;
+            if (paymentDate === yesterday) {
+              total += trip.amount || 0;
+            }
           }
         } else {
           total += trip.amount || 0;
@@ -328,147 +333,134 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
 
       return total;
     } catch (err) {
-      console.error('[HomeScreen] Error calculating yesterday total:', err);
-      return null;
+      console.error('Error calculating yesterday totals:', err);
+      return 0;
     }
   }, []);
 
-  const refresh = useCallback(async () => {
+  /**
+   * ✅ Load all dashboard data from IndexedDB
+   */
+  const loadDashboardData = useCallback(async (riderIdParam) => {
+    if (!riderIdParam) return;
+
     try {
-      // ✅ Guard: Can't refresh without riderId
-      if (!riderId) {
-        console.warn('[HomeScreen] Cannot refresh - no riderId');
-        return;
-      }
+      // Load data in parallel
+      const [bikeSummary, accountSummary, todaysTotal, yesterdaysTotal, queuedRecs] = await Promise.all([
+        getActiveBikeProfile(riderIdParam),
+        getRiderAccountSummary(riderIdParam),
+        calculateTodaysTotal(riderIdParam),
+        calculateYesterdaysTotal(riderIdParam),
+        getQueuedRecords(),
+      ]);
 
-      setRefreshing(true);
-      setHasError(false);
-      setErrorMsg(null);
+      setBike(bikeSummary);
+      setAccount(accountSummary);
+      setRunningTotal(todaysTotal);
+      setYesterdayTotal(yesterdaysTotal);
+      setQueuedCount(queuedRecs?.length || 0);
 
-      const activeBike = await getActiveBikeProfile();
-      if (activeBike) {
-        setBike(activeBike);
-      } else {
-        console.warn('[HomeScreen] No active bike profile found - using default');
-        setBike(null);
-      }
+      // Calculate offline hours
+      const hoursSince = hoursSinceLastSync();
+      setOfflineHours(hoursSince);
 
-      const accountSummary = await getRiderAccountSummary();
-      if (accountSummary) {
-        setAccount(accountSummary);
-      } else {
-        console.warn('[HomeScreen] No account summary found - using defaults');
-        setAccount(null);
-      }
-
-      // ✅ Load today's total from IndexedDB trip cache (fuel pattern)
-      const todayData = await calculateTodaysTotal(riderId);
-      setRunningTotal(todayData.total);
-      setTripsToday(todayData.count);
-
-      // ✅ Load yesterday's total from IndexedDB trip cache
-      const yest = await calculateYesterdaysTotal(riderId);
-      setYesterdayTotal(yest);
-
-      const queued = await getQueuedRecords();
-      setQueuedCount(queued?.length || 0);
-
-      const hours = await hoursSinceLastSync();
-      setOfflineHours(Math.floor(hours) || 0);
-
-      if (!isInitialized) {
-        setIsInitialized(true);
-      }
-
-      console.log('[HomeScreen] ✅ Refresh completed:', {
-        runningTotal: todayData.total,
-        tripsToday: todayData.count,
-        yesterdayTotal: yest,
-      });
+      setIsInitialized(true);
     } catch (err) {
-      console.error('[HomeScreen] Refresh error:', err);
+      console.error('Error loading dashboard data:', err);
       setHasError(true);
-      setErrorMsg(err.message || 'Error loading home screen');
-      showToast('Error loading home screen', 'error');
-      if (!isInitialized) {
-        setIsInitialized(true);
-      }
+      setErrorMsg('Failed to load dashboard data');
+    }
+  }, [calculateTodaysTotal, calculateYesterdaysTotal]);
+
+  /**
+   * ✅ Main effect to load data when riderId is ready
+   */
+  useEffect(() => {
+    if (riderId && !hasLoadedRef.current) {
+      console.log('[HomeScreen] Loading dashboard data for:', riderId);
+      hasLoadedRef.current = true;
+      loadDashboardData(riderId);
+    }
+  }, [riderId, loadDashboardData]);
+
+  /**
+   * ✅ Refresh dashboard data
+   */
+  const handleRefresh = useCallback(async () => {
+    if (!riderId) return;
+
+    setRefreshing(true);
+    try {
+      await loadDashboardData(riderId);
+      showToast(t('home.refreshed') || 'Dashboard refreshed', 'success');
+    } catch (err) {
+      showToast(t('home.refresh_failed') || 'Failed to refresh', 'error');
     } finally {
       setRefreshing(false);
     }
-  }, [riderId, isInitialized, showToast, calculateTodaysTotal, calculateYesterdaysTotal]);
+  }, [riderId, loadDashboardData, t, showToast]);
 
-  // ✅ Load data on mount
-  useEffect(() => {
-    if (!riderIdLoading && riderId && !hasLoadedRef.current) {
-      hasLoadedRef.current = true;
-      refresh();
-    }
-  }, [riderIdLoading, riderId, refresh]);
-
-  // ✅ CRITICAL: Auto-refresh when returning to HomeScreen
-  // Always refresh on focus to ensure Hero Fare Card reflects new trips
-  useFocusEffect(
-    useCallback(() => {
-      if (!riderIdLoading && riderId && hasLoadedRef.current) {
-        console.log('[HomeScreen] 🔄 Refreshing on focus');
-        refresh();
-      }
-    }, [riderIdLoading, riderId, refresh])
-  );
-
-  const handleRecordTrip = useCallback(() => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate('NewTrip');
-    }
-  }, [navigation]);
-  
-  
-  const handleDailyTradeSummary = useCallback(() => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate('DailyTradeSummary');
-    }
-  }, [navigation]);
-
-  const handleViewYesterdayTrips = useCallback(() => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate('DailyTradeSummary', { period: 'yesterday' });
-    }
-  }, [navigation]);
-
+  /**
+   * ✅ EXPLICIT LOGOUT - ONLY WAY TO NAVIGATE TO PinLoginScreen
+   * Called when user taps the logout tile
+   */
   const handleLogout = useCallback(async () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', onPress: () => {} },
-      {
-        text: 'Logout',
-        onPress: async () => {
-          try {
-            await clearSession();
-            if (navigation && navigation.reset) {
+    Alert.alert(
+      t('home.logout_confirm_title') || 'Logout',
+      t('home.logout_confirm_message') || 'Are you sure you want to logout?',
+      [
+        {
+          text: t('common.cancel') || 'Cancel',
+          onPress: () => console.log('Logout cancelled'),
+          style: 'cancel',
+        },
+        {
+          text: t('common.logout') || 'Logout',
+          onPress: async () => {
+            try {
+              // Clear session data
+              await clearSession();
+              console.log('✅ Session cleared - navigating to PinLoginScreen');
+              
+              // ✅ EXPLICIT LOGOUT: Only way to reach PinLoginScreen
+              // This replaces the entire navigation stack with PinLoginScreen
               navigation.reset({
                 index: 0,
-                routes: [{ name: 'Login' }],
+                routes: [{ name: 'PinLogin' }],
               });
+            } catch (err) {
+              console.error('Logout error:', err);
+              showToast(t('home.logout_failed') || 'Logout failed', 'error');
             }
-          } catch (err) {
-            console.error('Logout error:', err);
-            showToast('Error logging out', 'error');
-          }
+          },
+          style: 'destructive',
         },
-      },
-    ]);
-  }, [navigation, showToast]);
+      ]
+    );
+  }, [navigation, t, showToast]);
 
-  const handleNavigateTile = useCallback((route) => {
-    if (navigation && navigation.navigate) {
-      navigation.navigate(route);
+  /**
+   * ✅ Navigate to a tile screen
+   */
+  const navigateToTile = useCallback((route) => {
+    if (!navigation) {
+      console.warn('Navigation not available');
+      return;
     }
+
+    navigation.navigate(route);
   }, [navigation]);
 
-  if (riderIdLoading || !isInitialized || lockCheckInProgress) {
+  // ========================================================================
+  // RENDER LOADING STATE
+  // ========================================================================
+  if (riderIdLoading || (riderId && !isInitialized)) {
     return <LoadingSkeleton />;
   }
 
+  // ========================================================================
+  // RENDER ERROR STATE
+  // ========================================================================
   if (hasError) {
     return (
       <ErrorDisplay
@@ -477,7 +469,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           setHasError(false);
           setErrorMsg(null);
           if (riderId) {
-            refresh();
+            loadDashboardData(riderId);
           }
         }}
       />
@@ -485,72 +477,16 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   }
 
   // ========================================================================
-  // ✅ IF ACCOUNT IS LOCKED - RENDER ACCOUNT LOCKED SCREEN DIRECTLY
+  // RENDER HOME SCREEN
   // ========================================================================
-  // This prevents HomeScreen from rendering when account is locked
-  if (isAccountLocked) {
-    console.log('[HomeScreen] 🔒 Account is locked - rendering AccountLockedScreen UI');
-    return (
-      <ScrollView style={styles.container}>
-        <View style={styles.lockedContainer}>
-          <View style={styles.heroLocked}>
-            <Text style={styles.heroEmoji}>👋</Text>
-            <Text style={styles.heroTitle}>We've Missed You!</Text>
-            <Text style={styles.heroSubtitle}>
-              Your subscription has expired — but your data is safe and waiting for you.
-            </Text>
-          </View>
-
-          <View style={styles.bannerContainer}>
-            <View style={[styles.banner, styles.bannerWarn]}>
-              <Text style={styles.bannerText}>
-                👉 Good news — getting back in takes just one payment, and you're back to work instantly.
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.kvRow}>
-              <Text style={styles.kvLabel}>Status</Text>
-              <Text style={styles.kvValue}>🔒 Locked</Text>
-            </View>
-            <View style={[styles.kvRow, styles.kvRowBold]}>
-              <Text style={styles.kvLabelBold}>Amount To Unlock</Text>
-              <Text style={styles.kvValueBold}>KSh 500</Text>
-            </View>
-          </View>
-
-          <TouchableOpacity
-            style={styles.buttonPrimary}
-            onPress={() => navigation.navigate('ConfirmSubscriptionScreen', {
-              selectedFrequency: 'biweekly'
-            })}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.buttonPrimaryText}>🔓 Pay & Unlock Now →</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.buttonGhost}
-            onPress={() => navigation.navigate('SelectFrequency')}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.buttonGhostText}>Choose a different plan</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    );
-  }
-
-  const handleViewFinancialHistory = () => {
-    navigation.navigate('FinancialHistory');
-  };
-  
-  const energyTile = bike?.fuel_type_code ? ENERGY_TILE_BY_FUEL[bike.fuel_type_code] : null;
-
   return (
-    <HomeScreenErrorBoundary onRetry={() => refresh()}>
-      <ScrollView style={styles.container}>
+    <HomeScreenErrorBoundary onRetry={() => loadDashboardData(riderId)}>
+      <ScrollView
+        style={styles.container}
+        refreshControl={null}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* TOP BAR */}
         <View style={styles.topBar}>
           <View style={styles.brand}>
             <View style={styles.logo}>
@@ -558,179 +494,115 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </View>
             <Text style={styles.brandName}>Smart Boda</Text>
           </View>
-          <TouchableOpacity
-            style={styles.notifBell}
-            onPress={() => handleNavigateTile('Notifications')}
-          >
-            <Text style={styles.bellIcon}>🔔</Text>
-            {queuedCount > 0 && (
-              <View style={styles.notifBadge}>
-                <Text style={styles.badgeText}>{Math.min(queuedCount, 9)}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
         </View>
 
+        {/* SCREEN BODY */}
         <View style={styles.screenBody}>
-          {/* ✅ HERO FARE CARD - Updates instantly when trip is recorded */}
-          <HeroFareCard
-            totalFare={runningTotal}
-            onOpenDailySummary={handleDailyTradeSummary}
-            onNewTrip={handleRecordTrip}
-          />
-
-          {/* ✅ SUBSCRIPTION BANNERS - Displayed below Hero Fare Card */}
-          {/* Display logic controlled by subscriptionUtils (trial, reminder, locked) */}
-          <SubscriptionBanners navigation={navigation} />
-
-          {/* Yesterday's Total */}
-          {yesterdayTotal !== null && (
-            <View style={styles.yesterdayCard}>
-              <View style={styles.yesterdayHeader}>
-                <Text style={styles.yesterdayLabel}>Yesterday's Total</Text>
-                <TouchableOpacity onPress={handleViewYesterdayTrips}>
-                  <Text style={styles.viewBreakdownLink}>View →</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.yesterdayAmount}>KSh {(yesterdayTotal || 0).toLocaleString()}</Text>
-            </View>
+          {/* HERO FARE CARD */}
+          {account && (
+            <HeroFareCard
+              greeting={t('home.greeting') || 'Good Morning'}
+              riderName={account.fullName}
+              heroEmoji="🚴"
+              totalEarnings={runningTotal}
+              onRefresh={handleRefresh}
+              isRefreshing={refreshing}
+            />
           )}
 
-          {/* Offline Warning */}
-          {offlineHours > 0 && (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>
-                📡 Last sync {offlineHours} hour{offlineHours === 1 ? '' : 's'} ago
+          {/* SUBSCRIPTION BANNERS */}
+          <SubscriptionBanners />
+
+          {/* YESTERDAY'S CARD */}
+          {yesterdayTotal !== null && (
+            <View style={styles.cardContainer}>
+              <View style={styles.cardTitleRow}>
+                <Text style={styles.cardStatusEmoji}>📊</Text>
+                <Text style={styles.cardTitle}>
+                  {t('home.yesterdays_earnings') || "Yesterday's Earnings"}
+                </Text>
+              </View>
+              <Text style={styles.kvValue}>KSh {yesterdayTotal.toLocaleString()}</Text>
+              <Text style={styles.cardHint}>
+                {t('home.based_on_completed_trips') || 'Based on completed trips'}
               </Text>
             </View>
           )}
 
-          {/* Tiles Grid - Aligned with cleaned.html */}
-          {/* Row 1: Fuel/Charge + Service */}
+          {/* OFFLINE HOURS WARNING */}
+          {offlineHours > 4 && (
+            <View style={styles.offlineWarning}>
+              <Text style={styles.warningText}>
+                ⚠️ {t('home.offline_for') || 'Offline for'} {offlineHours} hours
+              </Text>
+            </View>
+          )}
+
+          {/* QUEUED RECORDS WARNING */}
+          {queuedCount > 0 && (
+            <View style={styles.offlineWarning}>
+              <Text style={styles.warningText}>
+                📤 {queuedCount} {t('home.records_queued_for_sync') || 'records waiting to sync'}
+              </Text>
+            </View>
+          )}
+
+          {/* HOME TILES - 2 COLUMN GRID */}
           <View style={styles.tileRow}>
-            {energyTile && (
+            {/* Tile 1 - Energy (Fuel or Battery) */}
+            {bike && ENERGY_TILE_BY_FUEL[bike.fuelType] && (
               <TouchableOpacity
                 style={styles.homeTile}
-                onPress={() => {
-                  try {
-                    // Try direct navigation first (MainNavigator context)
-                    navigation.navigate(energyTile.route);
-                  } catch (err) {
-                    console.error('[HomeScreen] Navigation error:', err);
-                    // Fallback: try navigating through parent if nested
-                    try {
-                      navigation.navigate('Home', { screen: energyTile.route });
-                    } catch (fallbackErr) {
-                      console.error('[HomeScreen] Fallback navigation failed:', fallbackErr);
-                    }
-                  }
-                }}
+                onPress={() =>
+                  navigateToTile(ENERGY_TILE_BY_FUEL[bike.fuelType].route)
+                }
               >
-                <Text style={styles.tileEmoji}>{energyTile.emoji}</Text>
-                <Text style={styles.tileLabel}>{t(energyTile.label)}</Text>
+                <Text style={styles.tileEmoji}>
+                  {ENERGY_TILE_BY_FUEL[bike.fuelType].emoji}
+                </Text>
+                <Text style={styles.tileLabel}>
+                  {t(ENERGY_TILE_BY_FUEL[bike.fuelType].label)}
+                </Text>
               </TouchableOpacity>
             )}
 
-          <TouchableOpacity
+            {/* Tile 2 - Service */}
+            <TouchableOpacity
               style={styles.homeTile}
-              onPress={() => {
-                console.log('[HomeScreen] Navigating to MaintenanceHub');
-                try {
-                  navigation.navigate('MaintenanceHub');
-                } catch (err) {
-                  console.error('[HomeScreen] MaintenanceHub navigation error:', err);
-                  showToast('Navigation failed', 'error');
-                }
-              }}
+              onPress={() => navigateToTile('MaintenanceHub')}
             >
               <Text style={styles.tileEmoji}>🔧</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_service_motorcycle')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Row 2: Financial Performance + My Subscription */}
-          <View style={styles.tileRow}>
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('MoneyMastery')}
-            >
-              <Text style={styles.tileEmoji}>💰</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_financial_performance')}</Text>
-            </TouchableOpacity>
-          
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('Subscription')}
-            >
-              <Text style={styles.tileEmoji}>📲</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_my_subscription')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Row 3: Sync Status Card (Clickable) */}
-          <TouchableOpacity 
-            style={styles.cardContainer}
-            onPress={() => navigation.navigate('SyncStatus')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.cardTitleRow}>
-              <Text style={styles.cardStatusEmoji}>
-                {queuedCount > 0 ? '🟠' : '🟢'}
+              <Text style={styles.tileLabel}>
+                {t('home.tile_service_motorcycle')}
               </Text>
-              <Text style={styles.cardTitle}>Sync Status</Text>
-              <View style={[
-                styles.badge,
-                queuedCount > 0 ? styles.badgeAmber : styles.badgeGreen
-              ]}>
-                <Text style={styles.badgeText}>
-                  {queuedCount > 0 ? `Queued: ${queuedCount}` : 'All Synced'}
-                </Text>
-              </View>
+            </TouchableOpacity>
+          </View>
+
+          {/* Additional Tiles */}
+          {HOME_TILES.map((tile, idx) => (
+            <View key={idx} style={styles.tileRow}>
+              <TouchableOpacity
+                style={styles.homeTile}
+                onPress={() => navigateToTile(tile.route)}
+              >
+                <Text style={styles.tileEmoji}>{tile.emoji}</Text>
+                <Text style={styles.tileLabel}>{t(tile.label)}</Text>
+              </TouchableOpacity>
             </View>
-            <Text style={styles.cardHint}>
-              {queuedCount > 0 ? 'Tap to view queue and retry.' : 'Everything is safely backed up.'}
+          ))}
+
+          {/* LOGOUT TILE */}
+          <TouchableOpacity
+            style={[styles.homeTile, styles.logoutTile]}
+            onPress={handleLogout}
+          >
+            <Text style={styles.tileEmoji}>🚪</Text>
+            <Text style={[styles.tileLabel, styles.logoutText]}>
+              {t('home.tile_logout') || 'Logout'}
             </Text>
           </TouchableOpacity>
-          
-		  
-          {/* Account Card */}
-          <View style={styles.cardContainer}>
-            <View style={styles.kvRow}>
-              <Text style={styles.kvKey}>Trips today</Text>
-              <Text style={styles.kvValue}>{tripsToday}</Text>
-            </View>
-          </View>
-		  
-		  
-		  
-		  {/* Settings List Items */}
-          <View style={styles.settingsListContainer}>
-            <TouchableOpacity 
-              style={styles.settingsListItem}
-              onPress={handleDailyTradeSummary}
-            >
-              <Text style={styles.settingsListLabel}>📊 My Daily Trade Summary</Text>
-              <Text style={styles.settingsListArrow}>›</Text>
-            </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={styles.settingsListItem}
-              onPress={handleViewFinancialHistory}
-            >
-              <Text style={styles.settingsListLabel}>📈 My Financial History & Statements</Text>
-              <Text style={styles.settingsListArrow}>›</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.settingsListItem, styles.logoutListItem]}
-              onPress={() => navigation.navigate('PinLogin')}
-            >
-              <Text style={[styles.settingsListLabel, styles.logoutText]}>🚪 Logout</Text>
-              <Text style={styles.settingsListArrow}>›</Text>
-            </TouchableOpacity>
-          </View>
-  
-          
+          <View style={{ height: 20 }} />
         </View>
       </ScrollView>
     </HomeScreenErrorBoundary>
@@ -742,12 +614,46 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f6f4ef',
   },
+  topBar: {
+    paddingTop: 16,
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7e4db',
+  },
+  brand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  logo: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#ff7a1a',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoText: {
+    fontSize: 22,
+  },
+  brandName: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1a1c20',
+  },
+  screenBody: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 20,
+  },
   errorContainer: {
     flex: 1,
-    backgroundColor: '#f6f4ef',
+    padding: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    backgroundColor: '#f6f4ef',
   },
   errorTitle: {
     fontSize: 18,
@@ -758,13 +664,13 @@ const styles = StyleSheet.create({
   errorMessage: {
     fontSize: 14,
     color: '#666',
-    textAlign: 'center',
     marginBottom: 20,
+    textAlign: 'center',
   },
   retryButton: {
     backgroundColor: '#ff7a1a',
+    paddingHorizontal: 20,
     paddingVertical: 12,
-    paddingHorizontal: 24,
     borderRadius: 8,
   },
   retryButtonText: {
@@ -772,105 +678,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 14,
   },
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db',
-  },
-  brand: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  logo: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#ff7a1a',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  logoText: {
-    fontSize: 16,
-  },
-  brandName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  notifBell: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  bellIcon: {
-    fontSize: 20,
-  },
-  notifBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#ff7a1a',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  badgeText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  screenBody: {
-    padding: 20,
-  },
-  energyTile: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    alignItems: 'center',
-  },
-  yesterdayCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-  },
-  yesterdayHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  yesterdayLabel: {
-    fontSize: 12,
-    color: '#5b606c',
-    fontWeight: '600',
-  },
-  yesterdayAmount: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  viewBreakdownLink: {
-    color: '#ff7a1a',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  warningBox: {
+  offlineWarning: {
     backgroundColor: '#fff3e0',
     borderRadius: 8,
     padding: 12,
@@ -914,6 +722,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1a1c20',
     textAlign: 'center',
+  },
+  logoutText: {
+    color: '#e0453f',
+    fontWeight: '700',
   },
   settingsRow: {
     gap: 12,
@@ -1008,7 +820,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#1a1c20',
   },
-  logoutText: {
+  logoutListText: {
     color: '#e0453f',
     fontWeight: '600',
   },
@@ -1018,7 +830,7 @@ const styles = StyleSheet.create({
   },
 
   // ========================================================================
-  // LOCKED SCREEN STYLES
+  // LOCKED SCREEN STYLES (DEPRECATED - USE AccountLockedScreen INSTEAD)
   // ========================================================================
   lockedContainer: {
     flex: 1,
@@ -1074,14 +886,6 @@ const styles = StyleSheet.create({
     borderColor: '#e7e4db',
     padding: 16,
   },
-  kvRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 11,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0ede5',
-  },
   kvRowBold: {
     paddingVertical: 13,
     marginTop: 4,
@@ -1098,11 +902,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#1a1c20',
     fontWeight: '700',
-  },
-  kvValue: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1a1c20',
   },
   kvValueBold: {
     fontSize: 16,
