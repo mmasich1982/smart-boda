@@ -142,26 +142,39 @@ router.post('/payment', async (req, res) => {
       syncId: finalSyncId
     });
 
-    const insertResult = await pool.query(
-      `INSERT INTO payment 
-       (id, rider_id, type, amount, currency, status, channel, mpesa_code, plan, sync_id, data, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-       RETURNING id, created_at`,
-      [
-        finalPaymentId,
-        finalRiderId,
-        finalType,
-        finalAmount,
-        finalCurrency,
-        finalStatus,
-        finalChannel,
-        finalMpesaCode,
-        finalPlan,
-        finalSyncId,
-        JSON.stringify(data || req.body),
-        paymentTimestamp
-      ]
-    );
+    // ✅ SURGICAL FIX: Execute insert with full transaction logging
+    let insertResult;
+    try {
+      insertResult = await pool.query(
+        `INSERT INTO payment 
+         (id, rider_id, type, amount, currency, status, channel, mpesa_code, plan, sync_id, data, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         RETURNING id, created_at`,
+        [
+          finalPaymentId,
+          finalRiderId,
+          finalType,
+          finalAmount,
+          finalCurrency,
+          finalStatus,
+          finalChannel,
+          finalMpesaCode,
+          finalPlan,
+          finalSyncId,
+          JSON.stringify(data || req.body),
+          paymentTimestamp
+        ]
+      );
+
+      if (!insertResult || !insertResult.rows || insertResult.rows.length === 0) {
+        throw new Error('INSERT returned no rows - payment may not have been saved');
+      }
+    } catch (insertErr) {
+      console.error('❌ [Payment] INSERT FAILED:', insertErr.message);
+      console.error('   Query error code:', insertErr.code);
+      console.error('   Error details:', insertErr);
+      throw insertErr;
+    }
 
     const savedPayment = insertResult.rows[0];
     console.log(`✅ [Payment] Payment inserted successfully: ${savedPayment.id}`);
@@ -173,6 +186,22 @@ router.post('/payment', async (req, res) => {
       plan: finalPlan,
       mpesa_code: finalMpesaCode ? '***' + finalMpesaCode.slice(-3) : 'none'
     });
+    
+    // ✅ VERIFICATION: Read back the record immediately to confirm it was saved
+    console.log(`🔍 [Payment] Verifying record was saved to database...`);
+    const verifyResult = await pool.query(
+      'SELECT id, rider_id, amount, plan, sync_id, created_at FROM payment WHERE id = $1',
+      [finalPaymentId]
+    );
+    
+    if (verifyResult.rows.length === 0) {
+      console.error('❌ [Payment] VERIFICATION FAILED - Record not found immediately after insert');
+      console.error('   This suggests the insert was not actually committed');
+      throw new Error('Payment record was not saved to database despite successful INSERT response');
+    }
+    
+    console.log(`✅ [Payment] VERIFICATION PASSED - Record found in database`);
+    console.log(`   Verified record:`, verifyResult.rows[0]);
 
     // ====================================================================
     // 5. LOG TO AUDIT TABLE (Admin Traceability)
@@ -220,17 +249,27 @@ router.post('/payment', async (req, res) => {
     // 7. RETURN SUCCESS RESPONSE
     // ====================================================================
     console.log(`✅ [Payment] SUCCESS - Payment processed completely`);
+    console.log(`✅ [Payment] Record confirmed in database: ${savedPayment.id}`);
     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
     return res.status(200).json({
       success: true,
-      paymentId: savedPayment.id,
       message: 'Payment received and recorded successfully',
+      paymentId: savedPayment.id,
+      riderId: finalRiderId,
+      syncId: finalSyncId,
+      amount: finalAmount,
+      currency: finalCurrency,
+      plan: finalPlan,
+      mpesaCode: finalMpesaCode ? '***' + finalMpesaCode.slice(-3) : 'NONE',
+      status: finalStatus,
       timestamp: savedPayment.created_at,
-      riderId: rider_id,
-      syncId: syncId,
-      amount: amount,
-      plan: plan
+      databaseVerified: true,
+      verificationDetails: {
+        recordFoundInDatabase: true,
+        recordId: verifyResult.rows[0].id,
+        recordCreatedAt: verifyResult.rows[0].created_at
+      }
     });
 
   } catch (error) {
@@ -267,10 +306,14 @@ router.post('/payment', async (req, res) => {
     // ====================================================================
     // 9. RETURN ERROR RESPONSE
     // ====================================================================
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
     return res.status(500).json({
+      success: false,
       error: 'Failed to process payment',
       message: error.message,
-      syncId: req.headers['x-sync-id']
+      errorCode: error.code,
+      syncId: req.headers['x-sync-id'],
+      hint: 'Check backend logs for detailed error information'
     });
   }
 });

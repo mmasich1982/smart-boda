@@ -399,10 +399,14 @@ export const processPendingSync = async () => {
         // This ensures subscription payment records are sent to the correct endpoint
         let url = record.endpoint;
         if (record.riderId) {
-          // Ensure endpoint has rider_id as query parameter
-          const separator = url.includes('?') ? '&' : '?';
-          url = `${url}${separator}rider_id=${encodeURIComponent(record.riderId)}`;
-          console.log(`[ProcessSync] 📍 URL with rider_id: ${url}`);
+          // ✅ CHECK: Don't add rider_id if it's already in the endpoint
+          if (!url.includes('rider_id=')) {
+            const separator = url.includes('?') ? '&' : '?';
+            url = `${url}${separator}rider_id=${encodeURIComponent(record.riderId)}`;
+            console.log(`[ProcessSync] 📍 URL with rider_id added: ${url}`);
+          } else {
+            console.log(`[ProcessSync] 📍 Rider_id already in endpoint, using as-is: ${url}`);
+          }
         } else {
           console.warn(`[ProcessSync] ⚠️ No rider_id in record ${record.id}, URL may be incomplete: ${url}`);
         }
