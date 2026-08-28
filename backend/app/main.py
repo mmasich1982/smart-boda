@@ -262,6 +262,11 @@ app.include_router(admin_dashboard.router)
 from app.routers import payment_admin
 app.include_router(payment_admin.router)
 
+# ✅ CRITICAL: Payment sync router for mobile app
+# Handles /subscriptions/payment endpoint for payment sync from frontend
+from app.routers import subscriptions_payment
+app.include_router(subscriptions_payment.router)
+
 # ---- Correction window related ----
 from app.routers import trip_support
 app.include_router(trip_support.router)
