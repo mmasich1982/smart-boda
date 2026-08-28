@@ -33,33 +33,19 @@ export default function CreatePinScreen({ route, navigation }) {
   const [isLoading, setIsLoading] = useState(false);
   const [initializingHome, setInitializingHome] = useState(false);
 
-  // FIXED: Validate PIN strength - reject weak PINs
-  function isWeakPin(pin) {
-    if (!pin || pin.length !== 4) return true;
-    
-    // Reject: all same digit (1111, 2222, etc)
-    if (/^(\d)\1{3}$/.test(pin)) return true;
-    
-    // Reject: sequential ascending (1234, 2345, etc)
-    if (/^(\d)(\d)(?=\2(?:\2|(?!\2)|$))/.test(pin) || 
-        /^0123$|^1234$|^2345$|^3456$|^4567$|^5678$|^6789$/.test(pin)) return true;
-    
-    // Reject: sequential descending (4321, 3210, etc)
-    if (/^9876$|^8765$|^7654$|^6543$|^5432$|^4321$|^3210$/.test(pin)) return true;
-    
-    // Reject: commonly used weak PINs
-    const weakPins = ['0000', '1111', '2222', '3333', '4444', '5555', '6666', '7777', '8888', '9999', '1212', '1313', '2020', '2121'];
-    if (weakPins.includes(pin)) return true;
-    
-    return false;
+  // ✅ UPDATED: Allow all 4-digit PINs - no weak PIN validation
+  // Users can choose any PIN they prefer, from simple (1111, 2222) to complex (9876, 5847)
+  function isValidPin(pin) {
+    // Only check: PIN must exist and be exactly 4 digits
+    return pin && pin.length === 4 && /^\d{4}$/.test(pin);
   }
 
   function handleFirstEntry() {
     if (draft.length !== 4) return;
     
-    // FIXED: Validate PIN strength before allowing confirmation
-    if (isWeakPin(draft)) {
-      setError(t('pin.weak_pin') || 'This PIN is too simple. Please choose a harder one.');
+    // ✅ UPDATED: Accept all 4-digit PINs (no weak PIN validation)
+    if (!isValidPin(draft)) {
+      setError(t('pin.invalid_format') || 'Please enter a valid 4-digit PIN.');
       return;
     }
     
