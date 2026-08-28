@@ -182,16 +182,26 @@ const ConfirmSubscriptionScreen = () => {
         console.log('🔓 Account unlocked after payment');
       }
 
-      // ✅ FIXED: Queue for backend sync with proper data structure
+      // ✅ SURGICAL FIX: Queue for backend sync with CORRECT endpoint and riderId
       // The data sent must match what subscriptions.js POST /subscriptions/payment expects
-      await addToSyncQueue({
+      // Endpoint MUST include rider_id as query parameter for backend route handler
+      const syncQueueRecord = {
         id: paymentId,
         type: 'subscription_payment',
-        endpoint: `/subscriptions/payment`,
+        endpoint: `/subscriptions/payment?rider_id=${localRiderId}`,
         data: paymentRecord,
         timestamp: currentTimestamp,
-        riderId: localRiderId,
-      });
+        riderId: localRiderId, // Also include riderId for processPendingSync() URL reconstruction
+      };
+      
+      console.log('🔄 [ConfirmSubscription] Queuing payment for sync:');
+      console.log('   Payment ID:', paymentId);
+      console.log('   Rider ID:', localRiderId);
+      console.log('   Endpoint:', syncQueueRecord.endpoint);
+      console.log('   Amount:', plan.amount);
+      console.log('   Plan:', selectedFrequency);
+      
+      await addToSyncQueue(syncQueueRecord);
 
       console.log('✅ Subscription created & payment queued for sync');
 

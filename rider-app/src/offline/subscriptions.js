@@ -121,22 +121,43 @@ router.post('/payment', async (req, res) => {
     console.log(`   M-Pesa Code: ${mpesa_code}`);
     console.log(`   Plan: ${plan}`);
 
+    // ✅ SURGICAL FIX: Validate and sanitize all values before insert
+    const finalAmount = parseFloat(amount) || 0;
+    const finalStatus = status || 'pending_verification';
+    const finalType = type || 'subscription';
+    const finalChannel = channel || 'Manual (Lipa na M-Pesa / Pochi / Send Money)';
+    const finalPlan = plan || 'biweekly';
+    const finalCurrency = currency || 'KES';
+    const finalMpesaCode = mpesa_code ? String(mpesa_code).toUpperCase() : null;
+    const finalSyncId = String(syncId);
+    const finalPaymentId = String(paymentId);
+    const finalRiderId = String(rider_id);
+
+    console.log(`✅ [Payment] Validated values for insert:`, {
+      paymentId: finalPaymentId,
+      riderId: finalRiderId,
+      amount: finalAmount,
+      type: finalType,
+      plan: finalPlan,
+      syncId: finalSyncId
+    });
+
     const insertResult = await pool.query(
       `INSERT INTO payment 
        (id, rider_id, type, amount, currency, status, channel, mpesa_code, plan, sync_id, data, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id, created_at`,
       [
-        paymentId,
-        rider_id,
-        type || 'subscription',
-        amount || 0,
-        currency || 'KES',
-        status || 'pending_verification',
-        channel || 'Manual (Lipa na M-Pesa / Pochi / Send Money)',
-        mpesa_code || null,
-        plan || 'biweekly',
-        syncId,
+        finalPaymentId,
+        finalRiderId,
+        finalType,
+        finalAmount,
+        finalCurrency,
+        finalStatus,
+        finalChannel,
+        finalMpesaCode,
+        finalPlan,
+        finalSyncId,
         JSON.stringify(data || req.body),
         paymentTimestamp
       ]
@@ -144,6 +165,14 @@ router.post('/payment', async (req, res) => {
 
     const savedPayment = insertResult.rows[0];
     console.log(`✅ [Payment] Payment inserted successfully: ${savedPayment.id}`);
+    console.log(`📊 [Payment] Saved record details:`, {
+      id: savedPayment.id,
+      created_at: savedPayment.created_at,
+      rider_id: finalRiderId,
+      amount: finalAmount,
+      plan: finalPlan,
+      mpesa_code: finalMpesaCode ? '***' + finalMpesaCode.slice(-3) : 'none'
+    });
 
     // ====================================================================
     // 5. LOG TO AUDIT TABLE (Admin Traceability)
@@ -455,6 +484,268 @@ router.get('/payment/check-sync-status', async (req, res) => {
   }
 });
 
+// ============================================================================
+// ✅ DIAGNOSTIC ENDPOINTS (For debugging sync issues)
+// ============================================================================
+
+/**
+ * ✅ GET /subscriptions/payment/diagnostics?rider_id=XXX
+ * 
+ * Returns diagnostic information about payment sync for a specific rider
+ * Helps identify why payments aren't showing up in database
+ * 
+ * USAGE:
+ *   GET http://localhost:3000/subscriptions/payment/diagnostics?rider_id=aaf536f6-bfb8-4325-91f5-320377b85d2f
+ */
+router.get('/payment/diagnostics', async (req, res) => {
+  try {
+    const { rider_id } = req.query;
+
+    if (!rider_id) {
+      return res.status(400).json({
+        error: 'Missing rider_id parameter'
+      });
+    }
+
+    console.log(`\n🔍 [DIAGNOSTICS] Payment diagnostics for rider: ${rider_id}`);
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+    // ✅ Check 1: Count payments in database for this rider
+    const paymentCount = await pool.query(
+      'SELECT COUNT(*) as count FROM payment WHERE rider_id = $1',
+      [rider_id]
+    );
+    const count = parseInt(paymentCount.rows[0].count);
+    console.log(`✓ Payments in database: ${count}`);
+
+    // ✅ Check 2: Get actual payment records
+    const payments = await pool.query(
+      `SELECT id, amount, plan, status, mpesa_code, created_at FROM payment 
+       WHERE rider_id = $1 
+       ORDER BY created_at DESC 
+       LIMIT 10`,
+      [rider_id]
+    );
+
+    console.log(`✓ Latest payments (max 10):`);
+    payments.rows.forEach((p, idx) => {
+      console.log(`  ${idx + 1}. ID: ${p.id}`);
+      console.log(`     Amount: ${p.amount} KES | Plan: ${p.plan} | Status: ${p.status}`);
+      console.log(`     M-Pesa: ${p.mpesa_code ? 'YES' : 'NO'} | Created: ${p.created_at}`);
+    });
+
+    // ✅ Check 3: Check sync audit log
+    const auditCount = await pool.query(
+      'SELECT COUNT(*) as count FROM payment_sync_audit WHERE rider_id = $1',
+      [rider_id]
+    );
+    const auditTotal = parseInt(auditCount.rows[0].count);
+    console.log(`✓ Sync audit entries: ${auditTotal}`);
+
+    // ✅ Check 4: Check for recent failed syncs
+    const recentFails = await pool.query(
+      `SELECT sync_id, action, status_code, error_message, created_at 
+       FROM payment_sync_audit 
+       WHERE rider_id = $1 AND action = 'SYNC_FAILED'
+       ORDER BY created_at DESC 
+       LIMIT 5`,
+      [rider_id]
+    );
+
+    console.log(`✓ Recent sync failures: ${recentFails.rows.length}`);
+    recentFails.rows.forEach((fail, idx) => {
+      console.log(`  ${idx + 1}. Sync ID: ${fail.sync_id}`);
+      console.log(`     Error: ${fail.error_message}`);
+      console.log(`     When: ${fail.created_at}`);
+    });
+
+    // ✅ Check 5: Database schema verification
+    const schema = await pool.query(
+      `SELECT column_name, data_type, is_nullable 
+       FROM information_schema.columns 
+       WHERE table_name = 'payment' 
+       ORDER BY ordinal_position`
+    );
+
+    console.log(`✓ Payment table schema:`);
+    schema.rows.forEach(col => {
+      const nullable = col.is_nullable === 'YES' ? '(nullable)' : '(required)';
+      console.log(`  - ${col.column_name}: ${col.data_type} ${nullable}`);
+    });
+
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+
+    return res.json({
+      success: true,
+      rider_id,
+      diagnostics: {
+        paymentCount: count,
+        latestPayments: payments.rows,
+        syncAuditCount: auditTotal,
+        recentFailures: recentFails.rows,
+        schema: schema.rows
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ [DIAGNOSTICS] Error:', error);
+    return res.status(500).json({
+      error: 'Diagnostics failed',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * ✅ GET /subscriptions/payment/table-status
+ * 
+ * Quick check to verify payment table exists and has records
+ * 
+ * USAGE:
+ *   GET http://localhost:3000/subscriptions/payment/table-status
+ */
+router.get('/payment/table-status', async (req, res) => {
+  try {
+    console.log(`📊 [TABLE-STATUS] Checking payment table...`);
+
+    // Check if table exists
+    const tableExists = await pool.query(
+      `SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables 
+        WHERE table_name = 'payment'
+      )`
+    );
+
+    if (!tableExists.rows[0].exists) {
+      return res.status(500).json({
+        error: 'Payment table does not exist',
+        message: 'You need to run database migrations to create the payment table'
+      });
+    }
+
+    // Get total count
+    const countResult = await pool.query('SELECT COUNT(*) as count FROM payment');
+    const totalRecords = parseInt(countResult.rows[0].count);
+
+    // Get latest records
+    const latestResult = await pool.query(
+      `SELECT id, rider_id, amount, plan, status, created_at 
+       FROM payment 
+       ORDER BY created_at DESC 
+       LIMIT 5`
+    );
+
+    console.log(`✓ Table exists: YES`);
+    console.log(`✓ Total records: ${totalRecords}`);
+
+    return res.json({
+      success: true,
+      tableExists: true,
+      totalRecords,
+      latestRecords: latestResult.rows
+    });
+
+  } catch (error) {
+    console.error('❌ [TABLE-STATUS] Error:', error);
+    return res.status(500).json({
+      error: 'Failed to check table status',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * ✅ POST /subscriptions/test-payment?rider_id=XXX
+ * 
+ * Test endpoint to simulate a payment and verify the full sync pipeline
+ * Creates a test payment record and verifies it was saved
+ * 
+ * USAGE:
+ *   POST http://localhost:3000/subscriptions/test-payment?rider_id=aaf536f6-bfb8-4325-91f5-320377b85d2f
+ *   Headers: { 'Content-Type': 'application/json' }
+ *   Body: {}
+ */
+router.post('/test-payment', async (req, res) => {
+  try {
+    const { rider_id } = req.query;
+
+    if (!rider_id) {
+      return res.status(400).json({
+        error: 'Missing rider_id parameter'
+      });
+    }
+
+    console.log(`\n🧪 [TEST] Simulating payment for rider: ${rider_id}`);
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+
+    const testSyncId = `TEST_PAYMENT_${rider_id}_${Date.now()}`;
+    const testPaymentId = `payment_test_${Date.now()}`;
+    const testTimestamp = new Date().toISOString();
+
+    console.log(`• Test Sync ID: ${testSyncId}`);
+    console.log(`• Test Payment ID: ${testPaymentId}`);
+    console.log(`• Timestamp: ${testTimestamp}`);
+
+    // Create test payment record
+    const insertResult = await pool.query(
+      `INSERT INTO payment 
+       (id, rider_id, type, amount, currency, status, channel, mpesa_code, plan, sync_id, data, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id, created_at`,
+      [
+        testPaymentId,
+        rider_id,
+        'subscription',
+        500,
+        'KES',
+        'pending_verification',
+        'TEST (Simulated Payment)',
+        'TEST123XYZ',
+        'biweekly',
+        testSyncId,
+        JSON.stringify({ test: true, simulated: true }),
+        testTimestamp
+      ]
+    );
+
+    const savedPayment = insertResult.rows[0];
+    console.log(`✅ Test payment inserted: ${savedPayment.id}`);
+
+    // Verify it was saved by reading it back
+    const verify = await pool.query(
+      'SELECT * FROM payment WHERE id = $1',
+      [testPaymentId]
+    );
+
+    if (verify.rows.length > 0) {
+      console.log(`✅ Verification successful - record found in database`);
+      console.log(`   ID: ${verify.rows[0].id}`);
+      console.log(`   Rider ID: ${verify.rows[0].rider_id}`);
+      console.log(`   Amount: ${verify.rows[0].amount}`);
+      console.log(`   Status: ${verify.rows[0].status}`);
+    } else {
+      console.error(`❌ Verification FAILED - record not found after insert`);
+    }
+
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+
+    return res.json({
+      success: true,
+      message: 'Test payment created successfully',
+      testPaymentId,
+      testSyncId,
+      verificationResult: verify.rows.length > 0 ? 'SUCCESS' : 'FAILED'
+    });
+
+  } catch (error) {
+    console.error('❌ [TEST] Error:', error);
+    return res.status(500).json({
+      error: 'Test failed',
+      message: error.message
+    });
+  }
+});
+
 module.exports = router;
 
 /**
@@ -492,11 +783,16 @@ module.exports = router;
  *      "createdAt": "2024-12-20T10:30:00Z"
  *    }
  * 
- * 5. ADMIN ENDPOINTS:
+ * 5. ADMIN & DIAGNOSTIC ENDPOINTS:
  *    GET /subscriptions/payments - View all payments
  *    GET /subscriptions/payments/rider/:riderId - View rider's payments
  *    GET /subscriptions/payments/stats - View payment statistics
  *    GET /subscriptions/payment/check-sync-status?sync_id=XXX&rider_id=YYY - Check if payment synced
+ * 
+ * 6. DIAGNOSTIC ENDPOINTS (For debugging):
+ *    GET /subscriptions/payment/table-status - Verify payment table exists
+ *    GET /subscriptions/payment/diagnostics?rider_id=XXX - Get payment sync diagnostics for rider
+ *    POST /subscriptions/test-payment?rider_id=XXX - Create test payment to verify database write
  * 
  * ============================================================================
  * SQL TABLE SETUP

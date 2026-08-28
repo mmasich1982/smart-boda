@@ -529,14 +529,12 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
     await indexedDbAdapter.kvSet(stateKey, JSON.stringify(state));
     console.log('✅ [createSubscription] Cleared trial lock state for rider:', riderId);
 
-    // ✅ Queue for sync with rider ID
-    await addToSyncQueue({
-      id: subscription.id,
-      type: 'subscription',
-      endpoint: `/subscriptions?rider_id=${riderId}`,
-      data: subscription,
-      timestamp: new Date(),
-    });
+    // ✅ SURGICAL FIX: DO NOT queue subscription sync here
+    // Payment sync is handled by ConfirmSubscriptionScreen via addToSyncQueue
+    // This function only creates the local subscription record
+    // Backend subscription is created when payment is verified by backend
+    console.log('📝 [createSubscription] Local subscription record created (no sync queued)');
+    console.log('   Payment sync will be queued by ConfirmSubscriptionScreen');
 
     console.log('✅ [createSubscription] Subscription successfully created:', {
       id: subscription.id,
