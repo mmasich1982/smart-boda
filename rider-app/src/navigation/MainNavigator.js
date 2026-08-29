@@ -48,6 +48,7 @@ import MaintenanceHistoryScreen from '../screens/serviceHub/MaintenanceHistorySc
 import MoneyMasteryScreen from '../screens/financialPerformance/MoneyMasteryScreen';
 import NetProfitDashboardScreen from '../screens/financialPerformance/NetProfitDashboardScreen';
 import AddOtherExpenseScreen from '../screens/financialPerformance/AddOtherExpenseScreen';
+import YesterdayNetProfitScreen from '../screens/financialPerformance/YesterdayNetProfitScreen';
 
 // ============================================================================
 // TILE 4: MY REVENUE TARGETS
@@ -314,6 +315,15 @@ export const MainNavigator = () => {
       <Stack.Screen
         name="AddOtherExpense"
         component={AddOtherExpenseScreen}
+        options={{
+          headerShown: false,
+          animationEnabled: true,
+        }}
+      />
+	  
+	  <Stack.Screen
+        name="YesterdayNetProfit"
+        component={YesterdayNetProfitScreen}
         options={{
           headerShown: false,
           animationEnabled: true,
