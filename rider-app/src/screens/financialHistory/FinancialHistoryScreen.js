@@ -154,8 +154,8 @@ export default function FinancialHistoryScreen({ navigation, route }) {
   if (!riderId || loading) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink label="← Back" onPress={() => navigation.goBack()} />
-        <Text style={styles.screenTitle}>Financial History</Text>
+        <BackLink label="‹ Back" onPress={() => navigation.goBack()} />
+        <Text style={styles.screenTitle}>My Financial History & Statements</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
@@ -164,8 +164,8 @@ export default function FinancialHistoryScreen({ navigation, route }) {
   if (error && !summary) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink label="← Back" onPress={() => navigation.goBack()} />
-        <Text style={styles.screenTitle}>Financial History</Text>
+        <BackLink label="‹ Back" onPress={() => navigation.goBack()} />
+        <Text style={styles.screenTitle}>My Financial History & Statements</Text>
         <Text style={styles.errorText}>{error}</Text>
       </ScrollView>
     );
@@ -176,11 +176,11 @@ export default function FinancialHistoryScreen({ navigation, route }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink label="← Back" onPress={() => navigation.goBack()} />
-      <Text style={styles.screenTitle}>Financial History</Text>
+      <BackLink label="‹ Back" onPress={() => navigation.goBack()} />
+      <Text style={styles.screenTitle}>My Financial History & Statements</Text>
 
       {/* Period Selection */}
-      <View style={styles.periodButtons}>
+      <View style={styles.periodButtonsGrid}>
         {QUICK_SELECT_PERIODS.map((period) => (
           <TouchableOpacity
             key={period.key}
@@ -203,38 +203,30 @@ export default function FinancialHistoryScreen({ navigation, route }) {
         ))}
       </View>
 
+      {/* Date Range Hint */}
+      <Text style={styles.dateRangeHint}>
+        {new Date(rangeStart).toLocaleDateString()} — {new Date(rangeEnd).toLocaleDateString()}
+      </Text>
+
       {/* Summary Cards */}
       {summary && (
         <>
-          <View style={styles.card}>
-            <View style={styles.summaryRow}>
-              <View style={styles.summaryCol}>
-                <Text style={styles.summaryLabel}>Income</Text>
-                <Text style={styles.summaryAmount}>KSh {(summary.income || 0).toLocaleString()}</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryCol}>
-                <Text style={styles.summaryLabel}>Expenses</Text>
-                <Text style={styles.summaryAmount}>KSh {(summary.totalExpense || 0).toLocaleString()}</Text>
-              </View>
-              <View style={styles.summaryDivider} />
-              <View style={styles.summaryCol}>
-                <Text style={styles.summaryLabel}>Net Profit</Text>
-                <Text
-                  style={[
-                    styles.summaryAmount,
-                    (summary.netProfit || 0) < 0 && styles.summaryNegative,
-                  ]}
-                >
-                  KSh {(summary.netProfit || 0).toLocaleString()}
-                </Text>
-              </View>
+          {/* Profit Hero Section */}
+          <View style={[
+            styles.profitHero,
+            (summary.netProfit || 0) < 0 && styles.profitHeroNegative
+          ]}>
+            <Text style={styles.profitHeroLabel}>Net Profit (Selected Range)</Text>
+            <Text style={styles.profitHeroAmount}>KSh {(summary.netProfit || 0).toLocaleString()}</Text>
+            <View style={styles.profitSplit}>
+              <Text style={styles.profitSplitText}>Income: KSh {(summary.income || 0).toLocaleString()}</Text>
+              <Text style={styles.profitSplitText}>Expense: KSh {(summary.totalExpense || 0).toLocaleString()}</Text>
             </View>
           </View>
 
           {/* Expense Breakdown */}
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Expense Breakdown</Text>
+            <Text style={styles.cardTitle}>Category Breakdown</Text>
             {breakdown.length > 0 ? (
               breakdown.map((item) => (
                 <View key={item.category} style={styles.breakdownRow}>
@@ -256,21 +248,6 @@ export default function FinancialHistoryScreen({ navigation, route }) {
 
           {/* Action Buttons */}
           <TouchableOpacity
-            style={styles.primaryButton}
-            onPress={() =>
-              navigation.navigate('GenerateStatement', {
-                rangeStart,
-                rangeEnd,
-                selectedPeriod,
-                riderId,
-              })
-            }
-            activeOpacity={0.7}
-          >
-            <Text style={styles.primaryButtonText}>Generate Statement →</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
             style={styles.secondaryButton}
             onPress={() =>
               navigation.navigate('TransactionList', {
@@ -282,7 +259,22 @@ export default function FinancialHistoryScreen({ navigation, route }) {
             }
             activeOpacity={0.7}
           >
-            <Text style={styles.secondaryButtonText}>View All Transactions →</Text>
+            <Text style={styles.secondaryButtonText}>📜 View Transactions →</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.primaryButton}
+            onPress={() =>
+              navigation.navigate('GenerateStatement', {
+                rangeStart,
+                rangeEnd,
+                selectedPeriod,
+                riderId,
+              })
+            }
+            activeOpacity={0.7}
+          >
+            <Text style={styles.primaryButtonText}>📄 Generate a Statement →</Text>
           </TouchableOpacity>
         </>
       )}
@@ -300,16 +292,21 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 16,
+    marginBottom: 4,
   },
-  periodButtons: {
+  screenSub: {
+    fontSize: 13,
+    color: '#5b606c',
+    marginBottom: 20,
+  },
+  periodButtonsGrid: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 16,
     flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
   },
   periodButton: {
-    flex: 1,
+    flex: 0.5,
     minWidth: '45%',
     backgroundColor: '#fff',
     borderWidth: 1.5,
@@ -319,16 +316,53 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   periodButtonActive: {
-    backgroundColor: '#ff7a1a',
+    backgroundColor: '#fff6ee',
     borderColor: '#ff7a1a',
   },
   periodButtonText: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 11.5,
+    fontWeight: '700',
     color: '#5b606c',
   },
   periodButtonTextActive: {
+    color: '#1a1c20',
+  },
+  dateRangeHint: {
+    fontSize: 12,
+    color: '#5b606c',
+    marginBottom: 14,
+  },
+  profitHero: {
+    borderRadius: 18,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    marginBottom: 14,
+    backgroundColor: '#2b2f38',
+  },
+  profitHeroNegative: {
+    backgroundColor: '#5a1f1c',
+  },
+  profitHeroLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#a9adb6',
+    textTransform: 'uppercase',
+    letterSpacing: 0.06,
+    marginBottom: 4,
+  },
+  profitHeroAmount: {
+    fontSize: 30,
+    fontWeight: '700',
     color: '#fff',
+    marginBottom: 10,
+  },
+  profitSplit: {
+    flexDirection: 'row',
+    gap: 14,
+  },
+  profitSplitText: {
+    fontSize: 11.5,
+    color: '#c7cad1',
   },
   card: {
     backgroundColor: '#fff',
@@ -337,35 +371,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     marginBottom: 14,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  summaryCol: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  summaryLabel: {
-    fontSize: 11,
-    color: '#5b606c',
-    fontWeight: '600',
-    marginBottom: 6,
-  },
-  summaryAmount: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  summaryNegative: {
-    color: '#d32f2f',
-  },
-  summaryDivider: {
-    width: 1,
-    height: 45,
-    backgroundColor: '#e7e4db',
-    marginHorizontal: 8,
   },
   cardTitle: {
     fontSize: 13.5,
@@ -377,7 +382,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 9,
     borderBottomWidth: 1,
     borderBottomColor: '#e7e4db',
   },
@@ -426,7 +431,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   secondaryButtonText: {
     color: '#ff7a1a',
