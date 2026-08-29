@@ -1,10 +1,10 @@
 // rider-app/src/components/BackLink.js
-// UPDATED: Aligned with cleaned.html styling
+// UPDATED: Highly visible back navigation with thick arrow
 
 import React from 'react';
 import { TouchableOpacity, Text, StyleSheet } from 'react-native';
 
-export default function BackLink({ onPress, label = '← Back' }) {
+export default function BackLink({ onPress, label = '‹ Back' }) {
   return (
     <TouchableOpacity 
       style={styles.container} 
@@ -12,6 +12,7 @@ export default function BackLink({ onPress, label = '← Back' }) {
       accessibilityRole="button"
       accessible
       accessibilityLabel={label}
+      activeOpacity={0.6}
     >
       <Text style={styles.text}>{label}</Text>
     </TouchableOpacity>
@@ -20,14 +21,15 @@ export default function BackLink({ onPress, label = '← Back' }) {
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 12,
-    paddingVertical: 6,
-    paddingHorizontal: 0,
+    marginBottom: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
     width: 'fit-content',
   },
   text: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#5b606c',
+    fontSize: 18,
+    fontWeight: '900',
+    color: '#1a1c20',
+    letterSpacing: 0.5,
   },
 });
