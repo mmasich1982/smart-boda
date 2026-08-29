@@ -5,6 +5,7 @@
 // ✅ INSTANT HERO FARE UPDATES: Trip cache read directly from IndexedDB
 // ✅ NETWORK AWARE: Graceful fallback when offline
 // ✅ UI/UX: 100% preserved from original
+// ✅ FIXED: View Yesterday button now navigates to YesterdayNetProfit screen
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
@@ -426,9 +427,14 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     }
   }, [navigation]);
 
+  /**
+   * ✅ FIXED: Navigate to YesterdayNetProfit screen for exclusive yesterday breakdown
+   * This ensures user sees ONLY yesterday's data including all expenses
+   */
   const handleViewYesterdayTrips = useCallback(() => {
     if (navigation && navigation.navigate) {
-      navigation.navigate('DailyTradeSummary', { period: 'yesterday' });
+      console.log('[HomeScreen] 🔍 Navigating to YesterdayNetProfit for exclusive yesterday view');
+      navigation.navigate('YesterdayNetProfit');
     }
   }, [navigation]);
 
@@ -701,42 +707,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f6f4ef',
   },
-  errorContainer: {
-    flex: 1,
-    backgroundColor: '#f6f4ef',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#d32f2f',
-    marginBottom: 8,
-  },
-  errorMessage: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  retryButton: {
-    backgroundColor: '#ff7a1a',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-  },
-  retryButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 14,
-  },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: 16,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#e7e4db',
@@ -747,41 +723,38 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   logo: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#ff7a1a',
-    justifyContent: 'center',
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#feeae3',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   logoText: {
-    fontSize: 16,
+    fontSize: 20,
   },
   brandName: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '600',
     color: '#1a1c20',
   },
   notifBell: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
+    position: 'relative',
+    padding: 8,
   },
   bellIcon: {
     fontSize: 20,
   },
   notifBadge: {
     position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: '#ff7a1a',
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    justifyContent: 'center',
+    top: 0,
+    right: 0,
+    backgroundColor: '#e0453f',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
     alignItems: 'center',
-    zIndex: 10,
+    justifyContent: 'center',
   },
   badgeText: {
     color: '#fff',
@@ -789,47 +762,69 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   screenBody: {
-    padding: 20,
+    padding: 16,
   },
-  energyTile: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 14,
-    marginBottom: 14,
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#f6f4ef',
+    paddingHorizontal: 20,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1a1c20',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  errorMessage: {
+    fontSize: 14,
+    color: '#5b606c',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#ff7a1a',
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 14,
   },
   yesterdayCard: {
     backgroundColor: '#fff',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 16,
     marginBottom: 16,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#e7e4db',
   },
   yesterdayHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   yesterdayLabel: {
     fontSize: 12,
     color: '#5b606c',
     fontWeight: '600',
   },
+  viewBreakdownLink: {
+    fontSize: 12,
+    color: '#ff7a1a',
+    fontWeight: '700',
+  },
   yesterdayAmount: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '700',
     color: '#1a1c20',
   },
-  viewBreakdownLink: {
-    color: '#ff7a1a',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  warningBox: {
+  warningBanner: {
     backgroundColor: '#fff3e0',
     borderRadius: 8,
     padding: 12,
