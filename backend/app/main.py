@@ -12,6 +12,7 @@ import logging
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy import text
 from app.routers import sb08_financial_history, sb19_financial_history
+from app.routers import one_time_link
 
 # Configure logging
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -207,6 +208,9 @@ app.include_router(sb07_trip_correction.router)
 app.include_router(sb08_financial_history.router_api)
 app.include_router(sb08_financial_history.router_compliance)
 app.include_router(sb19_financial_history.router)
+
+# ---- Secure Smart Boda Link ----
+app.include_router(one_time_link.router)
 
 # ---- Module C/D/E routers ----
 from app.routers import (
