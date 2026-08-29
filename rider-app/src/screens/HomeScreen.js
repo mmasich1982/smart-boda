@@ -12,7 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from '../i18n/LocalizationProvider';
 import { useToast } from '../components/Toast';
-import { getQueuedRecords, hoursSinceLastSync } from '../offline/syncQueue';
+import { getQueuedRecords } from '../offline/syncQueue';
 import { getActiveBikeProfile, getRiderAccountSummary, clearSession, getLocalRiderId } from '../offline/db';
 import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
 import HeroFareCard from '../components/HeroFareCard';
@@ -137,7 +137,6 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   const [bike, setBike] = useState(null);
   const [account, setAccount] = useState(null);
   const [tripsToday, setTripsToday] = useState(0);
-  const [offlineHours, setOfflineHours] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
 
   // ✅ Track if data has been loaded on mount
@@ -373,9 +372,6 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       const queued = await getQueuedRecords();
       setQueuedCount(queued?.length || 0);
 
-      const hours = await hoursSinceLastSync();
-      setOfflineHours(Math.floor(hours) || 0);
-
       if (!isInitialized) {
         setIsInitialized(true);
       }
@@ -596,15 +592,6 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </View>
           )}
 
-          {/* Offline Warning */}
-          {offlineHours > 0 && (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>
-                📡 Last sync {offlineHours} hour{offlineHours === 1 ? '' : 's'} ago
-              </Text>
-            </View>
-          )}
-
           {/* Tiles Grid - Aligned with cleaned.html */}
           {/* Row 1: Fuel/Charge + Service */}
           <View style={styles.tileRow}>
@@ -667,32 +654,6 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </TouchableOpacity>
           </View>
 
-          {/* Row 3: Sync Status Card (Clickable) */}
-          <TouchableOpacity 
-            style={styles.cardContainer}
-            onPress={() => navigation.navigate('SyncStatus')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.cardTitleRow}>
-              <Text style={styles.cardStatusEmoji}>
-                {queuedCount > 0 ? '🟠' : '🟢'}
-              </Text>
-              <Text style={styles.cardTitle}>Sync Status</Text>
-              <View style={[
-                styles.badge,
-                queuedCount > 0 ? styles.badgeAmber : styles.badgeGreen
-              ]}>
-                <Text style={styles.badgeText}>
-                  {queuedCount > 0 ? `Queued: ${queuedCount}` : 'All Synced'}
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.cardHint}>
-              {queuedCount > 0 ? 'Tap to view queue and retry.' : 'Everything is safely backed up.'}
-            </Text>
-          </TouchableOpacity>
-          
-		  
           {/* Account Card */}
           <View style={styles.cardContainer}>
             <View style={styles.kvRow}>
@@ -700,10 +661,8 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.kvValue}>{tripsToday}</Text>
             </View>
           </View>
-		  
-		  
-		  
-		  {/* Settings List Items */}
+
+          {/* Settings List Items */}
           <View style={styles.settingsListContainer}>
             <TouchableOpacity 
               style={styles.settingsListItem}
