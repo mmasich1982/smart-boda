@@ -3,6 +3,7 @@
 // Centralized logic for fuel, battery, maintenance, and other expense operations
 // Mirrors tripUtils.js pattern for consistency and maintainability
 // Includes 6-month retention policy compliance
+// ✅ FIXED: getExpenseTotalsByPeriod now properly filters by period boundaries
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 
@@ -170,6 +171,46 @@ import indexedDbAdapter from './adapters/indexedDbAdapter';
  */
 
 // ============================================================================
+// PERIOD BOUNDARY CALCULATIONS
+// ============================================================================
+
+/**
+ * Get period boundaries for accurate filtering
+ * @param {string} period - 'today' | 'this_week' | 'this_month'
+ * @returns {Object} - { start: Date, end: Date } with milliseconds
+ */
+function getPeriodBoundaries(period) {
+  const now = new Date();
+  let start, end;
+
+  if (period === 'today') {
+    // Trading day: 4 AM to 4 AM
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 4, 0, 0, 0);
+    if (now < start) {
+      start.setDate(start.getDate() - 1);
+    }
+    end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    end.setMilliseconds(end.getMilliseconds() - 1);
+  } else if (period === 'this_week') {
+    // Calculate week start (Monday) without mutating original date
+    const dayOfWeek = now.getDay();
+    const diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+    start = new Date(now.getFullYear(), now.getMonth(), diff);
+    start.setHours(4, 0, 0, 0);
+    end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    end.setMilliseconds(end.getMilliseconds() - 1);
+  } else if (period === 'this_month') {
+    // Month from 1st at 4 AM to last day at 3:59:59
+    start = new Date(now.getFullYear(), now.getMonth(), 1, 4, 0, 0, 0);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 1, 3, 59, 59, 999);
+  }
+
+  return { start, end };
+}
+
+// ============================================================================
 // FUEL ENTRY OPERATIONS
 // ============================================================================
 
@@ -231,6 +272,7 @@ export async function loadFuelHistoryCache(riderId) {
         items = [];
       }
     }
+
     return items;
   } catch (err) {
     console.error('❌ Error loading fuel history cache:', err);
@@ -239,16 +281,16 @@ export async function loadFuelHistoryCache(riderId) {
 }
 
 /**
- * Save fuel history cache
+ * Save fuel history cache for rider
  * @param {string} riderId - Rider ID
- * @param {Array} entries - Fuel entries
+ * @param {Array} entries - Fuel entries to cache
  * @returns {Promise<boolean>} - Success status
  */
 export async function saveFuelHistoryCache(riderId, entries) {
   try {
     const cacheKey = `fuel_history_${riderId}`;
     await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(entries));
-    console.log('✅ Fuel history cache saved:', { riderId, count: entries.length });
+    console.log('✅ Fuel history cache updated for rider:', riderId);
     return true;
   } catch (err) {
     console.error('❌ Error saving fuel history cache:', err);
@@ -318,6 +360,7 @@ export async function loadBatteryHistoryCache(riderId) {
         items = [];
       }
     }
+
     return items;
   } catch (err) {
     console.error('❌ Error loading battery history cache:', err);
@@ -326,16 +369,16 @@ export async function loadBatteryHistoryCache(riderId) {
 }
 
 /**
- * Save battery history cache
+ * Save battery history cache for rider
  * @param {string} riderId - Rider ID
- * @param {Array} entries - Battery entries
+ * @param {Array} entries - Battery entries to cache
  * @returns {Promise<boolean>} - Success status
  */
 export async function saveBatteryHistoryCache(riderId, entries) {
   try {
     const cacheKey = `battery_history_${riderId}`;
     await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(entries));
-    console.log('✅ Battery history cache saved:', { riderId, count: entries.length });
+    console.log('✅ Battery history cache updated for rider:', riderId);
     return true;
   } catch (err) {
     console.error('❌ Error saving battery history cache:', err);
@@ -405,6 +448,7 @@ export async function loadMaintenanceHistoryCache(riderId) {
         items = [];
       }
     }
+
     return items;
   } catch (err) {
     console.error('❌ Error loading maintenance history cache:', err);
@@ -413,16 +457,16 @@ export async function loadMaintenanceHistoryCache(riderId) {
 }
 
 /**
- * Save maintenance history cache
+ * Save maintenance history cache for rider
  * @param {string} riderId - Rider ID
- * @param {Array} entries - Maintenance entries
+ * @param {Array} entries - Maintenance entries to cache
  * @returns {Promise<boolean>} - Success status
  */
 export async function saveMaintenanceHistoryCache(riderId, entries) {
   try {
     const cacheKey = `maintenance_history_${riderId}`;
     await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(entries));
-    console.log('✅ Maintenance history cache saved:', { riderId, count: entries.length });
+    console.log('✅ Maintenance history cache updated for rider:', riderId);
     return true;
   } catch (err) {
     console.error('❌ Error saving maintenance history cache:', err);
@@ -435,8 +479,8 @@ export async function saveMaintenanceHistoryCache(riderId, entries) {
 // ============================================================================
 
 /**
- * Load other expense entry from IndexedDB
- * @param {string} entryId - Other expense entry ID
+ * Load other expense from IndexedDB
+ * @param {string} entryId - Expense entry ID
  * @returns {Promise<Object|null>} - Expense entry or null
  */
 export async function loadOtherExpenseFromDb(entryId) {
@@ -456,7 +500,7 @@ export async function loadOtherExpenseFromDb(entryId) {
 
 /**
  * Save other expense to IndexedDB
- * @param {string} entryId - Other expense entry ID
+ * @param {string} entryId - Expense entry ID
  * @param {Object} entryData - Expense entry record
  * @returns {Promise<boolean>} - Success status
  */
@@ -473,37 +517,24 @@ export async function saveOtherExpenseToDb(entryId, entryData) {
 }
 
 /**
- * Calculate summary of other expenses
+ * Calculate summary of other expenses by category
  * @param {string} riderId - Rider ID
- * @returns {Promise<Object>} - Summary {total, count, byCategory}
+ * @returns {Promise<Object>} - Summary with entries and categories
  */
 export async function calculateOtherExpensesSummary(riderId) {
   try {
-    let summary = {
-      total: 0,
-      count: 0,
-      byCategory: {}
-    };
-
-    // Try to load from cache first
     const cacheKey = `other_expenses_summary_${riderId}`;
-    const cached = await indexedDbAdapter.kvGet(cacheKey);
+    const cachedData = await indexedDbAdapter.kvGet(cacheKey);
     
-    if (cached) {
-      const data = typeof cached === 'string' ? JSON.parse(cached) : cached;
-      return data;
+    if (cachedData) {
+      const data = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+      return data || { entries: [], total: 0, byCategory: {} };
     }
-
-    // If no cache, we can compute on demand
-    // (Cache is invalidated by AddOtherExpenseScreen)
-    return summary;
+    
+    return { entries: [], total: 0, byCategory: {} };
   } catch (err) {
     console.error('❌ Error calculating other expenses summary:', err);
-    return {
-      total: 0,
-      count: 0,
-      byCategory: {}
-    };
+    return { entries: [], total: 0, byCategory: {} };
   }
 }
 
@@ -512,13 +543,18 @@ export async function calculateOtherExpensesSummary(riderId) {
 // ============================================================================
 
 /**
- * Get expense totals for a period
+ * ✅ FIXED: Get expense totals for a period
+ * Now properly filters all expenses within the specified period boundaries
  * @param {string} riderId - Rider ID
  * @param {string} period - 'today' | 'this_week' | 'this_month'
- * @returns {Promise<Object>} - Summary with all expense types
+ * @returns {Promise<Object>} - Summary with all expense types filtered by period
  */
 export async function getExpenseTotalsByPeriod(riderId, period) {
   try {
+    const { start, end } = getPeriodBoundaries(period);
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+
     const summaries = {
       fuel: 0,
       battery: 0,
@@ -526,47 +562,94 @@ export async function getExpenseTotalsByPeriod(riderId, period) {
       other: 0
     };
 
-    // Load summaries from cache (set by respective screens)
+    // Load and filter fuel expenses
     try {
-      const fuelSummary = await indexedDbAdapter.kvGet(`fuel_summary_${riderId}`);
-      if (fuelSummary) {
-        const data = typeof fuelSummary === 'string' ? JSON.parse(fuelSummary) : fuelSummary;
-        summaries.fuel = data.total || 0;
+      const fuelHistoryCache = await indexedDbAdapter.kvGet(`fuel_history_${riderId}`);
+      if (fuelHistoryCache) {
+        let fuelEntries = [];
+        try {
+          fuelEntries = typeof fuelHistoryCache === 'string' ? JSON.parse(fuelHistoryCache) : fuelHistoryCache;
+          if (!Array.isArray(fuelEntries)) fuelEntries = [];
+        } catch (parseErr) {
+          console.warn('⚠️ Fuel cache parse error');
+        }
+        
+        fuelEntries.forEach(f => {
+          const ts = f.ts || f.timestamp || 0;
+          if (ts >= startMs && ts <= endMs) {
+            summaries.fuel += f.cost || 0;
+          }
+        });
       }
     } catch (err) {
-      console.warn('⚠️ Error loading fuel summary:', err);
+      console.warn('⚠️ Error loading fuel totals:', err);
     }
 
+    // Load and filter battery expenses
     try {
-      const batterySummary = await indexedDbAdapter.kvGet(`battery_summary_${riderId}`);
-      if (batterySummary) {
-        const data = typeof batterySummary === 'string' ? JSON.parse(batterySummary) : batterySummary;
-        summaries.battery = data.total || 0;
+      const batteryHistoryCache = await indexedDbAdapter.kvGet(`battery_history_${riderId}`);
+      if (batteryHistoryCache) {
+        let batteryEntries = [];
+        try {
+          batteryEntries = typeof batteryHistoryCache === 'string' ? JSON.parse(batteryHistoryCache) : batteryHistoryCache;
+          if (!Array.isArray(batteryEntries)) batteryEntries = [];
+        } catch (parseErr) {
+          console.warn('⚠️ Battery cache parse error');
+        }
+        
+        batteryEntries.forEach(b => {
+          const ts = b.ts || b.timestamp || 0;
+          if (ts >= startMs && ts <= endMs) {
+            summaries.battery += b.cost || 0;
+          }
+        });
       }
     } catch (err) {
-      console.warn('⚠️ Error loading battery summary:', err);
+      console.warn('⚠️ Error loading battery totals:', err);
     }
 
+    // Load and filter maintenance expenses
     try {
-      const maintenanceSummary = await indexedDbAdapter.kvGet(`maintenance_summary_${riderId}`);
-      if (maintenanceSummary) {
-        const data = typeof maintenanceSummary === 'string' ? JSON.parse(maintenanceSummary) : maintenanceSummary;
-        summaries.maintenance = data.total || 0;
+      const maintenanceHistoryCache = await indexedDbAdapter.kvGet(`maintenance_history_${riderId}`);
+      if (maintenanceHistoryCache) {
+        let maintenanceEntries = [];
+        try {
+          maintenanceEntries = typeof maintenanceHistoryCache === 'string' ? JSON.parse(maintenanceHistoryCache) : maintenanceHistoryCache;
+          if (!Array.isArray(maintenanceEntries)) maintenanceEntries = [];
+        } catch (parseErr) {
+          console.warn('⚠️ Maintenance cache parse error');
+        }
+        
+        maintenanceEntries.forEach(m => {
+          const ts = m.ts || m.timestamp || 0;
+          if (ts >= startMs && ts <= endMs) {
+            summaries.maintenance += m.cost || 0;
+          }
+        });
       }
     } catch (err) {
-      console.warn('⚠️ Error loading maintenance summary:', err);
+      console.warn('⚠️ Error loading maintenance totals:', err);
     }
 
+    // Load and filter other expenses
     try {
       const otherSummary = await indexedDbAdapter.kvGet(`other_expenses_summary_${riderId}`);
       if (otherSummary) {
         const data = typeof otherSummary === 'string' ? JSON.parse(otherSummary) : otherSummary;
-        summaries.other = data.total || 0;
+        if (data.entries && Array.isArray(data.entries)) {
+          data.entries.forEach(e => {
+            const ts = e.ts || e.timestamp || 0;
+            if (ts >= startMs && ts <= endMs) {
+              summaries.other += e.amount || 0;
+            }
+          });
+        }
       }
     } catch (err) {
-      console.warn('⚠️ Error loading other expenses summary:', err);
+      console.warn('⚠️ Error loading other expense totals:', err);
     }
 
+    console.log(`✅ Expense totals for ${period}:`, summaries);
     return summaries;
   } catch (err) {
     console.error('❌ Error getting expense totals:', err);

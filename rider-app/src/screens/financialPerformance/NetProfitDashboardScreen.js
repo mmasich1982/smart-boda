@@ -5,44 +5,68 @@
  * ✅ RETENTION POLICY: 6-month rolling window for all expense data
  * ✅ SEAMLESS SYNC: Uses sync queue for background API updates
  * ✅ UI/UX: 100% preserved from original
+ * ✅ FIXED: Added period selector (Today/This Week/This Month) with proper filtering
  * 
  * Net Profit = Trip Income - Operational Costs
  * Operational Costs = Fuel + Battery + Maintenance + Other Expenses
  */
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 
+const PERIODS = [
+  { key: 'today', label: 'Today' },
+  { key: 'this_week', label: 'This Week' },
+  { key: 'this_month', label: 'This Month' },
+];
+
 /**
- * Helper: Get today's trading day boundaries
- * Trading day: 4 AM to 4 AM (typical for gig economy)
+ * ✅ FIXED: Helper to get accurate period boundaries
+ * Correctly calculates date ranges without mutating the original date object
  */
-function getTradingDayBoundaries() {
+function getPeriodBoundaries(period) {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 4, 0, 0, 0);
-  
-  if (now < start) {
-    start.setDate(start.getDate() - 1);
+  let start, end;
+
+  if (period === 'today') {
+    // Trading day: 4 AM to 4 AM
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 4, 0, 0, 0);
+    if (now < start) {
+      start.setDate(start.getDate() - 1);
+    }
+    end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    end.setMilliseconds(end.getMilliseconds() - 1);
+  } else if (period === 'this_week') {
+    // Calculate week start (Monday) without mutating original date
+    const dayOfWeek = now.getDay();
+    const diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+    start = new Date(now.getFullYear(), now.getMonth(), diff);
+    start.setHours(4, 0, 0, 0);
+    end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    end.setMilliseconds(end.getMilliseconds() - 1);
+  } else if (period === 'this_month') {
+    // Month from 1st at 4 AM to last day at 3:59:59
+    start = new Date(now.getFullYear(), now.getMonth(), 1, 4, 0, 0, 0);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 1, 3, 59, 59, 999);
   }
-  
-  const end = new Date(start);
-  end.setDate(end.getDate() + 1);
-  end.setMilliseconds(end.getMilliseconds() - 1);
-  
+
   return { start, end };
 }
 
 /**
- * ✅ REFACTORED: Calculate trip income from IndexedDB cache
- * Uses direct trip_history cache instead of tripsRepository
+ * ✅ FIXED: Calculate trip income from IndexedDB cache
+ * Filters trips within the specified period boundaries
  */
-async function calculateTripIncome(riderId) {
+async function calculateTripIncome(riderId, period) {
   try {
-    const { start, end } = getTradingDayBoundaries();
-    const today = new Date().toDateString();
+    const { start, end } = getPeriodBoundaries(period);
+    const startMs = start.getTime();
+    const endMs = end.getTime();
 
     // Load trip cache
     const cacheKey = `trip_history_${riderId}`;
@@ -59,33 +83,29 @@ async function calculateTripIncome(riderId) {
       }
     }
 
-    // Filter to today's active trips
+    // Filter trips within period
     let tripIncome = 0;
     trips.forEach(trip => {
-      if (trip.status === 'active') {
-        const tripDate = new Date(trip.ts || trip.timestamp || 0).toDateString();
-        if (tripDate === today) {
-          const method = trip.paymentMethod || trip.method;
-          
-          if (method === 'LipaLater') {
-            // Only count if settled today
-            if (trip.lipaLater?.settled) {
-              const paymentDate = trip.lipaLater.paymentDate
-                ? new Date(trip.lipaLater.paymentDate).toDateString()
-                : null;
-              if (paymentDate === today) {
-                tripIncome += trip.amount || 0;
-              }
+      const ts = trip.ts || trip.timestamp || 0;
+      if (trip.status === 'active' && ts >= startMs && ts <= endMs) {
+        const method = trip.paymentMethod || trip.method;
+        
+        if (method === 'LipaLater') {
+          // Only count if settled within period
+          if (trip.lipaLater?.settled) {
+            const paymentTs = trip.lipaLater.paymentDate || 0;
+            if (paymentTs >= startMs && paymentTs <= endMs) {
+              tripIncome += trip.amount || 0;
             }
-          } else {
-            // Cash/M-Pesa: count on trip date
-            tripIncome += trip.amount || 0;
           }
+        } else {
+          // Cash/M-Pesa: count on trip date
+          tripIncome += trip.amount || 0;
         }
       }
     });
 
-    console.log(`✅ Income from ${trips.length} trips: KSh ${tripIncome}`);
+    console.log(`✅ Income for ${period} from ${trips.length} trips: KSh ${tripIncome}`);
     return tripIncome;
   } catch (err) {
     console.warn('⚠️ Error calculating trip income:', err);
@@ -94,19 +114,19 @@ async function calculateTripIncome(riderId) {
 }
 
 /**
- * Calculate today's totals from all data sources
- * Uses IndexedDB-first approach for all expense types
+ * ✅ FIXED: Calculate period's totals from all data sources
+ * Properly filters all expense types within the period boundaries
  */
-async function calculateTodaysTotals(riderId) {
+async function calculateTodaysTotals(riderId, period) {
   try {
-    const { start, end } = getTradingDayBoundaries();
+    const { start, end } = getPeriodBoundaries(period);
     const startMs = start.getTime();
     const endMs = end.getTime();
     
-    console.log('📊 Calculating Net Profit for today (trading day)');
+    console.log(`📊 Calculating Net Profit for ${period}`);
     
     // ✅ 1. GET TRIP INCOME (from IndexedDB cache)
-    const tripIncome = await calculateTripIncome(riderId);
+    const tripIncome = await calculateTripIncome(riderId, period);
     
     // ✅ 2. GET FUEL EXPENSES (from IndexedDB)
     let fuelExpense = 0;
@@ -129,7 +149,7 @@ async function calculateTodaysTotals(riderId) {
           }
         });
       }
-      console.log(`✅ Fuel expense: KSh ${fuelExpense}`);
+      console.log(`✅ Fuel expense for ${period}: KSh ${fuelExpense}`);
     } catch (err) {
       console.warn('⚠️ Error calculating fuel expense:', err);
     }
@@ -155,7 +175,7 @@ async function calculateTodaysTotals(riderId) {
           }
         });
       }
-      console.log(`✅ Battery expense: KSh ${batteryExpense}`);
+      console.log(`✅ Battery expense for ${period}: KSh ${batteryExpense}`);
     } catch (err) {
       console.warn('⚠️ Error calculating battery expense:', err);
     }
@@ -181,7 +201,7 @@ async function calculateTodaysTotals(riderId) {
           }
         });
       }
-      console.log(`✅ Maintenance expense: KSh ${maintenanceExpense}`);
+      console.log(`✅ Maintenance expense for ${period}: KSh ${maintenanceExpense}`);
     } catch (err) {
       console.warn('⚠️ Error calculating maintenance expense:', err);
     }
@@ -192,7 +212,7 @@ async function calculateTodaysTotals(riderId) {
       const otherCache = await indexedDbAdapter.kvGet(`other_expenses_summary_${riderId}`);
       if (otherCache) {
         const data = typeof otherCache === 'string' ? JSON.parse(otherCache) : otherCache;
-        // Filter by today only
+        // Filter by period only
         if (data.entries && Array.isArray(data.entries)) {
           data.entries.forEach(e => {
             const ts = e.ts || e.timestamp || 0;
@@ -202,7 +222,7 @@ async function calculateTodaysTotals(riderId) {
           });
         }
       }
-      console.log(`✅ Other expenses: KSh ${otherExpense}`);
+      console.log(`✅ Other expenses for ${period}: KSh ${otherExpense}`);
     } catch (err) {
       console.warn('⚠️ Error calculating other expenses:', err);
     }
@@ -211,7 +231,7 @@ async function calculateTodaysTotals(riderId) {
     const totalExpenses = fuelExpense + batteryExpense + maintenanceExpense + otherExpense;
     const netProfit = tripIncome - totalExpenses;
     
-    console.log('📊 NET PROFIT SUMMARY:', {
+    console.log(`📊 NET PROFIT SUMMARY FOR ${period}:`, {
       tripIncome,
       fuelExpense,
       batteryExpense,
@@ -247,6 +267,7 @@ async function calculateTodaysTotals(riderId) {
 export default function NetProfitDashboardScreen({ navigation }) {
   const { t } = useTranslation();
   const [riderId, setRiderId] = useState(null);
+  const [period, setPeriod] = useState('today');
   const [totals, setTotals] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -258,7 +279,7 @@ export default function NetProfitDashboardScreen({ navigation }) {
         setRiderId(id);
         
         if (id) {
-          const calculatedTotals = await calculateTodaysTotals(id);
+          const calculatedTotals = await calculateTodaysTotals(id, period);
           setTotals(calculatedTotals);
         }
       } catch (err) {
@@ -269,19 +290,19 @@ export default function NetProfitDashboardScreen({ navigation }) {
     };
     
     loadData();
-  }, []);
+  }, [period]);
 
   // ✅ Refresh on focus - ensures data is current when returning from expense screens
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', async () => {
       if (riderId) {
-        const calculatedTotals = await calculateTodaysTotals(riderId);
+        const calculatedTotals = await calculateTodaysTotals(riderId, period);
         setTotals(calculatedTotals);
       }
     });
     
     return unsubscribe;
-  }, [navigation, riderId]);
+  }, [navigation, riderId, period]);
 
   if (loading || !totals) {
     return (
@@ -296,11 +317,27 @@ export default function NetProfitDashboardScreen({ navigation }) {
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.title}>My Net Profit</Text>
-      <Text style={styles.subtitle}>Daily Financial Overview</Text>
+      <Text style={styles.subtitle}>Financial Overview</Text>
+
+      {/* Period Tabs */}
+      <View style={styles.periodTabs}>
+        {PERIODS.map((p) => (
+          <TouchableOpacity
+            key={p.key}
+            style={[styles.periodTab, period === p.key && styles.periodTabActive]}
+            onPress={() => setPeriod(p.key)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.periodTabText, period === p.key && styles.periodTabTextActive]}>
+              {p.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       {/* NET PROFIT HERO CARD */}
       <View style={[styles.heroCard, { borderColor: profitColor }]}>
-        <Text style={styles.heroLabel}>Net Profit Today</Text>
+        <Text style={styles.heroLabel}>Net Profit</Text>
         <Text style={[styles.heroAmount, { color: profitColor }]}>
           KSh {totals.netProfit.toLocaleString()}
         </Text>
@@ -377,6 +414,32 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#8b5cf6',
     marginBottom: 16,
+  },
+  periodTabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  periodTab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    alignItems: 'center',
+  },
+  periodTabActive: {
+    backgroundColor: '#ff7a1a',
+    borderColor: '#ff7a1a',
+  },
+  periodTabText: {
+    fontSize: 12,
+    color: '#5b606c',
+    fontWeight: '600',
+  },
+  periodTabTextActive: {
+    color: '#fff',
   },
   heroCard: {
     backgroundColor: '#fff',
