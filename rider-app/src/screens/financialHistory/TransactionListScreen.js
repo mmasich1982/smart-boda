@@ -29,6 +29,7 @@ export default function TransactionListScreen({ navigation, route }) {
   const [riderId, setRiderId] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [typeFilter, setTypeFilter] = useState('all');
 
   // ✅ Load rider ID on mount
   useEffect(() => {
@@ -86,30 +87,50 @@ export default function TransactionListScreen({ navigation, route }) {
   if (!riderId || loading) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink label="← Back" onPress={() => navigation.goBack()} />
-        <Text style={styles.screenTitle}>All Transactions</Text>
+        <BackLink label="‹ Back" onPress={() => navigation.goBack()} />
+        <Text style={styles.screenTitle}>My Transactions</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
   }
 
-  const renderTransaction = ({ item }) => {
+  const periodLabels = {
+    thisMonth: 'for This Month',
+    lastMonth: 'for Last Month',
+    last3: 'for the Last 3 Months',
+    last6: 'for the Last 6 Months',
+    sinceJoining: 'Since Joining',
+  };
+
+  const periodLabel = periodLabels[selectedPeriod] || 'for the Selected Period';
+
+  // Filter transactions by type
+  const filteredTransactions = typeFilter === 'all' 
+    ? transactions 
+    : transactions.filter(t => t.type === typeFilter);
+
+  const renderTransaction = ({ item, index }) => {
     const isIncome = item.category === 'Income';
     const date = new Date(item.date);
-    const dateStr = date.toLocaleDateString();
-    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dateStr = date.toLocaleString();
+    const isLastItem = index === filteredTransactions.length - 1;
 
     return (
-      <View style={styles.transactionRow}>
-        <View style={styles.transactionLeft}>
-          <Text style={styles.transactionType}>{item.description}</Text>
-          <Text style={styles.transactionTime}>
-            {dateStr} · {timeStr}
-          </Text>
+      <View style={[
+        styles.tripRow,
+        item.voided && styles.tripRowVoided,
+        !isLastItem && styles.tripRowWithBorder
+      ]}>
+        <View style={styles.tripRowLeft}>
+          <Text style={styles.tripRowType}>{item.description}</Text>
+          <Text style={styles.tripRowTime}>{dateStr}</Text>
         </View>
-        <View style={styles.transactionRight}>
-          <Text style={[styles.transactionAmount, isIncome ? styles.amountIncome : styles.amountExpense]}>
-            {isIncome ? '+' : '-'}KSh {Math.abs(item.amount).toLocaleString()}
+        <View style={styles.tripRowRight}>
+          <Text style={[
+            styles.tripRowAmount,
+            isIncome ? styles.amountIncome : styles.amountExpense
+          ]}>
+            KSh {Math.abs(item.amount).toLocaleString()}
           </Text>
         </View>
       </View>
@@ -118,21 +139,53 @@ export default function TransactionListScreen({ navigation, route }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink label="← Back" onPress={() => navigation.goBack()} />
-      <Text style={styles.screenTitle}>All Transactions</Text>
-      <Text style={styles.screenSubtitle}>{selectedPeriod} · {transactions.length} transactions</Text>
+      <BackLink label="‹ Back" onPress={() => navigation.goBack()} />
+      <Text style={styles.screenTitle}>My Transactions {periodLabel}</Text>
+      <Text style={styles.screenSub}>
+        {new Date(rangeStart).toLocaleDateString()} — {new Date(rangeEnd).toLocaleDateString()} · RA-17-C · Transaction-Level Drill-Down
+      </Text>
+
+      {/* Type Filter Row */}
+      <ScrollView 
+        horizontal 
+        showsHorizontalScrollIndicator={false}
+        style={styles.typeFilterRow}
+      >
+        {[
+          { key: 'all', label: 'All' },
+          { key: 'trip', label: 'Trips' },
+          { key: 'fuel', label: 'Fuel' },
+          { key: 'maintenance', label: 'Service' },
+          { key: 'other', label: 'Other Expense' },
+        ].map((filter) => (
+          <TouchableOpacity
+            key={filter.key}
+            style={[
+              styles.typeChip,
+              typeFilter === filter.key && styles.typeChipActive,
+            ]}
+            onPress={() => setTypeFilter(filter.key)}
+          >
+            <Text style={[
+              styles.typeChipText,
+              typeFilter === filter.key && styles.typeChipTextActive,
+            ]}>
+              {filter.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       <View style={styles.card}>
-        {transactions.length > 0 ? (
+        {filteredTransactions.length > 0 ? (
           <FlatList
-            data={transactions}
+            data={filteredTransactions}
             renderItem={renderTransaction}
             keyExtractor={(item) => `${item.type}_${item.id}`}
             scrollEnabled={false}
-            ItemSeparatorComponent={() => <View style={styles.separator} />}
           />
         ) : (
-          <Text style={styles.emptyText}>No transactions in this period</Text>
+          <Text style={styles.emptyText}>No transactions match this filter.</Text>
         )}
       </View>
     </ScrollView>
@@ -151,53 +204,84 @@ const styles = StyleSheet.create({
     color: '#1a1c20',
     marginBottom: 4,
   },
-  screenSubtitle: {
-    fontSize: 12,
+  screenSub: {
+    fontSize: 13,
     color: '#5b606c',
-    marginBottom: 16,
+    marginBottom: 14,
+  },
+  typeFilterRow: {
+    marginBottom: 12,
+    marginHorizontal: -16,
+    paddingHorizontal: 16,
+  },
+  typeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    backgroundColor: '#fff',
+    marginRight: 6,
+  },
+  typeChipActive: {
+    backgroundColor: '#ff7a1a',
+    borderColor: '#ff7a1a',
+  },
+  typeChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1a1c20',
+  },
+  typeChipTextActive: {
+    color: '#fff',
   },
   card: {
     backgroundColor: '#fff',
     borderWidth: 1.5,
     borderColor: '#e7e4db',
     borderRadius: 16,
-    padding: 12,
+    overflow: 'hidden',
   },
-  transactionRow: {
+  tripRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 2,
   },
-  transactionLeft: {
+  tripRowWithBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#e7e4db',
+  },
+  tripRowVoided: {
+    opacity: 0.5,
+  },
+  tripRowLeft: {
     flex: 1,
   },
-  transactionType: {
-    fontSize: 13,
+  tripRowType: {
+    fontSize: 12,
     fontWeight: '600',
     color: '#1a1c20',
     marginBottom: 4,
   },
-  transactionTime: {
+  tripRowTime: {
     fontSize: 11,
     color: '#5b606c',
   },
-  transactionRight: {
+  tripRowRight: {
     alignItems: 'flex-end',
   },
-  transactionAmount: {
-    fontSize: 13,
+  tripRowAmount: {
+    fontSize: 14,
     fontWeight: '700',
+    color: '#1a1c20',
   },
   amountIncome: {
-    color: '#2e7d32',
+    color: '#1e9e6f',
   },
   amountExpense: {
-    color: '#c62828',
-  },
-  separator: {
-    height: 1,
-    backgroundColor: '#e7e4db',
+    color: '#e0453f',
   },
   emptyText: {
     fontSize: 12,
