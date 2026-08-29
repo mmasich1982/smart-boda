@@ -269,7 +269,7 @@ function AppContent() {
     // ✅ Initialize sync & PWA after verified ready (non-blocking)
     try {
       if (startSyncMonitor && typeof startSyncMonitor === 'function') {
-        startSyncMonitor().catch(err => {
+        Promise.resolve(startSyncMonitor()).catch(err => {
           console.warn('[App] Sync monitor error (non-fatal):', err);
         });
       }
@@ -279,7 +279,7 @@ function AppContent() {
 
     try {
       if (registerServiceWorker && typeof registerServiceWorker === 'function') {
-        registerServiceWorker().catch(err => {
+        Promise.resolve(registerServiceWorker()).catch(err => {
           console.warn('[App] Service worker error (non-fatal):', err);
         });
       }
