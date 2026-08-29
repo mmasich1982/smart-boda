@@ -61,6 +61,7 @@ export default function FinancialHistoryScreen({ navigation, route }) {
     const now = new Date();
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
     const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+    const lastMonthEnd = thisMonthStart - 1;
     let start, end = Date.now();
 
     switch (period) {
@@ -69,7 +70,7 @@ export default function FinancialHistoryScreen({ navigation, route }) {
         break;
       case 'lastMonth':
         start = lastMonthStart;
-        end = thisMonthStart;
+        end = lastMonthEnd;
         break;
       case 'last3':
         start = Date.now() - 90 * 24 * 3600000;
@@ -84,7 +85,8 @@ export default function FinancialHistoryScreen({ navigation, route }) {
         start = thisMonthStart;
     }
 
-    if (earliest !== null) {
+    // Only constrain to earliest date for "sinceJoining" period
+    if (period === 'sinceJoining' && earliest !== null) {
       start = Math.max(start, earliest);
     }
 
