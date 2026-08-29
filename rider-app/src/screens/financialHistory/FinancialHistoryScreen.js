@@ -337,10 +337,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 18,
     marginBottom: 14,
-    backgroundColor: '#2b2f38',
+    backgroundColor: '#252930',
   },
   profitHeroNegative: {
-    backgroundColor: '#5a1f1c',
+    backgroundColor: '#6a2420',
   },
   profitHeroLabel: {
     fontSize: 11,
@@ -348,12 +348,13 @@ const styles = StyleSheet.create({
     color: '#a9adb6',
     textTransform: 'uppercase',
     letterSpacing: 0.06,
-    marginBottom: 4,
+    marginBottom: 2,
   },
   profitHeroAmount: {
     fontSize: 30,
     fontWeight: '700',
     color: '#fff',
+    marginTop: 4,
     marginBottom: 10,
   },
   profitSplit: {
