@@ -12,9 +12,11 @@
         fromDatabase:
           name: smart-boda-db
           property: connectionString
+      - key: DB_SCHEMA
+        value: "smart_boda"
       - key: JWT_SECRET_KEY
         value: "iwillrestoreuntoyoualltheyearsthathavebeenlost"
       - key: JWT_ALGORITHM
-        value: HS256
+        value: "HS256"
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "1440"
