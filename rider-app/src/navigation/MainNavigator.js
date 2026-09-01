@@ -16,6 +16,8 @@
 // - Updated Goals import: GoalSummaryScreen → GoalDetailScreen
 // - Updated Goals screen names to match new implementation
 // - All missing component imports added
+// - Updated all references from motorcycle/bike to cabz
+// - Updated branding from Smart Boda to Smart Cabz
 
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -26,7 +28,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import HomeScreen from '../screens/HomeScreen';
 
 // ============================================================================
-// TILE 1: FUEL MOTORCYCLE / CHARGE BATTERY
+// TILE 1: FUEL / CHARGE BATTERY
 // ============================================================================
 import FuelHubScreen from '../screens/energyHub/FuelHubScreen';
 import FuelEntryScreen from '../screens/energyHub/FuelEntryScreen';
@@ -36,7 +38,7 @@ import BatteryHistoryScreen from '../screens/energyHub/BatteryHistoryScreen';
 import ChargeBatteryHubScreen from '../screens/energyHub/ChargeBatteryHubScreen';
 
 // ============================================================================
-// TILE 2: SERVICE MOTORCYCLE
+// TILE 2: SERVICE CABZ
 // ============================================================================
 import MaintenanceHubScreen from '../screens/serviceHub/MaintenanceHubScreen';
 import MaintenanceEntryScreen from '../screens/serviceHub/MaintenanceEntryScreen';
@@ -50,9 +52,8 @@ import NetProfitDashboardScreen from '../screens/financialPerformance/NetProfitD
 import AddOtherExpenseScreen from '../screens/financialPerformance/AddOtherExpenseScreen';
 import YesterdayNetProfitScreen from '../screens/financialPerformance/YesterdayNetProfitScreen';
 
-
 // ============================================================================
-// TILE 10: MY SUBSCRIPTION
+// TILE 4: MY SUBSCRIPTION
 // ============================================================================
 import SubscriptionScreen from '../screens/subscription/SubscriptionScreen';
 import FrequencySelectScreen from '../screens/subscription/FrequencySelectScreen';
@@ -62,9 +63,8 @@ import SubscriptionBanners from '../screens/subscription/SubscriptionBanners';
 import ConfirmSubscriptionScreen from '../screens/subscription/ConfirmSubscriptionScreen';
 
 
-
 // ============================================================================
-// TILE 14: MY DAILY TRADE SUMMARY
+// TILE 5: MY DAILY TRADE SUMMARY
 // ============================================================================
 import DailyTradeSummaryScreen from '../screens/trips/DailyTradeSummaryScreen';
 import NewTripScreen from '../screens/trips/NewTripScreen';
@@ -81,10 +81,9 @@ import GenerateStatementScreen from '../screens/financialHistory/GenerateStateme
 import StatementPreviewScreen from '../screens/financialHistory/StatementPreviewScreen';
 import TransactionListScreen from '../screens/financialHistory/TransactionListScreen';
 import StatementHistoryScreen from '../screens/financialHistory/StatementHistoryScreen';
-import DataExportRequestScreen from '../screens/financialHistory/DataExportRequestScreen';
 
 // ============================================================================
-// AUTHENTICATIIN SCREENS
+// AUTHENTICATION SCREENS
 // ============================================================================
 import PinLoginScreen from '../screens/auth/PinLoginScreen';
 import ChangePinVerifyScreen from '../screens/auth/ChangePinVerifyScreen';
@@ -112,8 +111,8 @@ const screenOptions = {
  * │ 4. Subscription Renewal Banner             │
  * └────────────────────────────────────────────┘
  * ┌─ FEATURE TILES (2-Column Grid) ────────────┐
- * │ 5. Fuel Motorcycle / Charge Battery        │
- * │ 6. Service Motorcycle                      │
+ * │ 5. Fuel / Charge Battery                   │
+ * │ 6. Service Cabz                            │
  * │ 7. My Financial Performance                │
  * │ 8. My Revenue Targets                      │
  * │ 9. My License and Insurance                │
@@ -127,16 +126,18 @@ const screenOptions = {
  * │17. Account                                 │
  * │18. My Daily Trade Summary                  │
  * │19. My Financial History & Statements       │
- * │20. My Settings & Bike Profile              │
+ * │20. My Settings & Cabz Profile              │
  * │21. Logout                                  │
  * └────────────────────────────────────────────┘
  */
 export const MainNavigator = () => {
   return (
-    <Stack.Navigator screenOptions={screenOptions}>
-      {/* ===== HOME SCREEN (Entry Point) ===== */}
+    <Stack.Navigator screenOptions={screenOptions} initialRouteName="Dashboard">
+      {/* ===== HOME SCREEN (Entry Point) - RENAMED to Dashboard to avoid circular routing ===== */}
+      {/* FIXED: Was "Home" but MainNavigator itself is the "Home" screen in OnboardingNavigator */}
+      {/* This prevents: OnboardingNavigator.Home -> MainNavigator -> MainNavigator.Home circular reference */}
       <Stack.Screen
-        name="Home"
+        name="Dashboard"
         component={HomeScreen}
         options={{
           headerShown: false,
@@ -144,7 +145,7 @@ export const MainNavigator = () => {
         }}
       />
 
-      {/* ===== TILE 1: FUEL MOTORCYCLE / CHARGE BATTERY (FuelHub entry point) ===== */}
+      {/* ===== TILE 1: FUEL / CHARGE BATTERY (FuelHub entry point) ===== */}
       <Stack.Screen
         name="FuelHub"
         component={FuelHubScreen}
@@ -198,7 +199,7 @@ export const MainNavigator = () => {
         }}
       />
 
-      {/* ===== TILE 2: SERVICE MOTORCYCLE ===== */}
+      {/* ===== TILE 2: SERVICE CABZ ===== */}
       <Stack.Screen
         name="MaintenanceHub"
         component={MaintenanceHubScreen}
@@ -263,220 +264,6 @@ export const MainNavigator = () => {
         }}
       />
 
-      {/* ===== TILE 4: MY REVENUE TARGETS ===== */}
-      <Stack.Screen
-        name="RevenueTargets"
-        component={RevenueTargetsScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="SetTarget"
-        component={SetTargetScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      {/* ===== TILE 5: MY LICENSE AND INSURANCE ===== */}
-      <Stack.Screen
-        name="ComplianceDashboard"
-        component={ComplianceDashboardScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="AddDocument"
-        component={AddDocumentScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="RenewDocument"
-        component={RenewDocumentScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      {/* ===== TILE 6: MY SAVINGS ===== */}
-      <Stack.Screen
-        name="SavingsHub"
-        component={SavingsHubScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="SavingsEntry"
-        component={SavingsEntryScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="SavingsTypeList"
-        component={SavingsTypeListScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="AddSavingsContribution"
-        component={AddSavingsContributionScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="SavingsReport"
-        component={SavingsReportScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="SavingsAccount"
-        component={SavingsAccountScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      {/* ===== TILE 7: LIPA LATER CUSTOMER REPORT ===== */}
-      <Stack.Screen
-        name="LipaLaterEntry"
-        component={LipaLaterDetailsScreen}
-        options={{ 
-          headerShown: false,
-          animationEnabled: true, 
-        }}
-      />
-
-      <Stack.Screen
-        name="PaymentSummary"
-        component={PaymentSummaryScreen}
-        options={{ 
-          headerShown: false,
-          animationEnabled: true, 
-        }}
-      />
-
-      <Stack.Screen
-        name="RecordPayment"
-        component={RecordPaymentScreen}
-        options={{ 
-          headerShown: false,
-          animationEnabled: true, 
-        }}
-      />
-
-      <Stack.Screen
-        name="LipaLaterCustomers"
-        component={LipaLaterCustomersScreen}
-        options={{ 
-          headerShown: false,
-          animationEnabled: true, 
-        }}
-      />
-
-      <Stack.Screen
-        name="LipaLaterAgeing"
-        component={LipaLaterAgeingScreen}
-        options={{ 
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      {/* ===== TILE 8: SEND MONEY HOME ===== */}
-      <Stack.Screen
-        name="SendMoneyHome"
-        component={SendMoneyHomeScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="SendMoneyHistory"
-        component={SendMoneyHistoryScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      {/* ===== TILE 9: MY GOALS ===== */}
-      <Stack.Screen
-        name="MyGoals"
-        component={MyGoalsScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="NewGoal"
-        component={NewGoalScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      {/* ✓ FIXED: Changed from GoalSummary to GoalDetail to match new implementation */}
-      <Stack.Screen
-        name="GoalDetail"
-        component={GoalDetailScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="LogContribution"
-        component={LogContributionScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="GoalAchieved"
-        component={GoalAchievedScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
       {/* ===== TILE 10: MY SUBSCRIPTION ===== */}
 
       <Stack.Screen
@@ -497,16 +284,6 @@ export const MainNavigator = () => {
           animationEnabled: true,
         }}
       />
-	  
-
-		<Stack.Screen
-		  name="PrepayScreen"
-		  component={PrepayScreen}
-		  options={{
-			headerShown: false,
-			animationEnabled: true,
-		  }}
-		/>
 
 
       <Stack.Screen
@@ -545,26 +322,6 @@ export const MainNavigator = () => {
         }}
       />
 	  
-
-      {/* ===== TILE 11: SUGGESTIONS AND FEEDBACK ===== */}
-      <Stack.Screen
-        name="SuggestionsFeedback"
-        component={SuggestionsFeedbackScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      {/* ===== TILE 12: SYNC STATUS ===== */}
-      <Stack.Screen
-        name="SyncStatus"
-        component={SyncQueueScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
 
       {/* ===== TILE 14: MY DAILY TRADE SUMMARY ===== */}
       <Stack.Screen
@@ -640,61 +397,7 @@ export const MainNavigator = () => {
         }}
       />
 
-      <Stack.Screen
-        name="DataExportRequest"
-        component={DataExportRequestScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      {/* ===== TILE 16: MY SETTINGS & BIKE PROFILE ===== */}
-      <Stack.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
       {/* ===== SUPPORTING SCREENS ===== */}
-      <Stack.Screen
-        name="ProfileConfirmation"
-        component={ProfileConfirmationScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="TermsOfService"
-        component={TermsOfServiceScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="DataPrivacy"
-        component={DataPrivacyScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
-
-      <Stack.Screen
-        name="LegalDocument"
-        component={LegalDocumentScreen}
-        options={{
-          headerShown: false,
-          animationEnabled: true,
-        }}
-      />
     </Stack.Navigator>
   );
 };

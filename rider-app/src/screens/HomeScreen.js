@@ -85,11 +85,20 @@ class HomeScreenErrorBoundary extends React.Component {
   }
 
   static getDerivedStateFromError(error) {
+    console.error('[HomeScreen ErrorBoundary] Caught error:', {
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+    });
     return { hasError: true, error };
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error('[HomeScreen] Error boundary caught:', error, errorInfo);
+    console.error('[HomeScreen ErrorBoundary] Component stack:', {
+      error: error.toString(),
+      componentStack: errorInfo.componentStack,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   render() {
@@ -98,6 +107,7 @@ class HomeScreenErrorBoundary extends React.Component {
         <ErrorDisplay
           error={this.state.error?.message || 'An unexpected error occurred'}
           onRetry={() => {
+            console.log('[HomeScreen ErrorBoundary] Retrying...');
             this.setState({ hasError: false, error: null });
             this.props.onRetry?.();
           }}
@@ -193,29 +203,28 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           
           const lockStatus = await checkAndEnforceLock(riderId);
 
-          if (lockStatus.isLocked) {
-            console.log('[HomeScreen] 🔒 GATE CLOSED: Account is LOCKED - navigating to AccountLockedScreen', {
+          if (lockStatus && lockStatus.isLocked) {
+            console.log('[HomeScreen] 🔒 GATE CLOSED: Account is LOCKED - showing locked UI', {
               reason: lockStatus.reason,
               justLocked: lockStatus.justLocked,
             });
             
             setIsAccountLocked(true);
-            
-            // ✅ ENFORCE LOCK: Navigate to AccountLockedScreen before rendering home
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'AccountLockedScreen' }],
-            });
+            setLockCheckInProgress(false);
             return;
           }
 
           console.log('[HomeScreen] ✅ GATE OPEN: Account is UNLOCKED - rendering home screen normally');
           setIsAccountLocked(false);
+          setLockCheckInProgress(false);
         } catch (err) {
-          console.error('[HomeScreen] Error checking account lock:', err);
+          console.error('[HomeScreen] Error checking account lock:', {
+            error: err.toString(),
+            message: err.message,
+            stack: err.stack,
+          });
           // Fail-safe: allow home screen on error
           setIsAccountLocked(false);
-        } finally {
           setLockCheckInProgress(false);
         }
       };
@@ -225,7 +234,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       return () => {
         // Cleanup on unfocus
       };
-    }, [riderId, navigation])
+    }, [riderId])
   );
 
   /**
