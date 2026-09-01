@@ -277,7 +277,7 @@ export default function MaintenanceHistoryScreen({ navigation }) {
       <ScrollView style={styles.container}>
         <BackLink onPress={handleBackPress} label="← Back" />
         <Text style={styles.title}>Service History</Text>
-        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+        <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
       </ScrollView>
     );
   }
@@ -459,16 +459,16 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   periodTabActive: {
-    backgroundColor: '#ff7a1a',
-    borderColor: '#ff7a1a'
+    backgroundColor: '#ffc107',
+    borderColor: '#ffc107'
   },
   periodTabText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#5b606c'
+    color: '#1a1c20'
   },
   periodTabTextActive: {
-    color: '#fff'
+    color: '#1a1c20'
   },
 
   // Summary card
@@ -591,8 +591,8 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   pageBtnActive: {
-    backgroundColor: '#ff7a1a',
-    borderColor: '#ff7a1a'
+    backgroundColor: '#ffc107',
+    borderColor: '#ffc107'
   },
   pageBtnDisabled: {
     backgroundColor: '#f0ede7',
@@ -604,6 +604,6 @@ const styles = StyleSheet.create({
     color: '#5b606c'
   },
   pageBtnTextActive: {
-    color: '#fff'
+    color: '#1a1c20'
   }
 });

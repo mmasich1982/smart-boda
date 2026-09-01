@@ -170,6 +170,7 @@ class SubscriptionTrial(Base):
         Index('ix_subscription_trial_converted_to_paid', 'converted_to_paid'),
         Index('ix_subscription_trial_started_at', 'started_at'),
         Index('ix_subscription_trial_converted_at', 'converted_at'),
+        {'extend_existing': True}
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -196,6 +197,7 @@ class SubscriptionTrial(Base):
 class PricingChangeLog(Base):
     """
     Audit trail for subscription price changes with scheduling support.
+    ✅ FIXED: Added extend_existing=True to prevent duplicate index errors
     """
     __tablename__ = 'pricing_change_log'
     __table_args__ = (
@@ -205,6 +207,7 @@ class PricingChangeLog(Base):
         Index('ix_pricing_change_log_applied_at', 'applied_at'),
         Index('ix_pricing_change_log_plan_applied', 'plan_id', 'applied_at'),
         Index('ix_pricing_change_log_is_pending', 'applied_at', 'cancelled_at'),
+        {'extend_existing': True}  # ✅ CRITICAL FIX
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -253,6 +256,7 @@ class PendingPriceChange(Base):
     __table_args__ = (
         Index('ix_pending_price_change_plan_id', 'plan_id', unique=True),
         Index('ix_pending_price_change_effective_at', 'effective_at'),
+        {'extend_existing': True}
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -290,6 +294,7 @@ class AccountLockHistory(Base):
         Index('ix_account_lock_history_triggered_at', 'triggered_at'),
         Index('ix_account_lock_history_rider_action', 'rider_id', 'action'),
         Index('ix_account_lock_history_triggered_by', 'triggered_by'),
+        {'extend_existing': True}
     )
 
     id = Column(Integer, primary_key=True, index=True)

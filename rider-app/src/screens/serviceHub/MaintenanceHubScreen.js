@@ -116,8 +116,8 @@ export default function MaintenanceHubScreen({ navigation }) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={handleBackPress} label="← Home" />
-        <Text style={styles.title}>Service Motorcycle</Text>
-        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+        <Text style={styles.title}>Service Car</Text>
+        <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
       </ScrollView>
     );
   }
@@ -126,7 +126,7 @@ export default function MaintenanceHubScreen({ navigation }) {
     <ScrollView style={styles.container}>
       <BackLink onPress={handleBackPress} label="← Home" />
       
-      <Text style={styles.title}>Service Motorcycle</Text>
+      <Text style={styles.title}>Service Car</Text>
 
       {/* CRITICAL ERROR ONLY - Never show status/offline info */}
       {criticalError && (
@@ -207,14 +207,14 @@ const styles = StyleSheet.create({
 
   // Primary action button
   primaryButton: {
-    backgroundColor: '#ff7a1a',
+    backgroundColor: '#ffc107',
     borderRadius: 14,
     paddingVertical: 16,
     paddingHorizontal: 20,
     marginHorizontal: 20,
     marginBottom: 12,
     alignItems: 'center',
-    shadowColor: '#ff7a1a',
+    shadowColor: '#ffc107',
     shadowOpacity: 0.35,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
@@ -223,7 +223,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#fff',
+    color: '#1a1c20',
     letterSpacing: 0.02
   },
 
@@ -231,7 +231,7 @@ const styles = StyleSheet.create({
   secondaryButton: {
     backgroundColor: '#fff',
     borderWidth: 1.5,
-    borderColor: '#ff7a1a',
+    borderColor: '#ffc107',
     borderRadius: 14,
     paddingVertical: 16,
     paddingHorizontal: 20,
@@ -242,6 +242,6 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#ff7a1a'
+    color: '#ffc107'
   }
 });

@@ -66,8 +66,8 @@ class OneTimeLink(Base):
     # Access log - JSON array of access attempts
     access_log = Column(JSON, default=list, nullable=False)
     
-    # Metadata - store context or additional info
-    metadata = Column(JSON, default=dict, nullable=False)
+    # ✅ FIXED: Renamed from 'metadata' to 'link_metadata' (metadata is reserved by SQLAlchemy)
+    link_metadata = Column(JSON, default=dict, nullable=False)
     
     # Share details
     shared_via = Column(String(20), nullable=True)  # whatsapp, sms, link, qr
@@ -84,6 +84,7 @@ class OneTimeLink(Base):
         Index('ix_one_time_links_token_status', 'token', 'status'),
         Index('ix_one_time_links_expires_at', 'expires_at'),
         Index('ix_one_time_links_created_at', 'created_at'),
+        {'extend_existing': True}  # ✅ ADDED for consistency
     )
 
     def is_expired(self) -> bool:

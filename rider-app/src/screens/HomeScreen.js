@@ -51,7 +51,7 @@ function LoadingSkeleton() {
           <View style={styles.logo}>
             <Text style={styles.logoText}>🚕</Text>
           </View>
-          <Text style={styles.brandName}>Smart Boda</Text>
+          <Text style={styles.brandName}>Smart Cabz</Text>
         </View>
       </View>
       <View style={styles.screenBody}>
@@ -558,7 +558,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             <View style={styles.logo}>
               <Text style={styles.logoText}>🚕</Text>
             </View>
-            <Text style={styles.brandName}>Smart Boda</Text>
+            <Text style={styles.brandName}>Smart Cabz</Text>
           </View>
           <TouchableOpacity
             style={styles.notifBell}
@@ -785,13 +785,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   retryButton: {
-    backgroundColor: '#ff7a1a',
+    backgroundColor: '#ffc107',
     paddingHorizontal: 32,
     paddingVertical: 12,
     borderRadius: 8,
   },
   retryButtonText: {
-    color: '#fff',
+    color: '#1a1c20',
     fontWeight: '600',
     fontSize: 14,
   },
@@ -816,7 +816,7 @@ const styles = StyleSheet.create({
   },
   viewBreakdownLink: {
     fontSize: 12,
-    color: '#ff7a1a',
+    color: '#ffb300',
     fontWeight: '700',
   },
   yesterdayAmount: {
@@ -1064,14 +1064,14 @@ const styles = StyleSheet.create({
     color: '#e0453f',
   },
   buttonPrimary: {
-    backgroundColor: '#ff7a1a',
+    backgroundColor: '#ffc107',
     borderRadius: 14,
     paddingVertical: 15,
     paddingHorizontal: 16,
     marginHorizontal: 14,
     marginBottom: 8,
     alignItems: 'center',
-    shadowColor: '#ff7a1a',
+    shadowColor: '#ffc107',
     shadowOpacity: 0.3,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
@@ -1080,7 +1080,7 @@ const styles = StyleSheet.create({
   buttonPrimaryText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#fff',
+    color: '#1a1c20',
     letterSpacing: 0.3,
   },
   buttonGhost: {

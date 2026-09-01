@@ -80,7 +80,7 @@ class OneTimeLinkService:
                 created_from_ip=created_from_ip,
                 created_from_user_agent=created_from_user_agent,
                 status=LinkStatus.ACTIVE,
-                metadata=metadata or {},
+                link_metadata=metadata or {},
                 access_log=[]
             )
             

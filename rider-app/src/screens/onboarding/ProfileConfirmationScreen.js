@@ -103,7 +103,7 @@ export default function ProfileConfirmationScreen({ route, navigation }) {
       <Text style={styles.hint}>{t('profile.name_hint')}</Text>
 
       <View style={styles.checkboxRow}>
-        <Checkbox value={consent} onValueChange={setConsent} color={consent ? '#ff7a1a' : undefined} />
+        <Checkbox value={consent} onValueChange={setConsent} color={consent ? '#ffc107' : undefined} />
         <Text style={styles.consentLabel}>
           {t('profile.consent_prefix')}{' '}
           <Text style={styles.link} onPress={() => navigation.navigate('TermsOfService')}>
@@ -140,7 +140,7 @@ const styles = StyleSheet.create({
   hint: { fontSize: 11, color: '#5b606c', marginTop: -8, marginBottom: 14 },
   checkboxRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, backgroundColor: '#fff', borderWidth: 1.5, borderColor: '#e7e4db', borderRadius: 13, padding: 12, marginBottom: 14 },
   consentLabel: { fontSize: 11, color: '#5b606c', flex: 1, lineHeight: 17 },
-  link: { color: '#e5650a', fontWeight: '700' },
+  link: { color: '#ffb300', fontWeight: '700' },
   error: { color: '#e0453f', fontSize: 11, marginBottom: 10, fontWeight: '700' },
   badge: { alignSelf: 'flex-start', borderRadius: 999, paddingVertical: 5, paddingHorizontal: 11, marginBottom: 16 },
   badgeGreen: { backgroundColor: '#e6f5ef' },

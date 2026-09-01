@@ -21,11 +21,7 @@ import BikeProfileScreen from '../screens/onboarding/BikeProfileScreen';
 import MobileNumberScreen from '../screens/onboarding/MobileNumberScreen';
 import ProfileConfirmationScreen from '../screens/onboarding/ProfileConfirmationScreen';
 import CreatePinScreen from '../screens/onboarding/CreatePinScreen';
-import PinRecoveryScreen from '../screens/onboarding/PinRecoveryScreen';
 
-// ✅ LEGAL SCREENS (correct paths)
-import TermsOfServiceScreen from '../screens/settings/TermsOfServiceScreen';
-import DataPrivacyScreen from '../screens/settings/DataPrivacyScreen';
 
 // ✅ CRITICAL FIX: Import PinLoginScreen from /auth/ path (NOT /onboarding/)
 // The /auth/ version has proper null-checking for route.params

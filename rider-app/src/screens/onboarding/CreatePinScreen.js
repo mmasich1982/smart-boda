@@ -251,7 +251,7 @@ export default function CreatePinScreen({ route, navigation }) {
   if (initializingHome && !isLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#ff7a1a" />
+        <ActivityIndicator size="large" color="#ffc107" />
         <Text style={styles.loadingText}>
           {t('common.initializing') || 'Initializing your account...'}
         </Text>
@@ -340,7 +340,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  eyeBtnActive: { backgroundColor: '#ff7a1a', borderColor: '#ff7a1a' },
+  eyeBtnActive: { backgroundColor: '#ffc107', borderColor: '#ffc107' },
   eyeEmoji: { fontSize: 15 },
   revealHint: { fontSize: 10.5, color: '#5b606c', textAlign: 'center', marginBottom: 14, marginTop: 4 },
 });

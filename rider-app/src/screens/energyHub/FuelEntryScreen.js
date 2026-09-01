@@ -210,7 +210,7 @@ export default function FuelEntryScreen({ bikeProfile, navigation }) {
       <ScrollView style={styles.container}>
         <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
         <Text style={styles.title}>{title}</Text>
-        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
+        <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
       </ScrollView>
     );
   }
@@ -370,12 +370,12 @@ const styles = StyleSheet.create({
   },
 
   primaryBtn: { 
-    backgroundColor: '#ff7a1a', 
+    backgroundColor: '#ffc107', 
     borderRadius: 14, 
     paddingVertical: 16, 
     alignItems: 'center', 
     marginBottom: 16,
-    shadowColor: '#ff7a1a', 
+    shadowColor: '#ffc107', 
     shadowOpacity: 0.35, 
     shadowRadius: 12, 
     shadowOffset: { width: 0, height: 4 },
@@ -394,7 +394,7 @@ const styles = StyleSheet.create({
     marginRight: 10
   },
   primaryBtnText: { 
-    color: '#fff', 
+    color: '#1a1c20', 
     fontSize: 16, 
     fontWeight: '700',
     letterSpacing: 0.02

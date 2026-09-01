@@ -45,7 +45,7 @@ export default function ValuePreviewScreen({ navigation }) {
   if (loading) {
     return (
       <View style={styles.container}>
-        <ActivityIndicator size="large" color="#ff7a1a" />
+        <ActivityIndicator size="large" color="#ffc107" />
       </View>
     );
   }
