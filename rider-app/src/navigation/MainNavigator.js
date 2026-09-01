@@ -356,7 +356,7 @@ export const MainNavigator = () => {
 
       {/* ✅ ===== TILE 11: LIPA LATER CUSTOMER REPORT (UPDATED) ===== */}
       <Stack.Screen
-        name="LipaLaterCustomers"
+        name="LipaLaterCustomersScreen"
         component={LipaLaterCustomersScreen}
         options={{
           headerShown: false,
@@ -365,7 +365,7 @@ export const MainNavigator = () => {
       />
 
       <Stack.Screen
-        name="LipaLaterAgeing"
+        name="LipaLaterAgeingScreen"
         component={LipaLaterAgeingScreen}
         options={{
           headerShown: false,
@@ -374,7 +374,7 @@ export const MainNavigator = () => {
       />
 
       <Stack.Screen
-        name="LipaLaterDetails"
+        name="LipaLaterDetailsScreen"
         component={LipaLaterDetailsScreen}
         options={{
           headerShown: false,
@@ -383,7 +383,7 @@ export const MainNavigator = () => {
       />
 
       <Stack.Screen
-        name="RecordPayment"
+        name="RecordPaymentScreen"
         component={RecordPaymentScreen}
         options={{
           headerShown: false,
@@ -392,7 +392,7 @@ export const MainNavigator = () => {
       />
 
       <Stack.Screen
-        name="PaymentSummary"
+        name="aymentSummaryScreen"
         component={PaymentSummaryScreen}
         options={{
           headerShown: false,
