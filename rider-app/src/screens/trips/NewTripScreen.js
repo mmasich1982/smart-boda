@@ -1,10 +1,13 @@
 // rider-app/src/screens/trips/NewTripScreen.js
-// ✅ REFACTORED: IndexedDB-first architecture (mirrors FuelEntryScreen)
+// ✅ UPDATED: Lipa Later support with IndexedDB-first architecture
 // ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, clean UI, immediate feedback
 // ✅ UNIFIED ARCHITECTURE: Removed tripsRepository - uses only IndexedDB kvSet
 // ✅ INSTANT UPDATES: Trip cache updated immediately, HomeScreen displays data on focus
 // ✅ NETWORK AWARE: Real-time connectivity detection
-// ✅ UI/UX: 100% preserved from original
+// ✅ PAYMENT FLOW:
+//    - Cash/M-Pesa: Save trip → Auto-redirect to Home
+//    - Lipa Later: Navigate to LipaLaterDetailsScreen with amount
+// ✅ UI/UX: 100% preserved, payment buttons sized to match keypad
 
 import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
@@ -21,22 +24,29 @@ import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus
 const PAYMENT_METHODS = [
   { key: 'Cash', label: 'Cash', emoji: '💵' },
   { key: 'MPesa', label: 'M-Pesa', emoji: '📲' },
+  { key: 'LipaLater', label: 'Lipa Later', emoji: '📅' },
 ];
 
 /**
- * ✅ REFACTORED: New Trip Screen
+ * ✅ UPDATED: New Trip Screen with Lipa Later
  * ✅ UNIFIED ARCHITECTURE: IndexedDB-first with no repository dependencies
  * ✅ INSTANT UPDATES: Trip cache updated immediately for HomeScreen display
  * ✅ OFFLINE PERSISTENCE: All data stored in IndexedDB with background sync
  *
+ * PAYMENT FLOW:
+ * • Cash/M-Pesa: Record trip immediately, save to cache, return to Home
+ * • Lipa Later: Navigate to LipaLaterDetailsScreen with amount for customer capture
+ *
  * KEY CHANGES FROM ORIGINAL:
+ * • Added Lipa Later as third payment method
+ * • Conditional navigation based on payment method
+ * • Reduced payment button sizes to match numeric keypad
  * • Removed all tripsRepository imports and dependencies
  * • Uses indexedDbAdapter.kvSet() for direct IndexedDB storage
  * • Uses addToSyncQueue() for background API sync
  * • Trip cache (trip_history_${riderId}) updated on save
  * • Individual trip records stored as trip_entry_${tripId}
  * • HomeScreen reads from cache directly on focus
- * • Support for Lipa Later trips with customer data
  *
  * CACHE STRUCTURE:
  * - trip_entry_${tripId}: Individual trip record
@@ -51,7 +61,6 @@ export default function NewTripScreen({ navigation }) {
   const [selectedMethod, setSelectedMethod] = useState(null);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
-  const [hoveredKey, setHoveredKey] = useState(null);
   const [localRiderId, setLocalRiderId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [riderIdError, setRiderIdError] = useState(false);
@@ -84,8 +93,6 @@ export default function NewTripScreen({ navigation }) {
   }, []);
 
   const effectiveRiderId = localRiderId || state?.riderId;
-
-
 
   const handlePaymentMethodSelect = (methodKey) => {
     setSelectedMethod(methodKey);
@@ -154,6 +161,15 @@ export default function NewTripScreen({ navigation }) {
         return;
       }
 
+      // ✅ CONDITIONAL FLOW: Lipa Later vs Cash/M-Pesa
+      if (selectedMethod === 'LipaLater') {
+        // Navigate to Lipa Later Details screen to capture customer info
+        console.log('📱 Routing to Lipa Later Details with amount:', amtValue);
+        navigation.navigate('LipaLaterDetails', { amount: amtValue.toString() });
+        return;
+      }
+
+      // ✅ CASH / M-PESA FLOW: Save trip immediately and return to Home
       setSaving(true);
       clearCriticalError();
       setSuccessMessage('');
@@ -190,6 +206,7 @@ export default function NewTripScreen({ navigation }) {
         recordId,
         riderId: effectiveRiderId,
         amount: amtValue,
+        method: selectedMethod,
         cacheKey: `trip_history_${effectiveRiderId}`,
       });
 
@@ -399,18 +416,20 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
 
+  // ✅ UPDATED: Reduced button sizes to match numeric keypad dimensions
   methodGrid: {
     display: 'flex',
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
   },
   methodTile: {
     flex: 1,
     backgroundColor: '#fff',
     borderWidth: 1.5,
     borderColor: '#e7e4db',
-    borderRadius: 13,
-    padding: 12,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -419,11 +438,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff6ee',
   },
   methodEmoji: {
-    fontSize: 22,
-    marginBottom: 6,
+    fontSize: 18,
+    marginBottom: 4,
   },
   methodLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
     textAlign: 'center',
     color: '#1a1c20',

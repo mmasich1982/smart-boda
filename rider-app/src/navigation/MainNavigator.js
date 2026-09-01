@@ -1,4 +1,5 @@
 // rider-app/src/navigation/MainNavigator.js
+// ✅ UPDATED: Added Lipa Later screen stack
 // MAIN NAVIGATOR - Smart Boda MVP1
 // 
 // Manages all post-onboarding screens organized by Home Screen tiles/sections.
@@ -10,14 +11,12 @@
 // 2. Subscription Banner (1-2 days free)
 // 3. Yesterday's Total Trade Summary
 // 4. Subscription Renewal Banner
-// 5-21. Feature Tiles (Fuel, Service, Financial, Revenue Targets, License, Savings, etc.)
+// 5-21. Feature Tiles (Fuel, Service, Financial, Revenue Targets, License, Savings, Lipa Later, etc.)
 //
-// ✓ FIXED: 
-// - Updated Goals import: GoalSummaryScreen → GoalDetailScreen
-// - Updated Goals screen names to match new implementation
-// - All missing component imports added
-// - Updated all references from motorcycle/bike to cabz
-// - Updated branding from Smart Boda to Smart Cabz
+// ✅ UPDATED: 
+// - Added Lipa Later screen imports
+// - Registered all Lipa Later screens in navigator
+// - Lipa Later navigation routes properly integrated
 
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -62,13 +61,21 @@ import PaymentHistoryScreen from '../screens/subscription/PaymentHistoryScreen';
 import SubscriptionBanners from '../screens/subscription/SubscriptionBanners';
 import ConfirmSubscriptionScreen from '../screens/subscription/ConfirmSubscriptionScreen';
 
-
 // ============================================================================
 // TILE 5: MY DAILY TRADE SUMMARY
 // ============================================================================
 import DailyTradeSummaryScreen from '../screens/trips/DailyTradeSummaryScreen';
 import NewTripScreen from '../screens/trips/NewTripScreen';
 import TripDetailScreen from '../screens/trips/TripDetailScreen';
+
+// ============================================================================
+// ✅ TILE 11: LIPA LATER CUSTOMER REPORT
+// ============================================================================
+import LipaLaterCustomersScreen from '../screens/lipaLater/LipaLaterCustomersScreen';
+import LipaLaterAgeingScreen from '../screens/lipaLater/LipaLaterAgeingScreen';
+import LipaLaterDetailsScreen from '../screens/lipaLater/LipaLaterDetailsScreen';
+import RecordPaymentScreen from '../screens/lipaLater/RecordPaymentScreen';
+import PaymentSummaryScreen from '../screens/lipaLater/PaymentSummaryScreen';
 
 // ============================================================================
 // TILE 15: MY FINANCIAL HISTORY AND STATEMENTS
@@ -117,7 +124,7 @@ const screenOptions = {
  * │ 8. My Revenue Targets                      │
  * │ 9. My License and Insurance                │
  * │10. My Savings                              │
- * │11. Lipa Later Customer Report              │
+ * │11. Lipa Later Customer Report ✅ UPDATED   │
  * │12. Send Money Home                         │
  * │13. My Goals                                │
  * │14. My Subscription                         │
@@ -264,8 +271,7 @@ export const MainNavigator = () => {
         }}
       />
 
-      {/* ===== TILE 10: MY SUBSCRIPTION ===== */}
-
+      {/* ===== TILE 4: MY SUBSCRIPTION ===== */}
       <Stack.Screen
         name="Subscription"
         component={SubscriptionScreen}
@@ -275,7 +281,6 @@ export const MainNavigator = () => {
         }}
       />
 	  
-  
       <Stack.Screen
         name="SelectFrequency"
         component={FrequencySelectScreen}
@@ -284,7 +289,6 @@ export const MainNavigator = () => {
           animationEnabled: true,
         }}
       />
-
 
       <Stack.Screen
         name="Prepay"
@@ -321,9 +325,8 @@ export const MainNavigator = () => {
           animationEnabled: true,
         }}
       />
-	  
 
-      {/* ===== TILE 14: MY DAILY TRADE SUMMARY ===== */}
+      {/* ===== TILE 5: MY DAILY TRADE SUMMARY ===== */}
       <Stack.Screen
         name="DailyTradeSummary"
         component={DailyTradeSummaryScreen}
@@ -345,6 +348,52 @@ export const MainNavigator = () => {
       <Stack.Screen
         name="TripDetail"
         component={TripDetailScreen}
+        options={{
+          headerShown: false,
+          animationEnabled: true,
+        }}
+      />
+
+      {/* ✅ ===== TILE 11: LIPA LATER CUSTOMER REPORT (UPDATED) ===== */}
+      <Stack.Screen
+        name="LipaLaterCustomers"
+        component={LipaLaterCustomersScreen}
+        options={{
+          headerShown: false,
+          animationEnabled: true,
+        }}
+      />
+
+      <Stack.Screen
+        name="LipaLaterAgeing"
+        component={LipaLaterAgeingScreen}
+        options={{
+          headerShown: false,
+          animationEnabled: true,
+        }}
+      />
+
+      <Stack.Screen
+        name="LipaLaterDetails"
+        component={LipaLaterDetailsScreen}
+        options={{
+          headerShown: false,
+          animationEnabled: true,
+        }}
+      />
+
+      <Stack.Screen
+        name="RecordPayment"
+        component={RecordPaymentScreen}
+        options={{
+          headerShown: false,
+          animationEnabled: true,
+        }}
+      />
+
+      <Stack.Screen
+        name="PaymentSummary"
+        component={PaymentSummaryScreen}
         options={{
           headerShown: false,
           animationEnabled: true,
