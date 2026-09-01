@@ -165,7 +165,7 @@ export default function NewTripScreen({ navigation }) {
       if (selectedMethod === 'LipaLater') {
         // Navigate to Lipa Later Details screen to capture customer info
         console.log('📱 Routing to Lipa Later Details with amount:', amtValue);
-        navigation.navigate('LipaLaterDetails', { amount: amtValue.toString() });
+        navigation.navigate('LipaLaterDetailsScreen', { amount: amtValue.toString() });
         return;
       }
 
