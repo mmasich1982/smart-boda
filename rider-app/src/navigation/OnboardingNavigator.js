@@ -25,7 +25,7 @@ import CreatePinScreen from '../screens/onboarding/CreatePinScreen';
 
 // ✅ CRITICAL FIX: Import PinLoginScreen from /auth/ path (NOT /onboarding/)
 // The /auth/ version has proper null-checking for route.params
-import PinLoginScreen from '../screens/auth/PinLoginScreen';
+import PinLoginScreen from '../screens/auth/PinLoginScreen';pin
 
 // ✅ FORGOT PIN SCREENS (if they exist in auth folder)
 import ForgotPinScreen from '../screens/auth/ForgotPinScreen';
@@ -292,7 +292,6 @@ export default function OnboardingNavigator() {
  * - "CreatePin" → Onboarding step 5
  * - "PinLogin" → Registered user login
  * - "ForgotPin" → Forgot PIN flow
- * - "PinRecovery" → PIN recovery screen
  * - "ForgotPinConfirmation" → Confirmation screen
  * - "TermsOfService" → Legal screen
  * - "DataPrivacy" → Privacy screen
