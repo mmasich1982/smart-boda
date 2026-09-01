@@ -84,25 +84,11 @@ import StatementHistoryScreen from '../screens/financialHistory/StatementHistory
 import DataExportRequestScreen from '../screens/financialHistory/DataExportRequestScreen';
 
 // ============================================================================
-// TILE 16: MY SETTINGS & BIKE PROFILE
-// ============================================================================
-import SettingsScreen from '../screens/settings/SettingsScreen';
-
-
-// ============================================================================
 // AUTHENTICATIIN SCREENS
 // ============================================================================
 import PinLoginScreen from '../screens/auth/PinLoginScreen';
 import ChangePinVerifyScreen from '../screens/auth/ChangePinVerifyScreen';
 
-
-// ============================================================================
-// SUPPORTING SCREENS
-// ============================================================================
-import ProfileConfirmationScreen from '../screens/onboarding/ProfileConfirmationScreen';
-import TermsOfServiceScreen from '../screens/settings/TermsOfServiceScreen';
-import DataPrivacyScreen from '../screens/settings/DataPrivacyScreen';
-import LegalDocumentScreen from '../screens/settings/LegalDocumentScreen';
 
 const Stack = createNativeStackNavigator();
 
