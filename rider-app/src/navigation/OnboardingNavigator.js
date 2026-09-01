@@ -248,22 +248,8 @@ export default function OnboardingNavigator() {
           component={ForgotPinScreen} 
         />
         <Stack.Screen 
-          name="PinRecovery" 
-          component={PinRecoveryScreen} 
-        />
-        <Stack.Screen 
           name="ForgotPinConfirmation" 
           component={ForgotPinConfirmationScreen} 
-        />
-
-        {/* LEGAL & INFORMATION SCREENS */}
-        <Stack.Screen 
-          name="TermsOfService" 
-          component={TermsOfServiceScreen} 
-        />
-        <Stack.Screen 
-          name="DataPrivacy" 
-          component={DataPrivacyScreen} 
         />
 
         {/* ✅ CRITICAL: Screen name MUST be "Home" (not "MainApp") */}
