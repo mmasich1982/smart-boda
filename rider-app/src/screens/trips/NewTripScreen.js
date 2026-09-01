@@ -254,7 +254,7 @@ export default function NewTripScreen({ navigation }) {
             setTimeout(() => {
               setAmount('');
               setSelectedMethod(null);
-              navigation.navigate('Home', { refreshFare: true });
+              navigation.navigate('Dashboard', { refreshFare: true });
             }, 800);
             return;
           }
@@ -274,7 +274,7 @@ export default function NewTripScreen({ navigation }) {
       setTimeout(() => {
         setAmount('');
         setSelectedMethod(null);
-        navigation.navigate('Home', { refreshFare: true });
+        navigation.navigate('Dashboard', { refreshFare: true });
       }, 800);
     } catch (err) {
       console.error('❌ Save error:', err);
@@ -305,7 +305,7 @@ export default function NewTripScreen({ navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink label="← Home" onPress={() => navigation.navigate('Home')} />
+      <BackLink label="← Home" onPress={() => navigation.navigate('Dashboard')} />
 
       <Text style={styles.screenTitle}>Record Trip</Text>
       <Text style={styles.screenSubtitle}>Add a new trip to today's total</Text>
