@@ -9,7 +9,6 @@
 import React, { useState, useEffect } from 'react';
 import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import BackLink from '../../components/BackLink';
-import NumericKeypad from '../../components/NumericKeypad';
 import api from '../../api/client';
 import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
@@ -85,7 +84,19 @@ export default function NewTripScreen({ navigation }) {
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
-
+  const handleKeypadPress = (digit) => {
+    if (digit === 'back') {
+      setAmount(amount.slice(0, -1));
+    } else if (digit === '.') {
+      if (!amount.includes('.') && amount) {
+        setAmount(amount + digit);
+      }
+    } else {
+      if (amount.length < 10) {
+        setAmount(amount + digit);
+      }
+    }
+  };
 
   const handlePaymentMethodSelect = (methodKey) => {
     setSelectedMethod(methodKey);
@@ -307,12 +318,44 @@ export default function NewTripScreen({ navigation }) {
 
       <View style={styles.card}>
         <Text style={styles.label}>Fare Amount</Text>
-        <NumericKeypad 
-          value={amount} 
-          onChange={setAmount}
-          currencyLabel="KSh"
-          maxLength={10}
-        />
+        <View style={styles.amountDisplay}>
+          <Text style={styles.currencySymbol}>KSh</Text>
+          <Text style={styles.amountText}>{amount || '0'}</Text>
+        </View>
+
+        <View style={styles.keypad}>
+          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+            <TouchableOpacity
+              key={num}
+              style={styles.keypadButton}
+              onPress={() => handleKeypadPress(num.toString())}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.keypadText}>{num}</Text>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity
+            style={styles.keypadButton}
+            onPress={() => handleKeypadPress('.')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.keypadText}>.</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.keypadButton}
+            onPress={() => handleKeypadPress('0')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.keypadText}>0</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.keypadButton}
+            onPress={() => handleKeypadPress('back')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.keypadText}>←</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.card}>
@@ -398,7 +441,47 @@ const styles = StyleSheet.create({
     color: '#1a1c20',
     marginBottom: 12,
   },
-
+  amountDisplay: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    backgroundColor: '#f6f4ef',
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  currencySymbol: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#5b606c',
+    marginRight: 8,
+  },
+  amountText: {
+    fontSize: 42,
+    fontWeight: '700',
+    color: '#1a1c20',
+  },
+  keypad: {
+    display: 'flex',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  keypadButton: {
+    width: '31%',
+    aspectRatio: 1,
+    backgroundColor: '#f6f4ef',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e7e4db',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  keypadText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1a1c20',
+  },
   methodGrid: {
     display: 'flex',
     flexDirection: 'row',
