@@ -25,7 +25,7 @@ import CreatePinScreen from '../screens/onboarding/CreatePinScreen';
 
 // ✅ CRITICAL FIX: Import PinLoginScreen from /auth/ path (NOT /onboarding/)
 // The /auth/ version has proper null-checking for route.params
-import PinLoginScreen from '../screens/auth/PinLoginScreen';pin
+import PinLoginScreen from '../screens/auth/PinLoginScreen';
 
 // ✅ FORGOT PIN SCREENS (if they exist in auth folder)
 import ForgotPinScreen from '../screens/auth/ForgotPinScreen';
