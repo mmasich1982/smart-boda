@@ -95,6 +95,7 @@ export default function NewTripScreen({ navigation }) {
   const effectiveRiderId = localRiderId || state?.riderId;
 
   const handlePaymentMethodSelect = (methodKey) => {
+    console.log('🔘 Payment method selected:', methodKey);
     setSelectedMethod(methodKey);
   };
 
@@ -169,13 +170,12 @@ export default function NewTripScreen({ navigation }) {
       if (selectedMethod === 'LipaLater') {
         console.log('🎯 LIPA LATER DETECTED - Navigating to LipaLaterDetailsScreen');
         console.log('📱 Amount:', amtValue);
-        try {
-          navigation.navigate('LipaLaterDetailsScreen', { amount: amtValue.toString() });
-          console.log('✅ Navigation called successfully');
-        } catch (navErr) {
-          console.error('❌ Navigation error:', navErr);
-          showCriticalError('Failed to navigate to Lipa Later. Please try again.', 'navigation');
-        }
+        console.log('📍 Route name: LipaLaterDetailsScreen');
+        console.log('📝 Route params:', { amount: amtValue.toString() });
+        
+        // Navigate without inner try-catch to let errors propagate
+        navigation.navigate('LipaLaterDetailsScreen', { amount: amtValue.toString() });
+        console.log('✅ Navigation called successfully');
         return;
       }
 
@@ -288,6 +288,8 @@ export default function NewTripScreen({ navigation }) {
       }, 800);
     } catch (err) {
       console.error('❌ Save error:', err);
+      console.error('❌ Error message:', err.message);
+      console.error('❌ Error stack:', err.stack);
       showCriticalError(
         err.message || 'Error saving trip. Please try again.',
         'error'
@@ -319,6 +321,15 @@ export default function NewTripScreen({ navigation }) {
 
       <Text style={styles.screenTitle}>Record Trip</Text>
       <Text style={styles.screenSubtitle}>Add a new trip to today's total</Text>
+
+      {/* DEBUG: Show current state */}
+      {__DEV__ && (
+        <View style={[styles.alert, { backgroundColor: '#e3f2fd', marginBottom: 12 }]}>
+          <Text style={{ fontSize: 10, color: '#1565c0', fontWeight: '600' }}>
+            DEBUG: Amount={amount}, Method={selectedMethod}, RiderId={effectiveRiderId ? 'SET' : 'NONE'}
+          </Text>
+        </View>
+      )}
 
       {criticalError && (
         <View style={[styles.alert, styles.alertError]}>
