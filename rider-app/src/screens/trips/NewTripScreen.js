@@ -9,90 +9,106 @@
 //    - Lipa Later: Navigate to LipaLaterDetailsScreen with amount
 // ✅ UI/UX: 100% preserved, payment buttons sized to match keypad
 
-import React, { useState, useContext, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  ScrollView,
-  ActivityIndicator,
-  Alert,
-  useWindowDimensions,
-} from 'react-native';
-import { RiderContext } from '../../rider/RiderContext';
-import { useFocusEffect } from '@react-navigation/native';
-import { indexedDbAdapter } from '../../offline/adapters/indexedDbAdapter';
+import React, { useState, useEffect } from 'react';
+import { ScrollView, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import BackLink from '../../components/BackLink';
+import NumericKeypad from '../../components/NumericKeypad';
+import api from '../../api/client';
+import { useRider } from '../../rider/RiderContext';
+import { useTranslation } from '../../i18n/LocalizationProvider';
+import { getLocalRiderId } from '../../offline/db';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
+import { addToSyncQueue } from '../../offline/syncQueue';
+import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 
 const PAYMENT_METHODS = [
   { key: 'Cash', label: 'Cash', emoji: '💵' },
-  { key: 'MPesa', label: 'M-Pesa', emoji: '📱' },
-  { key: 'LipaLater', label: 'Lipa Later', emoji: '📋' },
+  { key: 'MPesa', label: 'M-Pesa', emoji: '📲' },
+  { key: 'LipaLater', label: 'Lipa Later', emoji: '📅' },
 ];
 
-export default function NewTripScreen({ navigation, route }) {
-  // ✅ SAFER CONTEXT ACCESS with optional chaining and fallback values
-  const contextValue = useContext(RiderContext);
-  const riderId = contextValue?.riderId || null;
-  const mobileNumber = contextValue?.mobileNumber || null;
-  
-  const { width } = useWindowDimensions();
+/**
+ * ✅ UPDATED: New Trip Screen with Lipa Later
+ * ✅ UNIFIED ARCHITECTURE: IndexedDB-first with no repository dependencies
+ * ✅ INSTANT UPDATES: Trip cache updated immediately for HomeScreen display
+ * ✅ OFFLINE PERSISTENCE: All data stored in IndexedDB with background sync
+ *
+ * PAYMENT FLOW:
+ * • Cash/M-Pesa: Record trip immediately, save to cache, return to Home
+ * • Lipa Later: Navigate to LipaLaterDetailsScreen with amount for customer capture
+ *
+ * KEY CHANGES FROM ORIGINAL:
+ * • Added Lipa Later as third payment method
+ * • Conditional navigation based on payment method
+ * • Reduced payment button sizes to match numeric keypad
+ * • Removed all tripsRepository imports and dependencies
+ * • Uses indexedDbAdapter.kvSet() for direct IndexedDB storage
+ * • Uses addToSyncQueue() for background API sync
+ * • Trip cache (trip_history_${riderId}) updated on save
+ * • Individual trip records stored as trip_entry_${tripId}
+ * • HomeScreen reads from cache directly on focus
+ *
+ * CACHE STRUCTURE:
+ * - trip_entry_${tripId}: Individual trip record
+ * - trip_history_${riderId}: Array of all trips (cached for fast access)
+ * - sync_queue: Background sync queue for API uploads
+ */
+export default function NewTripScreen({ navigation }) {
+  const { state } = useRider();
+  const { t } = useTranslation();
 
-  // ✅ STATE MANAGEMENT
   const [amount, setAmount] = useState('');
   const [selectedMethod, setSelectedMethod] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [isNavigating, setIsNavigating] = useState(false); // ✅ PREVENT DOUBLE NAVIGATION
-  const [criticalError, setCriticalError] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
-  const [effectiveRiderId, setEffectiveRiderId] = useState(null);
+  const [localRiderId, setLocalRiderId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [riderIdError, setRiderIdError] = useState(false);
 
-  // ✅ SYNC RIDER ID - with comprehensive validation
+  const { isConnected, isInitialized } = useNetworkStatus();
+  const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
+
+  // ✅ Load rider ID on mount with proper error handling
   useEffect(() => {
-    if (riderId) {
-      setEffectiveRiderId(riderId);
-      console.log('✅ Rider ID set:', riderId);
-      clearCriticalError();
-    } else {
-      console.warn('⚠️ No Rider ID available from context');
-      showCriticalError(
-        'Rider information not loaded. Please navigate back to Home and try again.',
-        'auth'
-      );
-    }
-  }, [riderId]);
+    const loadRiderId = async () => {
+      try {
+        const id = await getLocalRiderId();
+        if (id) {
+          setLocalRiderId(id);
+          console.log('✅ NewTrip: Loaded rider ID:', id);
+          setRiderIdError(false);
+        } else {
+          console.warn('⚠️ No rider ID found in local storage');
+          setRiderIdError(true);
+        }
+      } catch (err) {
+        console.error('❌ Error loading rider ID:', err);
+        setRiderIdError(true);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  // ✅ CLEAR MESSAGES ON FOCUS
-  useFocusEffect(
-    React.useCallback(() => {
-      setCriticalError(null);
-      setSuccessMessage('');
-    }, [])
-  );
+    loadRiderId();
+  }, []);
 
-  const showCriticalError = (message, type = 'error') => {
-    console.error(`❌ ${type.toUpperCase()}:`, message);
-    setCriticalError(message);
-  };
+  const effectiveRiderId = localRiderId || state?.riderId;
 
-  const clearCriticalError = () => {
-    setCriticalError(null);
-  };
-
-  // ✅ PAYMENT METHOD SELECTION
   const handlePaymentMethodSelect = (methodKey) => {
     console.log('🔘 Payment method selected:', methodKey);
     setSelectedMethod(methodKey);
-    clearCriticalError();
   };
 
   /**
    * ✅ UPDATE CACHE: Add new trip to trip_history cache
+   * This ensures HomeScreen and DailyTradeSummaryScreen display the trip immediately
+   * Uses IndexedDB for persistent local-first storage
    */
   const updateTripHistoryCache = async (offlineRecord) => {
     try {
       const cacheKey = `trip_history_${effectiveRiderId}`;
+
+      // Get existing cache from IndexedDB
       const cachedData = await indexedDbAdapter.kvGet(cacheKey);
       let items = [];
 
@@ -106,7 +122,10 @@ export default function NewTripScreen({ navigation, route }) {
         }
       }
 
+      // Add new entry to front (most recent first)
       items.unshift(offlineRecord);
+
+      // Save updated cache to IndexedDB
       await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(items));
       console.log(`✅ Updated trip_history cache with new entry`);
     } catch (err) {
@@ -114,121 +133,82 @@ export default function NewTripScreen({ navigation, route }) {
     }
   };
 
-  /**
-   * ✅ MAIN HANDLER: Save trip and navigate based on payment method
-   * 
-   * CRITICAL FIX FOR LIPA LATER:
-   * - Immediate synchronous navigation for LipaLater (no await)
-   * - Prevent double navigation with isNavigating flag
-   * - Validate amount and method before any action
-   * - Use navigation.navigate() which is the React Navigation way
-   */
   const handleSaveTrip = async () => {
     try {
-      // ✅ PREVENT DOUBLE NAVIGATION
-      if (isNavigating || saving) {
-        console.warn('⚠️ Already processing navigation, ignoring duplicate request');
-        return;
-      }
-
       console.log('🔍 handleSaveTrip called');
       console.log('💾 Current state:', { amount, selectedMethod, effectiveRiderId });
 
-      // ✅ VALIDATION: Amount
+      // Validation
       const amtValue = parseFloat(amount);
       if (!amount || amtValue <= 0) {
         showCriticalError(
-          'A trip needs a fare amount greater than zero.',
+          t('validationError_fareAmountRequired') || 'A trip needs a fare amount greater than zero.',
           'validation'
         );
         return;
       }
 
-      // ✅ VALIDATION: Payment Method
       if (!selectedMethod) {
         showCriticalError(
-          'Select a payment method to continue.',
+          t('validationError_paymentMethodRequired') || 'Select a payment method to continue.',
           'validation'
         );
         return;
       }
 
-      // ✅ VALIDATION: Rider ID
       if (!effectiveRiderId) {
         showCriticalError(
-          'Rider information not available. Please return to Home.',
+          t('authError_riderIdNotAvailable') || 'Rider information not available. Please return to Home.',
           'auth'
         );
         console.error('❌ No effective rider ID');
         return;
       }
 
-      console.log('✅ All validations passed. selectedMethod:', selectedMethod);
-
       // ✅ CONDITIONAL FLOW: Lipa Later vs Cash/M-Pesa
+      console.log('✅ All validations passed. selectedMethod:', selectedMethod);
       
-      // ═══════════════════════════════════════════════════════════════
-      // 🎯 LIPA LATER FLOW: IMMEDIATE SYNCHRONOUS NAVIGATION
-      // ═══════════════════════════════════════════════════════════════
+      // ✅ LIPA LATER FLOW - DIRECT NAVIGATION (NO ASYNC WAIT)
       if (selectedMethod === 'LipaLater') {
-        console.log('🎯 LIPA LATER DETECTED - IMMEDIATE REDIRECT');
+        console.log('🎯 LIPA LATER DETECTED - Navigating to LipaLaterDetailsScreen');
         console.log('📱 Amount:', amtValue);
-        console.log('🔄 Preventing double navigation with flag');
+        console.log('📍 Route name: LipaLaterDetailsScreen');
+        console.log('📝 Route params:', { 
+          amount: amtValue.toString(),
+          riderId: effectiveRiderId
+        });
         
-        // ✅ SET FLAG IMMEDIATELY to prevent any race conditions
-        setIsNavigating(true);
-        
-        // Clear any error messages before navigation
+        // Clear UI state before navigation
         clearCriticalError();
         setSuccessMessage('');
         
-        // ✅ CRITICAL: Navigation params for LipaLaterDetailsScreen
-        const navigationParams = {
+        // Direct navigation - React Navigation handles queue automatically
+        navigation.navigate('LipaLaterDetailsScreen', { 
           amount: amtValue.toString(),
-          riderId: effectiveRiderId,
-          method: 'LipaLater',
-          source: 'NewTripScreen',
-          timestamp: Date.now(),
-        };
-
-        console.log('📍 Navigating to LipaLaterDetailsScreen');
-        console.log('📝 Route params:', navigationParams);
-
-        try {
-          // ✅ SYNCHRONOUS NAVIGATION - React Navigation handles this
-          // This will NOT await, ensuring immediate visual feedback
-          navigation.navigate('LipaLaterDetailsScreen', navigationParams);
-          console.log('✅ Navigation call completed - screen should load now');
-          
-          // Reset state after successful navigation
-          setTimeout(() => {
-            setAmount('');
-            setSelectedMethod(null);
-            setIsNavigating(false);
-          }, 1000); // Allow time for screen transition
-
-          return; // EXIT EARLY - Don't continue to Cash/M-Pesa logic
-        } catch (navErr) {
-          console.error('❌ Navigation error:', navErr);
-          setIsNavigating(false);
-          showCriticalError(
-            'Unable to navigate to payment details. Please try again.',
-            'navigation'
-          );
-          return;
-        }
+          riderId: effectiveRiderId
+        });
+        
+        console.log('✅ Navigation to LipaLaterDetailsScreen - returned immediately');
+        return;
       }
 
-      // ═══════════════════════════════════════════════════════════════
-      // 💵 CASH / M-PESA FLOW: Save trip immediately
-      // ═══════════════════════════════════════════════════════════════
+      // ✅ CASH / M-PESA FLOW: Save trip immediately and return to Home
       setSaving(true);
       clearCriticalError();
       setSuccessMessage('');
 
+      const payload = {
+        amount: amtValue,
+        payment_channel_code: selectedMethod,
+        note: '',
+        recorded_at: new Date().toISOString(),
+      };
+
       const recordId = `trip_${effectiveRiderId}_${Date.now()}`;
       const now = Date.now();
 
+      // ✅ UNIFIED ARCHITECTURE: Using fuel pattern for consistency
+      // All fields use consistent naming convention for proper IndexedDB storage
       const offlineRecord = {
         id: recordId,
         rider_id: effectiveRiderId,
@@ -238,123 +218,155 @@ export default function NewTripScreen({ navigation, route }) {
         note: '',
         timestamp: now,
         ts: now,
-        synced: false,
-        syncStatus: 'pending',
         status: 'active',
-        recorded_at: new Date().toISOString(),
+        syncStatus: 'pending',
+        createdAt: now,
+        date: new Date().toISOString().split('T')[0],
+        created_at: new Date().toISOString(),
       };
 
-      // Save to IndexedDB
-      await indexedDbAdapter.kvSet(`trip_${recordId}`, JSON.stringify(offlineRecord));
+      console.log('💾 Saving trip entry:', {
+        recordId,
+        riderId: effectiveRiderId,
+        amount: amtValue,
+        method: selectedMethod,
+        cacheKey: `trip_history_${effectiveRiderId}`,
+      });
+
+      // ✅ DIRECT INDEXEDDB PERSISTENCE (fuel pattern)
+      // Save directly to IndexedDB using kvSet with trip_entry_ prefix
+      await indexedDbAdapter.kvSet(
+        `trip_entry_${recordId}`,
+        JSON.stringify(offlineRecord)
+      );
+      console.log('✅ Trip saved to IndexedDB with trip_entry_ prefix');
+
+      // Update cache immediately for instant UI feedback
       await updateTripHistoryCache(offlineRecord);
 
-      console.log('✅ Trip saved for:', selectedMethod);
-      console.log('📊 Trip record:', offlineRecord);
+      // Add to sync queue for background sync
+      const queueSuccess = await addToSyncQueue({
+        id: recordId,
+        type: 'trip_entry',
+        endpoint: `/trips?rider_id=${effectiveRiderId}`,
+        data: payload,
+        timestamp: new Date(),
+      });
 
-      // ✅ SUCCESS: Show message and reset
-      setSuccessMessage(
-        `✅ Trip recorded: KSh ${amtValue.toLocaleString()} via ${selectedMethod}`
-      );
+      if (!queueSuccess) {
+        console.warn('⚠️ Failed to add to queue, but local save succeeded');
+      }
 
-      // Reset form after short delay
+      // ✅ Try to sync immediately only if online
+      // Data is already safe in IndexedDB, so sync is optional
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Attempting to sync to API...');
+          const response = await api.post(
+            `/trips?rider_id=${effectiveRiderId}`,
+            payload
+          );
+
+          if (response.status === 200 || response.status === 201) {
+            console.log('✅ Synced successfully to API');
+            // Success - show brief confirmation
+            setSuccessMessage(t('success_tripRecorded') || `Trip saved! Today's total: KSh ${amtValue.toLocaleString()}.`);
+
+            // Reset form and navigate after brief success message
+            // HomeScreen will refresh on focus via useFocusEffect
+            setTimeout(() => {
+              setAmount('');
+              setSelectedMethod(null);
+              navigation.navigate('Home', { refreshFare: true });
+            }, 800);
+            return;
+          }
+        } catch (apiErr) {
+          console.warn('⚠️ API sync failed (will retry later):', {
+            status: apiErr.response?.status,
+            message: apiErr.message,
+          });
+          // API failed but data is saved and queued - that's okay
+        }
+      }
+
+      // Either offline or API sync failed - but data is safely stored in IndexedDB
+      // Show success and navigate - HomeScreen will read from cache on focus
+      setSuccessMessage(t('success_tripSaving') || 'Trip saved. Syncing...');
+
       setTimeout(() => {
         setAmount('');
         setSelectedMethod(null);
-        setSaving(false);
-        
-        // Navigate back to home or daily summary
-        navigation.navigate('HomeScreen');
-      }, 500);
-
+        navigation.navigate('Home', { refreshFare: true });
+      }, 800);
     } catch (err) {
-      console.error('❌ Error in handleSaveTrip:', err);
-      setSaving(false);
-      setIsNavigating(false);
+      console.error('❌ Save error:', err);
+      console.error('❌ Error message:', err.message);
+      console.error('❌ Error stack:', err.stack);
       showCriticalError(
-        'An error occurred while saving the trip. Please try again.',
-        'system'
+        err.message || 'Error saving trip. Please try again.',
+        'error'
       );
+    } finally {
+      setSaving(false);
     }
   };
 
-  const isFormValid = amount && selectedMethod && !saving && !isNavigating;
-
-  // ✅ HANDLE MISSING CONTEXT - Show loading state if rider ID not available
-  if (!effectiveRiderId && !criticalError) {
+  if (loading) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+      <View style={styles.container}>
         <ActivityIndicator size="large" color="#ff7a1a" />
-        <Text style={{ marginTop: 12, fontSize: 14, color: '#5b606c' }}>
-          Loading rider information...
-        </Text>
       </View>
     );
   }
 
-  // ✅ HANDLE AUTH ERROR - Show error with back button
-  if (criticalError && criticalError.includes('not loaded')) {
+  if (riderIdError) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}>
-        <Text style={{ fontSize: 16, color: '#c62828', marginBottom: 16, textAlign: 'center' }}>
-          ❌ {criticalError}
-        </Text>
-        <TouchableOpacity 
-          style={[styles.saveButton, { marginTop: 0 }]}
-          onPress={() => navigation.navigate('HomeScreen')}
-        >
-          <Text style={styles.saveButtonText}>Go to Home</Text>
-        </TouchableOpacity>
+      <View style={styles.container}>
+        <Text style={styles.errorText}>Unable to load rider information</Text>
       </View>
     );
   }
 
   return (
-    <ScrollView 
-      style={styles.container}
-      contentContainerStyle={{ paddingBottom: 20 }}
-      keyboardShouldPersistTaps="handled"
-    >
-      {/* HEADER */}
-      <Text style={styles.screenTitle}>Record Trip</Text>
-      <Text style={styles.screenSubtitle}>SB-05 Trip Entry</Text>
+    <ScrollView style={styles.container}>
+      <BackLink label="← Home" onPress={() => navigation.navigate('Home')} />
 
-      {/* ERROR MESSAGES */}
+      <Text style={styles.screenTitle}>Record Trip</Text>
+      <Text style={styles.screenSubtitle}>Add a new trip to today's total</Text>
+
+      {/* DEBUG: Show current state */}
+      {__DEV__ && (
+        <View style={[styles.alert, { backgroundColor: '#e3f2fd', marginBottom: 12 }]}>
+          <Text style={{ fontSize: 10, color: '#1565c0', fontWeight: '600' }}>
+            DEBUG: Amount={amount}, Method={selectedMethod}, RiderId={effectiveRiderId ? 'SET' : 'NONE'}
+          </Text>
+        </View>
+      )}
+
       {criticalError && (
         <View style={[styles.alert, styles.alertError]}>
-          <Text style={{ color: '#c62828', fontSize: 13, fontWeight: '600' }}>
-            ❌ {criticalError}
-          </Text>
+          <Text style={styles.alertText}>⚠️ {criticalError}</Text>
         </View>
       )}
 
-      {/* SUCCESS MESSAGES */}
       {successMessage && (
         <View style={[styles.alert, styles.alertSuccess]}>
-          <Text style={{ color: '#2e7d32', fontSize: 13, fontWeight: '600' }}>
-            {successMessage}
-          </Text>
+          <Text style={styles.alertText}>✅ {successMessage}</Text>
         </View>
       )}
 
-      {/* AMOUNT INPUT */}
-      <View style={styles.fieldGroup}>
-        <Text style={styles.label}>Fare Amount (KSh)</Text>
-        <View style={styles.inputWrapper}>
-          <TextInput
-            style={styles.input}
-            placeholder="0"
-            placeholderTextColor="#ccc"
-            value={amount}
-            onChangeText={setAmount}
-            keyboardType="decimal-pad"
-            editable={!saving && !isNavigating}
-          />
-          <Text style={styles.inputUnit}>KSh</Text>
-        </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Fare Amount</Text>
+        <NumericKeypad 
+          value={amount} 
+          onChange={setAmount}
+          currencyLabel="KSh"
+          maxLength={10}
+        />
       </View>
 
-      {/* PAYMENT METHOD SELECTION */}
-      <View style={styles.fieldGroup}>
+      <View style={styles.card}>
         <Text style={styles.label}>Payment Method</Text>
         <View style={styles.methodGrid}>
           {PAYMENT_METHODS.map(method => (
@@ -366,7 +378,6 @@ export default function NewTripScreen({ navigation, route }) {
               ]}
               onPress={() => handlePaymentMethodSelect(method.key)}
               activeOpacity={0.7}
-              disabled={saving || isNavigating}
             >
               <Text style={styles.methodEmoji}>{method.emoji}</Text>
               <Text style={styles.methodLabel}>{method.label}</Text>
@@ -375,40 +386,18 @@ export default function NewTripScreen({ navigation, route }) {
         </View>
       </View>
 
-      {/* SAVE BUTTON - WITH LOADING STATE */}
       <TouchableOpacity
-        style={[
-          styles.saveButton,
-          !isFormValid && styles.saveButtonDisabled,
-          isNavigating && styles.saveButtonNavigating,
-        ]}
+        style={[styles.saveButton, saving && styles.saveButtonDisabled]}
         onPress={handleSaveTrip}
-        disabled={!isFormValid}
+        disabled={saving}
         activeOpacity={0.8}
       >
-        {saving || isNavigating ? (
-          <>
-            <ActivityIndicator size="small" color="#fff" />
-            <Text style={[styles.saveButtonText, { marginLeft: 8 }]}>
-              {isNavigating ? 'Redirecting...' : 'Saving...'}
-            </Text>
-          </>
+        {saving ? (
+          <ActivityIndicator size="small" color="#fff" />
         ) : (
           <Text style={styles.saveButtonText}>Save Trip</Text>
         )}
       </TouchableOpacity>
-
-      {/* DEBUG INFO - Only in development */}
-      {process.env.NODE_ENV === 'development' && (
-        <View style={styles.debugInfo}>
-          <Text style={styles.debugLabel}>Debug Info:</Text>
-          <Text style={styles.debugText}>Rider ID: {effectiveRiderId}</Text>
-          <Text style={styles.debugText}>Amount: {amount}</Text>
-          <Text style={styles.debugText}>Method: {selectedMethod}</Text>
-          <Text style={styles.debugText}>Saving: {saving ? 'yes' : 'no'}</Text>
-          <Text style={styles.debugText}>Navigating: {isNavigating ? 'yes' : 'no'}</Text>
-        </View>
-      )}
     </ScrollView>
   );
 }
@@ -442,108 +431,75 @@ const styles = StyleSheet.create({
   alertSuccess: {
     backgroundColor: '#e8f5e9',
   },
-  fieldGroup: {
-    marginBottom: 20,
+  alertText: {
+    fontSize: 13,
+    color: '#1a1c20',
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 14,
   },
   label: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#5b606c',
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-    paddingRight: 12,
-  },
-  input: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    fontSize: 16,
+    fontWeight: '700',
     color: '#1a1c20',
+    marginBottom: 12,
   },
-  inputUnit: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#5b606c',
-  },
+
+  // ✅ UPDATED: Reduced button sizes to match numeric keypad dimensions
   methodGrid: {
+    display: 'flex',
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
+    gap: 8,
   },
   methodTile: {
     flex: 1,
-    aspectRatio: 1,
     backgroundColor: '#fff',
-    borderRadius: 12,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#e7e4db',
-    justifyContent: 'center',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
     alignItems: 'center',
-    padding: 8,
+    justifyContent: 'center',
   },
   methodTileSelected: {
     borderColor: '#ff7a1a',
-    backgroundColor: '#fff7f0',
+    backgroundColor: '#fff6ee',
   },
   methodEmoji: {
-    fontSize: 32,
+    fontSize: 18,
     marginBottom: 4,
   },
   methodLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
-    color: '#1a1c20',
     textAlign: 'center',
+    color: '#1a1c20',
   },
   saveButton: {
     backgroundColor: '#ff7a1a',
-    borderRadius: 12,
     paddingVertical: 14,
-    marginTop: 8,
-    flexDirection: 'row',
-    justifyContent: 'center',
+    borderRadius: 12,
     alignItems: 'center',
+    marginBottom: 20,
   },
   saveButtonDisabled: {
-    backgroundColor: '#ccc',
     opacity: 0.6,
-  },
-  saveButtonNavigating: {
-    backgroundColor: '#e5650a',
   },
   saveButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
-    marginLeft: 0,
   },
-  debugInfo: {
+  errorText: {
+    fontSize: 14,
+    color: '#e0453f',
+    textAlign: 'center',
     marginTop: 20,
-    padding: 10,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ccc',
-  },
-  debugLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 6,
-  },
-  debugText: {
-    fontSize: 11,
-    color: '#666',
-    marginBottom: 3,
-    fontFamily: 'monospace',
   },
 });
