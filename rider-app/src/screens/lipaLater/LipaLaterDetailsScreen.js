@@ -209,9 +209,9 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
 
       setSuccessMessage('Trip recorded! 🎉');
       
-      // ✅ NAVIGATE TO PAYMENT SUMMARY SCREEN
+      // ✅ NAVIGATE TO lIPA LATER CUSTOMERS SCREEN
       setTimeout(() => {
-        navigation.replace('PaymentSummaryScreen');
+        navigation.replace('LipaLaterCustomersScreen');
       }, 600);
 
     } catch (err) {
