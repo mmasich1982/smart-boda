@@ -235,7 +235,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
             setSuccessMessage(t('success_recordedLipaLater') || 'Lipa Later trip recorded!');
             
             setTimeout(() => {
-              navigation.navigate('PaymentSummary', { 
+              navigation.navigate('PaymentSummaryScreen', { 
                 customerId: customerId, 
                 customerData: formData 
               });
@@ -252,7 +252,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       setSuccessMessage(t('success_savedLipaLater') || 'Trip saved. Syncing...');
       
       setTimeout(() => {
-        navigation.navigate('PaymentSummary', { 
+        navigation.navigate('PaymentSummaryScreen', { 
           customerId: customerId, 
           customerData: formData 
         });

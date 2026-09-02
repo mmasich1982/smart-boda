@@ -37,7 +37,7 @@ import BatteryHistoryScreen from '../screens/energyHub/BatteryHistoryScreen';
 import ChargeBatteryHubScreen from '../screens/energyHub/ChargeBatteryHubScreen';
 
 // ============================================================================
-// TILE 2: SERVICE CABZ
+// TILE 2: SERVICE MOTORCYCLE
 // ============================================================================
 import MaintenanceHubScreen from '../screens/serviceHub/MaintenanceHubScreen';
 import MaintenanceEntryScreen from '../screens/serviceHub/MaintenanceEntryScreen';
@@ -392,7 +392,7 @@ export const MainNavigator = () => {
       />
 
       <Stack.Screen
-        name="aymentSummaryScreen"
+        name="PaymentSummaryScreen"
         component={PaymentSummaryScreen}
         options={{
           headerShown: false,
