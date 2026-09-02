@@ -579,31 +579,27 @@ const styles = StyleSheet.create({
     borderColor: '#e0453f',
   },
 
-  datePickerButton: {
-    width: '100%',
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 12,
+  dateInput: {
+    backgroundColor: '#fff',
     borderWidth: 1.5,
     borderColor: '#e7e4db',
-    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
   },
-
-  datePickerButtonError: {
-    borderColor: '#e0453f',
-  },
-
-  datePickerText: {
-    fontSize: 15,
+  dateInputText: {
+    fontSize: 14,
     color: '#1a1c20',
-    fontFamily: 'Inter',
+    fontFamily: 'Inter-Regular',
   },
-
+  dateInputPlaceholder: {
+    color: '#c7c9ce',
+  },
   calendarIcon: {
-    fontSize: 18,
+    fontSize: 16,
   },
 
   errorText: {
