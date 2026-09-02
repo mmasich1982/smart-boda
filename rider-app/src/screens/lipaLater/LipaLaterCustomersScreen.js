@@ -183,12 +183,12 @@ export default function LipaLaterCustomersScreen({ navigation }) {
   const handleRecordPayment = (customerId) => {
     const customer = customers.find(c => c.customerId === customerId);
     if (!customer) return;
-    navigation.navigate('RecordPayment', { customerId, customerData: customer });
+    navigation.navigate('RecordPaymentScreen', { customerId, customerData: customer });
   };
 
   // Handle go to ageing
   const handleGoToAgeing = () => {
-    navigation.navigate('LipaLaterAgeing');
+    navigation.navigate('LipaLaterAgeingScreen');
   };
 
   // Handle go home
