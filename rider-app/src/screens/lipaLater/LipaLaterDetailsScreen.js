@@ -648,129 +648,110 @@ const styles = StyleSheet.create({
   },
 });
 
-// Date Picker Modal Styles
-const dpStyles = StyleSheet.create({
-  overlay: {
+/* Calendar Modal Styles */
+  modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-
-  container: {
-    backgroundColor: '#f6f4ef',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingBottom: 30,
-    paddingTop: 20,
+  calendarModal: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    width: '85%',
+    maxWidth: 340,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
-
-  header: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
+  calendarHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: '#e7e4db',
-    marginBottom: 16,
   },
-
-  headerText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#1a1c20',
-    fontFamily: 'SpaceGrotesk',
-  },
-
-  displayBox: {
-    marginHorizontal: 16,
-    marginBottom: 20,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-  },
-
-  displayDate: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1a1c20',
-    textAlign: 'center',
-  },
-
-  navigationRow: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingHorizontal: 16,
-    marginBottom: 16,
-  },
-
-  navButton: {
-    flex: 1,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-    alignItems: 'center',
-  },
-
-  navButtonText: {
+  calendarNav: {
     fontSize: 13,
     fontWeight: '600',
+    color: '#ff7a1a',
+  },
+  calendarTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1a1c20',
+  },
+  weekdayRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 8,
+  },
+  weekday: {
+    width: '14.28%',
+    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '600',
     color: '#5b606c',
   },
-
-  shortcutsContainer: {
+  calendarGrid: {
     flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 16,
-    marginBottom: 20,
+    flexWrap: 'wrap',
+    marginBottom: 16,
   },
-
-  shortcutButton: {
-    flex: 1,
-    paddingVertical: 10,
-    backgroundColor: '#ffc93c',
+  calendarDay: {
+    width: '14.28%',
+    aspectRatio: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  calendarDayEmpty: {
+    width: '14.28%',
+  },
+  calendarDaySelected: {
+    backgroundColor: '#ff7a1a',
     borderRadius: 8,
-    alignItems: 'center',
   },
-
-  shortcutText: {
-    fontSize: 12,
-    fontWeight: '700',
+  calendarDayDisabled: {
+    opacity: 0.4,
+  },
+  calendarDayText: {
+    fontSize: 13,
+    fontWeight: '600',
     color: '#1a1c20',
   },
-
-  actionRow: {
-    flexDirection: 'row',
-    gap: 12,
-    paddingHorizontal: 16,
+  calendarDayTextSelected: {
+    color: '#fff',
   },
-
-  actionButton: {
-    flex: 1,
-    paddingVertical: 14,
+  calendarDayTextDisabled: {
+    color: '#c7c9ce',
+  },
+  calendarCloseBtn: {
+    backgroundColor: '#ff7a1a',
     borderRadius: 10,
+    paddingVertical: 12,
     alignItems: 'center',
   },
-
-  cancelButton: {
-    backgroundColor: '#e9dccc',
+  calendarCloseBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
   },
 
-  cancelButtonText: {
+  primaryBtn: {
+    backgroundColor: '#ff7a1a',
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  primaryBtnText: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#5b606c',
-  },
-
-  confirmButton: {
-    backgroundColor: '#ffc93c',
-  },
-
-  confirmButtonText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1a1c20',
+    color: '#fff',
   },
 });
