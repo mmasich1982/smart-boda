@@ -32,6 +32,8 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [calendarDate, setCalendarDate] = useState(new Date());
   
+  
+  
   const [formData, setFormData] = useState({
     customerName: '',
     customerPhone: '',
@@ -223,7 +225,27 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
     }
   };
 
-  const minDueDate = new Date(Date.now() + 24 * 3600000).toISOString().slice(0, 10);
+  // Calendar generation helper
+  const getDaysInMonth = (date) => {
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+  };
+
+  const getFirstDayOfMonth = (date) => {
+    return new Date(date.getFullYear(), date.getMonth(), 1).getDay();
+  };
+
+  const calendarDays = [];
+  const firstDay = getFirstDayOfMonth(calendarDate);
+  const daysInMonth = getDaysInMonth(calendarDate);
+  
+  for (let i = 0; i < firstDay; i++) {
+    calendarDays.push(null);
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    calendarDays.push(d);
+  }
+
+  const today = new Date().toISOString().split('T')[0];
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
