@@ -21,9 +21,9 @@ import {
   Alert,
   useWindowDimensions,
 } from 'react-native';
-import { RiderContext } from '../rider/RiderContext';
+import { RiderContext } from '../../rider/RiderContext';
 import { useFocusEffect } from '@react-navigation/native';
-import { indexedDbAdapter } from '../offline/adapters/indexedDbAdapter';
+import { indexedDbAdapter } from '../../offline/adapters/indexedDbAdapter';
 
 const PAYMENT_METHODS = [
   { key: 'Cash', label: 'Cash', emoji: '💵' },
