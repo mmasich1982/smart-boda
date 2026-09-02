@@ -246,6 +246,16 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
   }
 
   const today = new Date().toISOString().split('T')[0];
+  
+  // FIXED: Date selection now uses local timezone correctly
+  const handleDateSelect = (day) => {
+    const year = calendarDate.getFullYear();
+    const month = calendarDate.getMonth();
+    // Construct date in local timezone and convert to ISO string (YYYY-MM-DD)
+    const isoDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    handleFieldChange('dueDate', isoDate);
+    setShowDatePicker(false);
+  };
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
