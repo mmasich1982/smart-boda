@@ -646,7 +646,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
-});
 
 /* Calendar Modal Styles */
   modalOverlay: {
