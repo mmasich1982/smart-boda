@@ -1,9 +1,11 @@
 // rider-app/src/screens/lipaLater/RecordPaymentScreen.js
-// ✅ UPDATED: IndexedDB offline-first architecture for payment recording
+// ✅ UPDATED: 100% UI alignment with index.html
+// - Record Lipa Later Payment screen (RA-03-F)
 // - Records payments to IndexedDB cache immediately
 // - Queues for sync with background sync retry logic
 // - Network-aware with graceful offline handling
-// - UI/UX preserved exactly as original
+// - Payment Type selector (Full vs Partial)
+// - Amount validation based on remaining balance
 
 import React, { useState, useEffect } from 'react';
 import { 
@@ -19,29 +21,24 @@ import { addToSyncQueue } from '../../offline/syncQueue';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import api from '../../api/client';
 import {
-  loadLipaLaterTripFromDb,
-  saveLipaLaterTripToDb,
-  updateCustomerAfterPayment,
   loadCustomerPaymentHistory,
   saveCustomerPaymentHistory,
+  updateCustomerAfterPayment,
 } from '../../offline/lipaLaterUtils';
-import colors from '../../theme/colors';
 
 export default function RecordPaymentScreen({ route, navigation }) {
   const { customerId, customerData } = route.params || {};
   const { state } = useRider();
   const { t } = useTranslation();
   const [localRiderId, setLocalRiderId] = useState(null);
+  const [paymentType, setPaymentType] = useState('full');
   const [paymentAmount, setPaymentAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
 
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
-
-  const title = t('recordPayment') || 'Record Payment';
 
   // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
@@ -61,12 +58,34 @@ export default function RecordPaymentScreen({ route, navigation }) {
 
   const effectiveRiderId = localRiderId || state?.riderId;
 
+  // Calculate remaining balance
+  const totalPaid = customerData?.totalPaid || 0;
+  const remaining = (customerData?.totalOutstanding || 0);
+  const originalAmount = totalPaid + remaining;
+
   const handleSave = async () => {
     try {
       // Validation
-      if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
+      const amount = parseFloat(paymentAmount);
+      if (!paymentAmount || amount <= 0) {
         showCriticalError(
           t('validationError_enterValidCost') || 'Please enter a valid payment amount greater than zero.',
+          'validation'
+        );
+        return;
+      }
+
+      if (paymentType === 'full' && amount < remaining) {
+        showCriticalError(
+          `Full settlement must be at least KSh ${remaining.toLocaleString()}`,
+          'validation'
+        );
+        return;
+      }
+
+      if (paymentType === 'partial' && amount >= remaining) {
+        showCriticalError(
+          `Partial payment must be less than KSh ${remaining.toLocaleString()}`,
           'validation'
         );
         return;
@@ -94,10 +113,11 @@ export default function RecordPaymentScreen({ route, navigation }) {
 
       const now = Date.now();
       const paymentRecord = {
-        amount: parseFloat(paymentAmount),
+        amount: amount,
         date: new Date().toISOString(),
-        paymentMethod: paymentMethod,
+        paymentMethod: 'Manual', // Default method
         status: 'completed',
+        paymentType: paymentType,
         notes: notes.trim(),
       };
 
@@ -112,13 +132,12 @@ export default function RecordPaymentScreen({ route, navigation }) {
       await saveCustomerPaymentHistory(customerId, paymentHistory);
 
       // 3. Update customer record in lipaLaterCustomers cache
-      const isFullySettled = 
-        (customerData?.totalOutstanding || 0) - parseFloat(paymentAmount) <= 0;
+      const isFullySettled = remaining - amount <= 0;
       
       await updateCustomerAfterPayment(
         effectiveRiderId,
         customerId,
-        parseFloat(paymentAmount),
+        amount,
         isFullySettled
       );
 
@@ -168,12 +187,10 @@ export default function RecordPaymentScreen({ route, navigation }) {
             status: apiErr.response?.status,
             message: apiErr.message,
           });
-          // API failed but data is saved and queued - that's okay
         }
       }
 
       // Either offline or API sync failed - but data is safely stored
-      // Show success and navigate
       const syncingMsg = isFullySettled
         ? (t('success_paymentSaving') || 'Payment saved. Account settling...')
         : (t('success_paymentSaving') || 'Payment saved. Syncing...');
@@ -198,7 +215,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
-        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.title}>Record Payment</Text>
         <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
       </ScrollView>
     );
@@ -206,22 +223,32 @@ export default function RecordPaymentScreen({ route, navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
-      <Text style={styles.title}>{title}</Text>
-
-      {/* Customer Info */}
+      <BackLink 
+        onPress={() => navigation.navigate('PaymentSummary', { customerId, customerData })} 
+        label={t('backLabel') || '← Back'} 
+      />
+      <Text style={styles.title}>Record Payment</Text>
+      
+      {/* Customer Info Banner */}
       {customerData && (
-        <View style={styles.customerInfoBanner}>
-          <View>
-            <Text style={styles.customerInfoName}>{customerData.customerName}</Text>
-            <Text style={styles.customerInfoPhone}>📞 {customerData.customerPhone}</Text>
-            <Text style={styles.customerInfoOutstanding}>
-              Outstanding: KSh {(customerData.totalOutstanding || 0).toLocaleString()}
-            </Text>
-          </View>
+        <View style={styles.infoBanner}>
+          <Text style={styles.infoBannerText}>
+            📊 <Text style={{ fontWeight: '700' }}>{customerData.customerName}</Text>
+            {' · Original: '}
+            <Text style={{ fontWeight: '700' }}>KSh {originalAmount.toLocaleString()}</Text>
+            {totalPaid > 0 && (
+              <Text>
+                {' · Already paid: '}
+                <Text style={{ fontWeight: '700' }}>KSh {totalPaid.toLocaleString()}</Text>
+              </Text>
+            )}
+            {' · '}
+            <Text style={{ fontWeight: '700' }}>Remaining: KSh {remaining.toLocaleString()}</Text>
+          </Text>
         </View>
       )}
 
+      {/* Error Banner */}
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>{criticalError}</Text>
@@ -231,20 +258,68 @@ export default function RecordPaymentScreen({ route, navigation }) {
         </View>
       )}
 
+      {/* Success Message */}
       {successMessage && !saving && (
         <View style={styles.successBanner}>
           <Text style={styles.successBannerText}>✅ {successMessage}</Text>
         </View>
       )}
 
+      {/* Payment Type Selection */}
+      <View style={styles.field}>
+        <Text style={styles.label}>
+          {t('paymentType') || 'Payment Type'} <Text style={styles.required}>*</Text>
+        </Text>
+        <View style={styles.radioGroup}>
+          <TouchableOpacity
+            style={[
+              styles.radioOption,
+              paymentType === 'full' && styles.radioOptionSelected
+            ]}
+            onPress={() => setPaymentType('full')}
+            disabled={saving}
+          >
+            <View style={[
+              styles.radioCircle,
+              paymentType === 'full' && styles.radioCircleSelected
+            ]} />
+            <Text style={[
+              styles.radioLabel,
+              paymentType === 'full' && styles.radioLabelSelected
+            ]}>
+              Full Payment (complete settlement)
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.radioOption,
+              paymentType === 'partial' && styles.radioOptionSelected
+            ]}
+            onPress={() => setPaymentType('partial')}
+            disabled={saving}
+          >
+            <View style={[
+              styles.radioCircle,
+              paymentType === 'partial' && styles.radioCircleSelected
+            ]} />
+            <Text style={[
+              styles.radioLabel,
+              paymentType === 'partial' && styles.radioLabelSelected
+            ]}>
+              Partial Payment
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
       {/* Payment Amount */}
       <View style={styles.field}>
         <Text style={styles.label}>
-          {t('paymentAmount') || 'Payment Amount'} <Text style={styles.required}>*</Text>
+          {t('paymentAmount') || 'Amount Received (KSh)'} <Text style={styles.required}>*</Text>
         </Text>
         <TextInput
           style={styles.input}
-          placeholder={t('placeholder_amount') || 'e.g. 500'}
+          placeholder="0"
           placeholderTextColor="#b0a89d"
           keyboardType="decimal-pad"
           value={paymentAmount}
@@ -254,44 +329,20 @@ export default function RecordPaymentScreen({ route, navigation }) {
           }}
           editable={!saving}
         />
-        <Text style={styles.hint}>{t('enterAmountInKSh') || 'Enter amount in KSh'}</Text>
-      </View>
-
-      {/* Payment Method */}
-      <View style={styles.field}>
-        <Text style={styles.label}>
-          {t('paymentMethod') || 'Payment Method'} <Text style={styles.required}>*</Text>
+        <Text style={styles.hint}>
+          {paymentType === 'full' 
+            ? `Full settlement must be at least KSh ${remaining.toLocaleString()}`
+            : `Partial payment must be less than KSh ${remaining.toLocaleString()}`
+          }
         </Text>
-        <View style={styles.methodButtonsContainer}>
-          {['Cash', 'MPesa', 'BankTransfer'].map((method) => (
-            <TouchableOpacity
-              key={method}
-              style={[
-                styles.methodButton,
-                paymentMethod === method && styles.methodButtonSelected,
-              ]}
-              onPress={() => setPaymentMethod(method)}
-              disabled={saving}
-            >
-              <Text
-                style={[
-                  styles.methodButtonText,
-                  paymentMethod === method && styles.methodButtonTextSelected,
-                ]}
-              >
-                {method}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
       </View>
 
       {/* Notes */}
       <View style={styles.field}>
-        <Text style={styles.label}>{t('notes') || 'Notes (Optional)'}</Text>
+        <Text style={styles.label}>{t('notes') || 'Notes (optional)'}</Text>
         <TextInput
           style={[styles.input, styles.notesInput]}
-          placeholder={t('placeholder_notes') || 'e.g., Partial payment for trip on 25th Aug'}
+          placeholder="e.g. Received via M-Pesa, promised balance tomorrow…"
           placeholderTextColor="#b0a89d"
           value={notes}
           onChangeText={setNotes}
@@ -310,7 +361,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
         </View>
       )}
 
-      {/* Save Button */}
+      {/* Record Payment Button */}
       <TouchableOpacity
         style={[
           styles.primaryBtn,
@@ -341,42 +392,37 @@ export default function RecordPaymentScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    padding: 20, 
-    backgroundColor: '#f6f4ef' 
+  container: {
+    flex: 1,
+    padding: 20,
+    backgroundColor: '#f6f4ef'
   },
-  title: { 
-    fontFamily: 'SpaceGrotesk-Bold', 
-    fontSize: 22, 
-    fontWeight: '700', 
-    color: '#1a1c20', 
-    marginBottom: 20 
-  },
-
-  customerInfoBanner: {
-    backgroundColor: '#e8f5e9',
-    borderLeftWidth: 4,
-    borderLeftColor: '#1e9e6f',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 20,
-  },
-  customerInfoName: {
-    fontSize: 14,
+  title: {
+    fontFamily: 'SpaceGrotesk-Bold',
+    fontSize: 22,
     fontWeight: '700',
     color: '#1a1c20',
     marginBottom: 4,
   },
-  customerInfoPhone: {
+  subtitle: {
+    fontSize: 11.5,
+    color: '#5b606c',
+    marginBottom: 16,
+    fontWeight: '500',
+  },
+
+  infoBanner: {
+    backgroundColor: '#e6f5ef',
+    borderLeftWidth: 4,
+    borderLeftColor: '#1e9e6f',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+  },
+  infoBannerText: {
     fontSize: 12,
     color: '#5b606c',
-    marginBottom: 8,
-  },
-  customerInfoOutstanding: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#ff7a1a',
+    lineHeight: 18,
   },
 
   criticalErrorBanner: {
@@ -417,28 +463,68 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
 
-  field: { 
-    marginBottom: 24 
+  field: {
+    marginBottom: 24
   },
-  label: { 
-    fontSize: 11.5, 
-    fontWeight: '700', 
-    textTransform: 'uppercase', 
-    letterSpacing: 0.04, 
-    color: '#5b606c', 
-    marginBottom: 8 
+  label: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.04,
+    color: '#5b606c',
+    marginBottom: 8
   },
-  required: { 
-    color: '#e5650a' 
+  required: {
+    color: '#e5650a'
   },
-  input: { 
-    width: '100%', 
-    padding: 14, 
-    borderRadius: 12, 
-    borderWidth: 1.5, 
-    borderColor: '#e7e4db', 
-    fontSize: 16, 
-    backgroundColor: '#fff', 
+
+  radioGroup: {
+    gap: 12,
+    marginBottom: 8,
+  },
+  radioOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 10,
+  },
+  radioOptionSelected: {
+    backgroundColor: '#fffbf5',
+    borderColor: '#ff7a1a',
+  },
+  radioCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: '#e7e4db',
+    marginRight: 12,
+  },
+  radioCircleSelected: {
+    borderColor: '#ff7a1a',
+    backgroundColor: '#ff7a1a',
+  },
+  radioLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#5b606c',
+  },
+  radioLabelSelected: {
+    color: '#1a1c20',
+  },
+
+  input: {
+    width: '100%',
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    fontSize: 16,
+    backgroundColor: '#fff',
     color: '#1a1c20',
     marginBottom: 8
   },
@@ -446,38 +532,10 @@ const styles = StyleSheet.create({
     height: 80,
     textAlignVertical: 'top',
   },
-  hint: { 
-    fontSize: 11.5, 
-    color: colors.inkSoft || '#5b606c', 
-    fontWeight: '500' 
-  },
-
-  methodButtonsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 10,
-    marginBottom: 8,
-  },
-  methodButton: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  methodButtonSelected: {
-    backgroundColor: '#ffc107',
-    borderColor: '#ffc107',
-  },
-  methodButtonText: {
-    fontSize: 12,
-    fontWeight: '700',
+  hint: {
+    fontSize: 11.5,
     color: '#5b606c',
-  },
-  methodButtonTextSelected: {
-    color: '#1a1c20',
+    fontWeight: '500'
   },
 
   offlineBanner: {
@@ -494,21 +552,21 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  primaryBtn: { 
-    backgroundColor: '#ffc107', 
-    borderRadius: 14, 
-    paddingVertical: 16, 
-    alignItems: 'center', 
+  primaryBtn: {
+    backgroundColor: '#ffc107',
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
     marginBottom: 16,
-    shadowColor: '#ffc107', 
-    shadowOpacity: 0.35, 
-    shadowRadius: 12, 
+    shadowColor: '#ffc107',
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     elevation: 6
   },
-  primaryBtnDisabled: { 
-    backgroundColor: '#e9dccc', 
-    shadowOpacity: 0 
+  primaryBtnDisabled: {
+    backgroundColor: '#e9dccc',
+    shadowOpacity: 0
   },
   btnContent: {
     flexDirection: 'row',
@@ -518,9 +576,9 @@ const styles = StyleSheet.create({
   btnSpinner: {
     marginRight: 10
   },
-  primaryBtnText: { 
-    color: '#1a1c20', 
-    fontSize: 16, 
+  primaryBtnText: {
+    color: '#1a1c20',
+    fontSize: 16,
     fontWeight: '700',
     letterSpacing: 0.02
   }
