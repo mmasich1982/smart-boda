@@ -272,8 +272,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
 
       {/* Title & Trace */}
       <Text style={styles.screenTitle}>Lipa Later Details</Text>
-      <Text style={styles.screenSub}>RA-03-D · Lipa Later Customer Entry</Text>
-
+     
       {/* Info Banner */}
       {!criticalError && (
         <View style={styles.bannerInfo}>
