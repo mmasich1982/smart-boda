@@ -347,19 +347,19 @@ export default function NewTripScreen({ navigation, route }) {
         activeOpacity={0.8}
       >
         {saving || isNavigating ? (
-          <View style={styles.loadingContainer}>
+          <>
             <ActivityIndicator size="small" color="#fff" />
-            <Text style={styles.saveButtonText}>
+            <Text style={[styles.saveButtonText, { marginLeft: 8 }]}>
               {isNavigating ? 'Redirecting...' : 'Saving...'}
             </Text>
-          </View>
+          </>
         ) : (
           <Text style={styles.saveButtonText}>Save Trip</Text>
         )}
       </TouchableOpacity>
 
-      {/* DEBUG INFO - Remove in production */}
-      {__DEV__ && (
+      {/* DEBUG INFO - Only in development */}
+      {process.env.NODE_ENV === 'development' && (
         <View style={styles.debugInfo}>
           <Text style={styles.debugLabel}>Debug Info:</Text>
           <Text style={styles.debugText}>Rider ID: {effectiveRiderId}</Text>
@@ -484,12 +484,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
-    marginLeft: 8,
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    marginLeft: 0,
   },
   debugInfo: {
     marginTop: 20,
