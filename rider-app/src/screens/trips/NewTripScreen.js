@@ -138,6 +138,9 @@ export default function NewTripScreen({ navigation }) {
       console.log('🔍 handleSaveTrip called');
       console.log('💾 Current state:', { amount, selectedMethod, effectiveRiderId });
 
+      // Clear any previous errors first
+      clearCriticalError();
+
       // Validation
       const amtValue = parseFloat(amount);
       if (!amount || amtValue <= 0) {
@@ -173,9 +176,27 @@ export default function NewTripScreen({ navigation }) {
         console.log('📍 Route name: LipaLaterDetailsScreen');
         console.log('📝 Route params:', { amount: amtValue.toString() });
         
-        // Navigate without inner try-catch to let errors propagate
-        navigation.navigate('LipaLaterDetailsScreen', { amount: amtValue.toString() });
-        console.log('✅ Navigation called successfully');
+        // ✅ NAVIGATION TO LIPA LATER DETAILS SCREEN
+        // This is the entry point for customers to record payment deferral (Lipa Later)
+        // The amount is passed as a route parameter for pre-population in the form
+        try {
+          // Clear any previous errors before navigating
+          clearCriticalError();
+          setSuccessMessage('');
+          
+          // Navigate to LipaLaterDetailsScreen with the fare amount
+          navigation.navigate('LipaLaterDetailsScreen', { 
+            amount: amtValue.toString() 
+          });
+          
+          console.log('✅ Navigation to LipaLaterDetailsScreen called successfully');
+        } catch (navErr) {
+          console.error('❌ Navigation error:', navErr);
+          showCriticalError(
+            'Failed to navigate to Lipa Later screen. Please try again.',
+            'navigation_error'
+          );
+        }
         return;
       }
 
