@@ -1,16 +1,17 @@
 // rider-app/src/screens/lipaLater/LipaLaterDetailsScreen.js
-// ✅ UPDATED: IndexedDB offline-first architecture for Lipa Later entry
+// ✅ UPDATED: UI 100% aligned with index.html · Uses DatePickerField component
 // - Records new Lipa Later trip to IndexedDB cache
 // - Creates customer record and queues for sync
 // - Network-aware with graceful offline handling
-// - UI/UX preserved exactly as original
+// - Text-based date picker (matches cleaned.html styling)
 
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, 
-  Alert, Modal, ActivityIndicator
+  Alert, ActivityIndicator
 } from 'react-native';
 import BackLink from '../../components/BackLink';
+import DatePickerField from '../../components/DatePickerField';
 import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
@@ -40,8 +41,6 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
     dueDate: '',
   });
   const [errors, setErrors] = useState({});
-  const [showDatePicker, setShowDatePicker] = useState(false);
-  const [calendarDate, setCalendarDate] = useState(new Date());
 
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
@@ -68,15 +67,6 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
     const cleaned = phone.replace(/\s+/g, '');
     // Kenyan number validation: starts with 07 or +2547
     return /^(?:0?7|(?:\+?254)?7)\d{8}$/.test(cleaned);
-  };
-
-  const formatDateToDisplay = (dateStr) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr + 'T00:00:00');
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    const y = String(date.getFullYear()).slice(-2);
-    return `${m}/${d}/${y}`;
   };
 
   const validateForm = useCallback(() => {
@@ -117,14 +107,6 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       setErrors(prev => ({ ...prev, [field]: undefined }));
     }
   }, [errors]);
-
-  const handleDateSelect = (day) => {
-    const newDate = new Date(calendarDate);
-    newDate.setDate(day);
-    const dateStr = newDate.toISOString().split('T')[0];
-    handleFieldChange('dueDate', dateStr);
-    setShowDatePicker(false);
-  };
 
   const handleSave = async () => {
     try {
@@ -269,182 +251,106 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
     }
   };
 
-  if (!effectiveRiderId || !isInitialized) {
-    return (
-      <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
-        <Text style={styles.title}>Record Lipa Later Trip</Text>
-        <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
-      </ScrollView>
-    );
-  }
-
-  const daysInMonth = new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1, 0).getDate();
-  const firstDay = new Date(calendarDate.getFullYear(), calendarDate.getMonth(), 1).getDay();
-  const today = new Date().toISOString().split('T')[0];
-  const days = [];
-  for (let i = 0; i < firstDay; i++) {
-    days.push(null);
-  }
-  for (let i = 1; i <= daysInMonth; i++) {
-    days.push(i);
-  }
+  const minDueDate = new Date(Date.now() + 24 * 3600000).toISOString().slice(0, 10);
 
   return (
-    <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
-      <Text style={styles.title}>Record Lipa Later Trip</Text>
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      <BackLink onPress={() => navigation.goBack()} />
 
+      {/* Title & Trace */}
+      <Text style={styles.screenTitle}>Lipa Later Details</Text>
+      <Text style={styles.screenSub}>RA-03-D · Lipa Later Customer Entry</Text>
+
+      {/* Info Banner */}
+      {!criticalError && (
+        <View style={styles.bannerInfo}>
+          <Text style={styles.bannerIcon}>🕒</Text>
+          <Text style={styles.bannerText}>
+            Record who owes you and when it's due — it'll show up on your Lipa Later Customers Report so you never lose track of a follow-up.
+          </Text>
+        </View>
+      )}
+
+      {/* Critical Error Banner */}
       {criticalError && (
-        <View style={styles.criticalErrorBanner}>
-          <Text style={styles.criticalErrorText}>{criticalError}</Text>
+        <View style={styles.bannerError}>
+          <Text style={styles.bannerErrorText}>⚠️ {criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
+            <Text style={styles.bannerErrorDismiss}>✕</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {successMessage && !saving && (
-        <View style={styles.successBanner}>
-          <Text style={styles.successBannerText}>✅ {successMessage}</Text>
+      {/* Success Banner */}
+      {successMessage && (
+        <View style={styles.bannerSuccess}>
+          <Text style={styles.bannerSuccessText}>✅ {successMessage}</Text>
         </View>
       )}
 
-      {/* Customer Name */}
+      {/* Customer Name Field */}
       <View style={styles.field}>
         <Text style={styles.label}>
           Customer Name <Text style={styles.required}>*</Text>
         </Text>
         <TextInput
           style={[styles.input, errors.customerName && styles.inputError]}
-          placeholder="e.g. John Kariuki"
+          placeholder="e.g. Wanjiru Kamau"
+          placeholderTextColor="#b0a89d"
           value={formData.customerName}
           onChangeText={(val) => handleFieldChange('customerName', val)}
-          editable={!saving}
         />
-        {errors.customerName && <Text style={styles.errorText}>{errors.customerName}</Text>}
+        {errors.customerName && (
+          <Text style={styles.errorText}>⚠️ {errors.customerName}</Text>
+        )}
       </View>
 
-      {/* Customer Phone */}
+      {/* Customer Phone Field */}
       <View style={styles.field}>
         <Text style={styles.label}>
-          Customer Phone <Text style={styles.required}>*</Text>
+          Customer Mobile Number <Text style={styles.required}>*</Text>
         </Text>
         <TextInput
           style={[styles.input, errors.customerPhone && styles.inputError]}
           placeholder="e.g. 0712 345 678"
+          placeholderTextColor="#b0a89d"
+          keyboardType="phone-pad"
           value={formData.customerPhone}
           onChangeText={(val) => handleFieldChange('customerPhone', val)}
-          keyboardType="phone-pad"
-          editable={!saving}
         />
-        {errors.customerPhone && <Text style={styles.errorText}>{errors.customerPhone}</Text>}
+        {errors.customerPhone && (
+          <Text style={styles.errorText}>⚠️ {errors.customerPhone}</Text>
+        )}
       </View>
 
-      {/* Amount */}
+      {/* Amount Field */}
       <View style={styles.field}>
         <Text style={styles.label}>
-          Amount (KSh) <Text style={styles.required}>*</Text>
+          Amount to be Paid Later (KSh) <Text style={styles.required}>*</Text>
         </Text>
         <TextInput
           style={[styles.input, errors.amount && styles.inputError]}
-          placeholder="e.g. 500"
+          placeholder="0"
+          placeholderTextColor="#b0a89d"
+          keyboardType="decimal-pad"
           value={formData.amount}
           onChangeText={(val) => handleFieldChange('amount', val)}
-          keyboardType="decimal-pad"
-          editable={!saving}
         />
-        {errors.amount && <Text style={styles.errorText}>{errors.amount}</Text>}
+        {errors.amount && (
+          <Text style={styles.errorText}>⚠️ {errors.amount}</Text>
+        )}
       </View>
 
-      {/* Due Date */}
-      <View style={styles.field}>
-        <Text style={styles.label}>
-          Due Date <Text style={styles.required}>*</Text>
-        </Text>
-        <TouchableOpacity
-          style={[styles.input, styles.dateInput, errors.dueDate && styles.inputError]}
-          onPress={() => setShowDatePicker(true)}
-          disabled={saving}
-        >
-          <Text style={formData.dueDate ? styles.dateText : styles.dateTextPlaceholder}>
-            {formData.dueDate ? formatDateToDisplay(formData.dueDate) : 'Select due date'}
-          </Text>
-        </TouchableOpacity>
-        {errors.dueDate && <Text style={styles.errorText}>{errors.dueDate}</Text>}
-      </View>
-
-      {/* Date Picker Modal */}
-      <Modal
-        visible={showDatePicker}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowDatePicker(false)}
-      >
-        <View style={styles.datePickerOverlay}>
-          <View style={styles.datePickerContainer}>
-            <View style={styles.datePickerHeader}>
-              <TouchableOpacity
-                onPress={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() - 1))}
-              >
-                <Text style={styles.datePickerNavButton}>◀</Text>
-              </TouchableOpacity>
-              <Text style={styles.datePickerTitle}>
-                {calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
-              </Text>
-              <TouchableOpacity
-                onPress={() => setCalendarDate(new Date(calendarDate.getFullYear(), calendarDate.getMonth() + 1))}
-              >
-                <Text style={styles.datePickerNavButton}>▶</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.calendar}>
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-                <Text key={day} style={styles.calendarDayHeader}>{day}</Text>
-              ))}
-              {days.map((day, idx) => {
-                if (day === null) {
-                  return <View key={`empty-${idx}`} style={styles.calendarDayEmpty} />;
-                }
-                const dateStr = `${calendarDate.getFullYear()}-${String(calendarDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                const isSelected = formData.dueDate === dateStr;
-                const isBeforeToday = dateStr <= today;
-
-                return (
-                  <TouchableOpacity
-                    key={day}
-                    style={[
-                      styles.calendarDay,
-                      isSelected && styles.calendarDaySelected,
-                      isBeforeToday && styles.calendarDayDisabled,
-                    ]}
-                    onPress={() => handleDateSelect(day)}
-                    disabled={isBeforeToday}
-                  >
-                    <Text
-                      style={[
-                        styles.calendarDayText,
-                        isSelected && styles.calendarDayTextSelected,
-                        isBeforeToday && styles.calendarDayTextDisabled,
-                      ]}
-                    >
-                      {day}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            <TouchableOpacity
-              style={styles.datePickerClose}
-              onPress={() => setShowDatePicker(false)}
-            >
-              <Text style={styles.datePickerCloseText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      {/* Date Picker Field Component */}
+      <DatePickerField
+        label="Payment Due Date"
+        value={formData.dueDate}
+        onChange={(val) => handleFieldChange('dueDate', val)}
+        placeholder="YYYY-MM-DD"
+        required={true}
+        hint="Must be after today — Lipa Later is for future payment, not today."
+        error={errors.dueDate}
+      />
 
       {/* Save Button */}
       <TouchableOpacity
@@ -455,10 +361,10 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       >
         <View style={styles.btnContent}>
           {saving && (
-            <ActivityIndicator size="small" color="#fff" style={styles.btnSpinner} />
+            <ActivityIndicator size="small" color="#1a1c20" style={styles.btnSpinner} />
           )}
           <Text style={styles.primaryBtnText}>
-            {saving ? 'Recording...' : 'Record Lipa Later Trip →'}
+            {saving ? 'Recording...' : 'Save →'}
           </Text>
         </View>
       </TouchableOpacity>
@@ -467,186 +373,169 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#f6f4ef' },
-  title: { 
-    fontFamily: 'SpaceGrotesk-Bold', 
-    fontSize: 22, 
-    fontWeight: '700', 
-    color: '#1a1c20', 
-    marginBottom: 20 
+  container: {
+    flex: 1,
+    backgroundColor: '#f6f4ef',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 40,
   },
 
-  criticalErrorBanner: {
+  screenTitle: {
+    fontFamily: 'SpaceGrotesk',
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#1a1c20',
+    marginBottom: 6,
+    marginTop: 8,
+  },
+
+  screenSub: {
+    fontSize: 12.5,
+    color: '#8b5cf6',
+    fontWeight: '600',
+    marginBottom: 14,
+    fontFamily: 'JetBrains Mono',
+  },
+
+  // Banner Styles (Info)
+  bannerInfo: {
+    flexDirection: 'row',
+    backgroundColor: '#f0f8ff',
+    borderWidth: 1.5,
+    borderColor: '#c8e6f5',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 20,
+  },
+
+  bannerIcon: {
+    fontSize: 18,
+    marginRight: 12,
+    marginTop: 2,
+  },
+
+  bannerText: {
+    flex: 1,
+    fontSize: 13.5,
+    lineHeight: 20,
+    color: '#0d47a1',
+    fontWeight: '500',
+  },
+
+  // Banner Styles (Error)
+  bannerError: {
     backgroundColor: '#fdecea',
     borderWidth: 1.5,
     borderColor: '#f6cac7',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 16,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
   },
-  criticalErrorText: {
-    fontSize: 12,
+
+  bannerErrorText: {
+    flex: 1,
+    fontSize: 13,
     color: '#a5312c',
     fontWeight: '600',
-    flex: 1
   },
-  dismissText: {
-    fontSize: 11,
+
+  bannerErrorDismiss: {
+    fontSize: 18,
     color: '#a5312c',
-    fontWeight: '700',
-    marginLeft: 12
+    marginLeft: 12,
   },
 
-  successBanner: {
-    backgroundColor: '#e8f5e9',
+  // Banner Styles (Success)
+  bannerSuccess: {
+    backgroundColor: '#e6f5ef',
     borderWidth: 1.5,
-    borderColor: '#a5d6a7',
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 16
-  },
-  successBannerText: {
-    fontSize: 12,
-    color: '#2e7d32',
-    fontWeight: '600'
+    borderColor: '#a8d5c4',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 20,
   },
 
-  field: { marginBottom: 20 },
-  label: { 
-    fontSize: 11.5, 
-    fontWeight: '700', 
-    textTransform: 'uppercase', 
-    color: '#5b606c', 
-    marginBottom: 8 
-  },
-  required: { color: '#e5650a' },
-  input: { 
-    padding: 14, 
-    borderRadius: 12, 
-    borderWidth: 1.5, 
-    borderColor: '#e7e4db', 
-    fontSize: 16, 
-    backgroundColor: '#fff', 
-    color: '#1a1c20',
-  },
-  inputError: { borderColor: '#e0453f' },
-  errorText: { 
-    fontSize: 12, 
-    color: '#e0453f', 
-    marginTop: 6, 
-    fontWeight: '500' 
+  bannerSuccessText: {
+    fontSize: 13,
+    color: '#1e9e6f',
+    fontWeight: '600',
   },
 
-  dateInput: { justifyContent: 'center' },
-  dateText: { fontSize: 16, color: '#1a1c20', fontWeight: '600' },
-  dateTextPlaceholder: { fontSize: 16, color: '#b0a89d' },
+  // Field Styles
+  field: {
+    marginBottom: 18,
+  },
 
-  datePickerOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  datePickerContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 20,
-    width: '90%',
-  },
-  datePickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  datePickerTitle: {
-    fontSize: 16,
+  label: {
+    fontSize: 11.5,
     fontWeight: '700',
-    color: '#1a1c20',
-  },
-  datePickerNavButton: {
-    fontSize: 20,
-    color: '#ff7a1a',
-    fontWeight: '700',
-    paddingHorizontal: 12,
-  },
-  calendar: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 16,
-  },
-  calendarDayHeader: {
-    width: '14.28%',
-    textAlign: 'center',
-    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
     color: '#5b606c',
     marginBottom: 8,
   },
-  calendarDay: {
-    width: '14.28%',
-    aspectRatio: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 8,
-  },
-  calendarDayEmpty: {
-    width: '14.28%',
-    aspectRatio: 1,
-  },
-  calendarDaySelected: {
-    backgroundColor: '#ffc107',
-  },
-  calendarDayDisabled: {
-    opacity: 0.4,
-  },
-  calendarDayText: {
-    fontSize: 13,
-    color: '#1a1c20',
-    fontWeight: '600',
-  },
-  calendarDayTextSelected: {
-    color: '#fff',
-  },
-  calendarDayTextDisabled: {
-    color: '#c7c9ce',
-  },
-  datePickerClose: {
-    backgroundColor: '#ffc107',
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  datePickerCloseText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1c20',
+
+  required: {
+    color: '#e5650a',
   },
 
-  primaryBtn: { 
-    backgroundColor: '#ffc107', 
-    borderRadius: 14, 
-    paddingVertical: 16, 
-    alignItems: 'center', 
-    marginBottom: 16,
-    marginTop: 20,
+  input: {
+    width: '100%',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    fontSize: 15,
+    backgroundColor: '#fff',
+    color: '#1a1c20',
+    fontFamily: 'Inter',
   },
-  primaryBtnDisabled: { 
-    backgroundColor: '#e9dccc', 
+
+  inputError: {
+    borderColor: '#e0453f',
   },
+
+  errorText: {
+    fontSize: 11.5,
+    color: '#e0453f',
+    marginTop: 6,
+    fontWeight: '600',
+  },
+
+  // Button Styles
+  primaryBtn: {
+    backgroundColor: '#ffc93c',
+    borderRadius: 14,
+    paddingVertical: 15,
+    marginTop: 24,
+    marginBottom: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  primaryBtnDisabled: {
+    backgroundColor: '#e9dccc',
+    opacity: 0.6,
+  },
+
   btnContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
   },
+
   btnSpinner: {
-    marginRight: 10
+    marginRight: 8,
   },
-  primaryBtnText: { 
-    color: '#1a1c20', 
-    fontSize: 16, 
+
+  primaryBtnText: {
+    color: '#1a1c20',
+    fontSize: 15,
     fontWeight: '700',
-  }
+  },
 });
