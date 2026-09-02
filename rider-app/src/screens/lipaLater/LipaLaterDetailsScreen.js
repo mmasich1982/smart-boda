@@ -422,42 +422,105 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
         )}
       </View>
 
-      {/* Date Picker Field */}
+	  {/* Due Date with Calendar Picker */}
       <View style={styles.field}>
-        <Text style={styles.label}>
-          Payment Due Date <Text style={styles.required}>*</Text>
-        </Text>
-        <TouchableOpacity
-          style={[styles.datePickerButton, errors.dueDate && styles.datePickerButtonError]}
+        <Text style={styles.label}>Payment Due Date <Text style={styles.required}>*</Text></Text>
+        <TouchableOpacity 
+          style={[styles.dateInput, errors.dueDate && styles.inputError]}
           onPress={() => setShowDatePicker(true)}
-          activeOpacity={0.7}
         >
-          <Text style={styles.datePickerText}>
-            {formData.dueDate
-              ? new Date(formData.dueDate).toLocaleDateString('en-US', {
-                  weekday: 'short',
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric'
-                })
-              : 'Select date...'}
+          <Text style={[styles.dateInputText, !formData.dueDate && styles.dateInputPlaceholder]}>
+            {formData.dueDate ? formatDateToDisplay(formData.dueDate) : 'mm/dd/yy'}
           </Text>
           <Text style={styles.calendarIcon}>📅</Text>
         </TouchableOpacity>
-        {errors.dueDate ? (
-          <Text style={styles.errorText}>⚠️ {errors.dueDate}</Text>
-        ) : (
-          <Text style={styles.hint}>Must be after today — Lipa Later is for future payment, not today.</Text>
-        )}
+        <Text style={styles.hint}>Must be after today — Lipa Later is for future payment, not today.</Text>
+        {errors.dueDate && <Text style={styles.errorMsg}>{errors.dueDate}</Text>}
       </View>
 
-      {/* Date Picker Modal */}
-      <SimpleDatePickerModal
+	  {/* Calendar Modal */}
+      <Modal
         visible={showDatePicker}
-        onClose={() => setShowDatePicker(false)}
-        onDateSelect={(date) => handleFieldChange('dueDate', date)}
-        minimumDate={minDueDate}
-      />
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowDatePicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.calendarModal}>
+            {/* Month/Year Header */}
+            <View style={styles.calendarHeader}>
+              <TouchableOpacity onPress={() => {
+                const prev = new Date(calendarDate);
+                prev.setMonth(prev.getMonth() - 1);
+                setCalendarDate(prev);
+              }}>
+                <Text style={styles.calendarNav}>← Prev</Text>
+              </TouchableOpacity>
+              <Text style={styles.calendarTitle}>
+                {calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              </Text>
+              <TouchableOpacity onPress={() => {
+                const next = new Date(calendarDate);
+                next.setMonth(next.getMonth() + 1);
+                setCalendarDate(next);
+              }}>
+                <Text style={styles.calendarNav}>Next →</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Weekday Headers */}
+            <View style={styles.weekdayRow}>
+              {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
+                <Text key={day} style={styles.weekday}>{day}</Text>
+              ))}
+            </View>
+
+            {/* Calendar Days */}
+            <View style={styles.calendarGrid}>
+              {calendarDays.map((day, idx) => {
+                if (day === null) {
+                  return <View key={`empty-${idx}`} style={styles.calendarDayEmpty} />;
+                }
+                // Construct ISO date for comparison (YYYY-MM-DD)
+                const year = calendarDate.getFullYear();
+                const month = calendarDate.getMonth();
+                const cellISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const isSelected = cellISO === formData.dueDate;
+                const isDisabled = cellISO <= today;
+
+                return (
+                  <TouchableOpacity
+                    key={day}
+                    style={[
+                      styles.calendarDay,
+                      isSelected && styles.calendarDaySelected,
+                      isDisabled && styles.calendarDayDisabled,
+                    ]}
+                    onPress={() => !isDisabled && handleDateSelect(day)}
+                    disabled={isDisabled}
+                  >
+                    <Text style={[
+                      styles.calendarDayText,
+                      isSelected && styles.calendarDayTextSelected,
+                      isDisabled && styles.calendarDayTextDisabled,
+                    ]}>
+                      {day}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Close Button */}
+            <TouchableOpacity
+              style={styles.calendarCloseBtn}
+              onPress={() => setShowDatePicker(false)}
+            >
+              <Text style={styles.calendarCloseBtnText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* Save Button */}
       <TouchableOpacity
