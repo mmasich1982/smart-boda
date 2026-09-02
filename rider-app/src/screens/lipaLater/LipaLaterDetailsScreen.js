@@ -1,7 +1,7 @@
 // rider-app/src/screens/lipaLater/LipaLaterDetailsScreen.js
 // ✅ FIXED: 100% UI aligned with index.html
 // ✅ Uses ModalDatePicker (native calendar, not text input)
-// ✅ Navigates to PaymentSummary (Lipa Later Customers Report) ← CORRECT FLOW
+// ✅ Navigates to PaymentSummaryScreen (NOT PaymentSummary) ← CORRECT FLOW
 // ✅ IndexedDB offline-first architecture
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -205,9 +205,10 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
 
       setSuccessMessage('Trip recorded! 🎉');
       
-      // ✅ NAVIGATE TO PAYMENT SUMMARY (Lipa Later Customers Report)
+      // ✅ NAVIGATE TO PAYMENT SUMMARY SCREEN (Lipa Later Customers Report)
+      // FIXED: Changed from 'PaymentSummary' to 'PaymentSummaryScreen' to match MainNavigator
       setTimeout(() => {
-        navigation.replace('PaymentSummary');
+        navigation.replace('PaymentSummaryScreen');
       }, 600);
 
     } catch (err) {
