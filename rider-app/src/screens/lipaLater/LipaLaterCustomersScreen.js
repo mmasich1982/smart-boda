@@ -84,8 +84,10 @@ export default function LipaLaterCustomersScreen({ navigation }) {
             if (response.data && Array.isArray(response.data.customers) && isMounted) {
               await syncLipaLaterFromApi(effectiveRiderId, response.data.customers);
               const updatedCustomers = await loadLipaLaterCustomersCache(effectiveRiderId);
-              setCustomers(updatedCustomers);
-              console.log('✅ Synced Lipa Later customers from API');
+              if (isMounted) {
+                setCustomers(updatedCustomers);
+                console.log('✅ Synced Lipa Later customers from API');
+              }
             }
           } catch (apiErr) {
             console.warn('⚠️ Failed to sync from API, using cached data:', apiErr.message);
@@ -112,7 +114,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
     return () => {
       isMounted = false;
     };
-  }, [effectiveRiderId, isInitialized, isConnected, showCriticalError, t]);
+  }, [effectiveRiderId, isInitialized]);
 
   // Filter by search term
   const filterBySearch = useCallback((items, term) => {

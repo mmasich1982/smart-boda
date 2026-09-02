@@ -5,7 +5,7 @@
 // - Network-aware with graceful fallback to cached data
 // - Preserves UI/UX exactly as original
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, 
   ActivityIndicator, Dimensions
@@ -78,10 +78,11 @@ export default function LipaLaterAgeingScreen({ navigation }) {
     }
 
     let isMounted = true;
+    let isSyncing = false;
 
     const loadAgeingData = async () => {
       try {
-        setLoading(true);
+        if (isMounted) setLoading(true);
 
         // Load ageing data from cache
         const ageing = await calculateAgeing(localRiderId);
@@ -91,10 +92,12 @@ export default function LipaLaterAgeingScreen({ navigation }) {
           console.log('✅ Loaded ageing data from cache');
         }
 
-        // Try to sync from API if online
-        if (isConnected && isMounted) {
+        // Try to sync from API if online - only if not already syncing
+        if (isConnected && isMounted && !isSyncing) {
           try {
-            setSyncing(true);
+            isSyncing = true;
+            if (isMounted) setSyncing(true);
+            
             const response = await api.get('/lipa-later/customer-list', {
               params: { rider_id: localRiderId }
             });
@@ -114,6 +117,7 @@ export default function LipaLaterAgeingScreen({ navigation }) {
             console.warn('⚠️ Failed to sync from API, using cached data:', apiErr.message);
           } finally {
             if (isMounted) setSyncing(false);
+            isSyncing = false;
           }
         }
       } catch (err) {
