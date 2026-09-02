@@ -32,7 +32,11 @@ const PAYMENT_METHODS = [
 ];
 
 export default function NewTripScreen({ navigation, route }) {
-  const { riderId, mobileNumber } = useContext(RiderContext);
+  // ✅ SAFER CONTEXT ACCESS with optional chaining and fallback values
+  const contextValue = useContext(RiderContext);
+  const riderId = contextValue?.riderId || null;
+  const mobileNumber = contextValue?.mobileNumber || null;
+  
   const { width } = useWindowDimensions();
 
   // ✅ STATE MANAGEMENT
@@ -44,11 +48,18 @@ export default function NewTripScreen({ navigation, route }) {
   const [successMessage, setSuccessMessage] = useState('');
   const [effectiveRiderId, setEffectiveRiderId] = useState(null);
 
-  // ✅ SYNC RIDER ID
+  // ✅ SYNC RIDER ID - with comprehensive validation
   useEffect(() => {
     if (riderId) {
       setEffectiveRiderId(riderId);
       console.log('✅ Rider ID set:', riderId);
+      clearCriticalError();
+    } else {
+      console.warn('⚠️ No Rider ID available from context');
+      showCriticalError(
+        'Rider information not loaded. Please navigate back to Home and try again.',
+        'auth'
+      );
     }
   }, [riderId]);
 
@@ -267,6 +278,35 @@ export default function NewTripScreen({ navigation, route }) {
   };
 
   const isFormValid = amount && selectedMethod && !saving && !isNavigating;
+
+  // ✅ HANDLE MISSING CONTEXT - Show loading state if rider ID not available
+  if (!effectiveRiderId && !criticalError) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#ff7a1a" />
+        <Text style={{ marginTop: 12, fontSize: 14, color: '#5b606c' }}>
+          Loading rider information...
+        </Text>
+      </View>
+    );
+  }
+
+  // ✅ HANDLE AUTH ERROR - Show error with back button
+  if (criticalError && criticalError.includes('not loaded')) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center', padding: 20 }]}>
+        <Text style={{ fontSize: 16, color: '#c62828', marginBottom: 16, textAlign: 'center' }}>
+          ❌ {criticalError}
+        </Text>
+        <TouchableOpacity 
+          style={[styles.saveButton, { marginTop: 0 }]}
+          onPress={() => navigation.navigate('HomeScreen')}
+        >
+          <Text style={styles.saveButtonText}>Go to Home</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <ScrollView 
