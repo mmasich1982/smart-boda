@@ -301,7 +301,7 @@ export default function DailyTradeSummaryScreen({ navigation, route }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink label="← Home" onPress={() => navigation.navigate('Home')} />
+      <BackLink label="← Home" onPress={() => navigation.navigate('Dashboard')} />
 
       <Text style={styles.screenTitle}>My Daily Trade Summary</Text>
 
@@ -364,7 +364,7 @@ export default function DailyTradeSummaryScreen({ navigation, route }) {
                 🕒 <Text style={styles.hintBold}>{pendingLipaLater.length} Lipa Later Trip{pendingLipaLater.length === 1 ? '' : 's'} Pending</Text>: Awaiting customer payment. Tap{' '}
                 <Text
                   style={styles.hintLink}
-                  onPress={() => navigation.navigate('LipaLaterCustomers')}
+                  onPress={() => navigation.navigate('LipaLaterCustomersScreen')}
                 >
                   View Lipa Later →
                 </Text>{' '}
