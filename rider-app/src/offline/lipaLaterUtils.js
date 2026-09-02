@@ -355,6 +355,12 @@ export async function getOrCreateCustomer(riderId, customerData, amount) {
       // Update pending trip count
       existing.pendingTrips = (existing.pendingTrips || 0) + 1;
       existing.totalOutstanding = (existing.totalOutstanding || 0) + amount;
+      // Update due date if the new transaction has a different due date
+      if (customerData.dueDate && customerData.dueDate > (existing.dueDate || '')) {
+        existing.dueDate = customerData.dueDate;
+      }
+      existing.lastTransactionDate = new Date().toISOString();
+      await saveLipaLaterCustomersCache(riderId, customers);
       return existing;
     }
 
@@ -364,14 +370,18 @@ export async function getOrCreateCustomer(riderId, customerData, amount) {
       customerName: customerData.customerName,
       customerPhone: customerData.customerPhone,
       totalOutstanding: amount,
+      totalPaid: 0,
       totalSettled: 0,
       pendingTrips: 1,
       settledTrips: 0,
       overdueCount: 0,
       dueTodayCount: 0,
       lastTransactionDate: new Date().toISOString(),
-      createdAt: new Date().toISOString(),
+      createdAt: customerData.createdAt || new Date().toISOString(),
+      tripDate: customerData.tripDate || new Date().toISOString().split('T')[0],
+      dueDate: customerData.dueDate || new Date().toISOString().split('T')[0],
       settled: false,
+      payments: [],
     };
 
     customers.unshift(newCustomer);

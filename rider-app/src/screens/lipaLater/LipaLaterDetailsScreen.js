@@ -161,13 +161,16 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       // ✅ SAVE TRIP TO INDEXED DB
       await saveLipaLaterTripToDb(tripId, lipaLaterTrip);
 
-      // ✅ CREATE OR UPDATE CUSTOMER RECORD
+      // ✅ CREATE OR UPDATE CUSTOMER RECORD WITH DUE DATE
       await getOrCreateCustomer(
         effectiveRiderId,
         {
           customerId: customerId,
           customerName: formData.customerName.trim(),
           customerPhone: formData.customerPhone.trim(),
+          dueDate: formData.dueDate,
+          tripDate: new Date().toISOString().split('T')[0],
+          createdAt: new Date().toISOString(),
         },
         parseFloat(formData.amount)
       );
