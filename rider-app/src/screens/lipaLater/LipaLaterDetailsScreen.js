@@ -21,116 +21,6 @@ import {
   getOrCreateCustomer,
 } from '../../offline/lipaLaterUtils';
 
-// Simple Date Picker Modal Component
-function SimpleDatePickerModal({ visible, onClose, onDateSelect, minimumDate }) {
-  const [currentDate, setCurrentDate] = useState(minimumDate);
-  const minDate = new Date(minimumDate);
-  const maxDate = new Date();
-  maxDate.setFullYear(maxDate.getFullYear() + 5);
-
-  const handleDateChange = (offset) => {
-    const newDate = new Date(currentDate);
-    newDate.setDate(newDate.getDate() + offset);
-    if (newDate >= minDate && newDate <= maxDate) {
-      setCurrentDate(newDate.toISOString().split('T')[0]);
-    }
-  };
-
-  const displayDate = new Date(currentDate);
-  const dateString = displayDate.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={dpStyles.overlay}>
-        <View style={dpStyles.container}>
-          {/* Header */}
-          <View style={dpStyles.header}>
-            <Text style={dpStyles.headerText}>Select Due Date</Text>
-          </View>
-
-          {/* Date Display */}
-          <View style={dpStyles.displayBox}>
-            <Text style={dpStyles.displayDate}>{dateString}</Text>
-          </View>
-
-          {/* Navigation */}
-          <View style={dpStyles.navigationRow}>
-            <TouchableOpacity 
-              style={dpStyles.navButton}
-              onPress={() => handleDateChange(-7)}
-            >
-              <Text style={dpStyles.navButtonText}>← Prev Week</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={dpStyles.navButton}
-              onPress={() => handleDateChange(7)}
-            >
-              <Text style={dpStyles.navButtonText}>Next Week →</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Quick shortcuts */}
-          <View style={dpStyles.shortcutsContainer}>
-            <TouchableOpacity 
-              style={dpStyles.shortcutButton}
-              onPress={() => {
-                const tomorrow = new Date();
-                tomorrow.setDate(tomorrow.getDate() + 1);
-                setCurrentDate(tomorrow.toISOString().split('T')[0]);
-              }}
-            >
-              <Text style={dpStyles.shortcutText}>Tomorrow</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={dpStyles.shortcutButton}
-              onPress={() => {
-                const nextWeek = new Date();
-                nextWeek.setDate(nextWeek.getDate() + 7);
-                setCurrentDate(nextWeek.toISOString().split('T')[0]);
-              }}
-            >
-              <Text style={dpStyles.shortcutText}>+7 days</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={dpStyles.shortcutButton}
-              onPress={() => {
-                const nextMonth = new Date();
-                nextMonth.setMonth(nextMonth.getMonth() + 1);
-                setCurrentDate(nextMonth.toISOString().split('T')[0]);
-              }}
-            >
-              <Text style={dpStyles.shortcutText}>+30 days</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Action Buttons */}
-          <View style={dpStyles.actionRow}>
-            <TouchableOpacity 
-              style={[dpStyles.actionButton, dpStyles.cancelButton]}
-              onPress={onClose}
-            >
-              <Text style={dpStyles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[dpStyles.actionButton, dpStyles.confirmButton]}
-              onPress={() => {
-                onDateSelect(currentDate);
-                onClose();
-              }}
-            >
-              <Text style={dpStyles.confirmButtonText}>Confirm</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
 
 export default function LipaLaterDetailsScreen({ navigation, route }) {
   const { state } = useRider();
@@ -140,6 +30,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [calendarDate, setCalendarDate] = useState(new Date());
   
   const [formData, setFormData] = useState({
     customerName: '',
