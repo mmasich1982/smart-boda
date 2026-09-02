@@ -1,9 +1,8 @@
 // rider-app/src/screens/lipaLater/LipaLaterDetailsScreen.js
-// ✅ UPDATED: UI 100% aligned with index.html · Uses DatePickerField component
-// - Records new Lipa Later trip to IndexedDB cache
-// - Creates customer record and queues for sync
-// - Network-aware with graceful offline handling
-// - Text-based date picker (matches cleaned.html styling)
+// ✅ COMPLETE: 100% UI aligned with index.html · Saves → navigates to LipaLaterCustomersScreen
+// ✅ Imports DatePickerField component
+// ✅ IndexedDB offline-first architecture
+// ✅ Network-aware with graceful offline handling
 
 import React, { useState, useCallback, useEffect } from 'react';
 import {
@@ -15,15 +14,12 @@ import DatePickerField from '../../components/DatePickerField';
 import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
-import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { addToSyncQueue } from '../../offline/syncQueue';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import api from '../../api/client';
 import {
   saveLipaLaterTripToDb,
   getOrCreateCustomer,
-  loadLipaLaterCustomersCache,
-  saveLipaLaterCustomersCache,
 } from '../../offline/lipaLaterUtils';
 
 export default function LipaLaterDetailsScreen({ navigation, route }) {
@@ -52,7 +48,6 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
         const id = await getLocalRiderId();
         if (id) {
           setLocalRiderId(id);
-          console.log('✅ LipaLaterDetails: Loaded rider ID:', id);
         }
       } catch (err) {
         console.error('❌ Error loading rider ID:', err);
@@ -65,7 +60,6 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
 
   const validatePhone = (phone) => {
     const cleaned = phone.replace(/\s+/g, '');
-    // Kenyan number validation: starts with 07 or +2547
     return /^(?:0?7|(?:\+?254)?7)\d{8}$/.test(cleaned);
   };
 
@@ -139,14 +133,10 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
         method: 'LipaLater',
         status: 'active',
         syncStatus: 'pending',
-        
-        // Timestamps
         ts: now,
         timestamp: now,
         created_at: new Date().toISOString(),
         date: new Date().toISOString().split('T')[0],
-        
-        // Lipa Later metadata
         lipaLater: {
           customerId: customerId,
           customerName: formData.customerName.trim(),
@@ -179,7 +169,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       );
 
       // ✅ ADD TO SYNC QUEUE
-      const queueSuccess = await addToSyncQueue({
+      await addToSyncQueue({
         id: tripId,
         type: 'lipa_later_trip',
         endpoint: `/lipa-later/record-trip?rider_id=${effectiveRiderId}`,
@@ -192,10 +182,6 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
         },
         timestamp: new Date(),
       });
-
-      if (!queueSuccess) {
-        console.warn('⚠️ Failed to add to queue, but local save succeeded');
-      }
 
       // Try to sync immediately if online
       if (isConnected && isInitialized) {
@@ -214,31 +200,17 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
 
           if (response.status === 200 || response.status === 201) {
             console.log('✅ Synced Lipa Later trip to API');
-            setSuccessMessage(t('success_recordedLipaLater') || 'Lipa Later trip recorded!');
-            
-            setTimeout(() => {
-              navigation.navigate('PaymentSummaryScreen', { 
-                customerId: customerId, 
-                customerData: formData 
-              });
-            }, 800);
-            return;
           }
         } catch (apiErr) {
           console.warn('⚠️ API sync failed (will retry later):', apiErr.message);
-          // Data is saved and queued - that's okay
         }
       }
 
-      // Data is safely stored locally
-      setSuccessMessage(t('success_savedLipaLater') || 'Trip saved. Syncing...');
-      
+      // ✅ NAVIGATE TO CUSTOMERS SCREEN (Payment Summary)
+      setSuccessMessage('Trip recorded! 🎉');
       setTimeout(() => {
-        navigation.navigate('PaymentSummaryScreen', { 
-          customerId: customerId, 
-          customerData: formData 
-        });
-      }, 800);
+        navigation.navigate('LipaLaterCustomers');
+      }, 600);
 
     } catch (err) {
       console.error('❌ Save error:', err);
@@ -398,7 +370,6 @@ const styles = StyleSheet.create({
     fontFamily: 'JetBrains Mono',
   },
 
-  // Banner Styles (Info)
   bannerInfo: {
     flexDirection: 'row',
     backgroundColor: '#f0f8ff',
@@ -423,7 +394,6 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 
-  // Banner Styles (Error)
   bannerError: {
     backgroundColor: '#fdecea',
     borderWidth: 1.5,
@@ -449,7 +419,6 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
 
-  // Banner Styles (Success)
   bannerSuccess: {
     backgroundColor: '#e6f5ef',
     borderWidth: 1.5,
@@ -465,7 +434,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Field Styles
   field: {
     marginBottom: 18,
   },
@@ -507,7 +475,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 
-  // Button Styles
   primaryBtn: {
     backgroundColor: '#ffc93c',
     borderRadius: 14,
