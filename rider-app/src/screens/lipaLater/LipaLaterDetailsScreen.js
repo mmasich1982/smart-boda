@@ -1,16 +1,16 @@
 // rider-app/src/screens/lipaLater/LipaLaterDetailsScreen.js
-// ✅ COMPLETE: 100% UI aligned with index.html · Saves → navigates to LipaLaterCustomersScreen
-// ✅ Imports DatePickerField component
+// ✅ FIXED: 100% UI aligned with index.html
+// ✅ Uses ModalDatePicker (native calendar, not text input)
+// ✅ Navigates to PaymentSummary (Lipa Later Customers Report) ← CORRECT FLOW
 // ✅ IndexedDB offline-first architecture
-// ✅ Network-aware with graceful offline handling
 
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, 
-  Alert, ActivityIndicator
+  ActivityIndicator
 } from 'react-native';
 import BackLink from '../../components/BackLink';
-import DatePickerField from '../../components/DatePickerField';
+import ModalDatePicker from '../../components/ModalDatePicker';
 import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
@@ -152,7 +152,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
         }
       };
 
-      console.log('💾 Recording Lipa Later trip locally:', { tripId, customerId });
+      console.log('💾 Recording Lipa Later trip:', { tripId, customerId });
 
       // ✅ SAVE TRIP TO INDEXED DB
       await saveLipaLaterTripToDb(tripId, lipaLaterTrip);
@@ -186,8 +186,8 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       // Try to sync immediately if online
       if (isConnected && isInitialized) {
         try {
-          console.log('📡 Attempting to sync Lipa Later trip to API...');
-          const response = await api.post(
+          console.log('📡 Syncing to API...');
+          await api.post(
             `/lipa-later/record-trip?rider_id=${effectiveRiderId}`,
             {
               amount: parseFloat(formData.amount),
@@ -197,19 +197,17 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
               dueDate: formData.dueDate,
             }
           );
-
-          if (response.status === 200 || response.status === 201) {
-            console.log('✅ Synced Lipa Later trip to API');
-          }
+          console.log('✅ Synced to API');
         } catch (apiErr) {
-          console.warn('⚠️ API sync failed (will retry later):', apiErr.message);
+          console.warn('⚠️ API sync will retry:', apiErr.message);
         }
       }
 
-      // ✅ NAVIGATE TO CUSTOMERS SCREEN (Payment Summary)
       setSuccessMessage('Trip recorded! 🎉');
+      
+      // ✅ NAVIGATE TO PAYMENT SUMMARY (Lipa Later Customers Report)
       setTimeout(() => {
-        navigation.navigate('LipaLaterCustomers');
+        navigation.replace('PaymentSummary');
       }, 600);
 
     } catch (err) {
@@ -313,16 +311,22 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
         )}
       </View>
 
-      {/* Date Picker Field Component */}
-      <DatePickerField
-        label="Payment Due Date"
+      {/* ✅ MODAL DATE PICKER (NOT text input) */}
+      <ModalDatePicker
         value={formData.dueDate}
         onChange={(val) => handleFieldChange('dueDate', val)}
-        placeholder="YYYY-MM-DD"
+        minimumDate={minDueDate}
+        label="Payment Due Date"
         required={true}
-        hint="Must be after today — Lipa Later is for future payment, not today."
-        error={errors.dueDate}
+        placeholder="Select date..."
       />
+
+      {/* Date hint */}
+      {errors.dueDate ? (
+        <Text style={styles.errorText}>⚠️ {errors.dueDate}</Text>
+      ) : (
+        <Text style={styles.hint}>Must be after today — Lipa Later is for future payment, not today.</Text>
+      )}
 
       {/* Save Button */}
       <TouchableOpacity
@@ -473,6 +477,13 @@ const styles = StyleSheet.create({
     color: '#e0453f',
     marginTop: 6,
     fontWeight: '600',
+  },
+
+  hint: {
+    fontSize: 12,
+    color: '#5b606c',
+    marginTop: 6,
+    fontWeight: '500',
   },
 
   primaryBtn: {
