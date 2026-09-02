@@ -1,13 +1,13 @@
 // rider-app/src/screens/lipaLater/LipaLaterDetailsScreen.js
 // ✅ FIXED: 100% UI aligned with index.html
-// ✅ Uses ModalDatePicker (native calendar, not text input)
-// ✅ Navigates to PaymentSummaryScreen (NOT PaymentSummary) ← CORRECT FLOW
+// ✅ Uses simple date picker with calendar icon
+// ✅ Navigates to PaymentSummaryScreen correctly
 // ✅ IndexedDB offline-first architecture
 
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, 
-  ActivityIndicator, Modal
+  ActivityIndicator, Modal, FlatList
 } from 'react-native';
 import BackLink from '../../components/BackLink';
 import { useRider } from '../../rider/RiderContext';
@@ -21,185 +21,109 @@ import {
   getOrCreateCustomer,
 } from '../../offline/lipaLaterUtils';
 
-// ✅ Custom Date Picker Modal Component
-function DatePickerModal({ visible, onClose, onDateSelect, minimumDate }) {
-  const [selectedDate, setSelectedDate] = useState(minimumDate);
-  const today = new Date();
+// Simple Date Picker Modal Component
+function SimpleDatePickerModal({ visible, onClose, onDateSelect, minimumDate }) {
+  const [currentDate, setCurrentDate] = useState(minimumDate);
   const minDate = new Date(minimumDate);
+  const maxDate = new Date();
+  maxDate.setFullYear(maxDate.getFullYear() + 5);
 
-  const handleDateChange = (newDate) => {
-    if (newDate >= minDate) {
-      setSelectedDate(newDate.toISOString().split('T')[0]);
+  const handleDateChange = (offset) => {
+    const newDate = new Date(currentDate);
+    newDate.setDate(newDate.getDate() + offset);
+    if (newDate >= minDate && newDate <= maxDate) {
+      setCurrentDate(newDate.toISOString().split('T')[0]);
     }
   };
 
-  const currentDate = new Date(selectedDate || minimumDate);
-  const year = currentDate.getFullYear();
-  const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-  const day = String(currentDate.getDate()).padStart(2, '0');
-
-  const generateDays = () => {
-    const days = [];
-    const daysInMonth = new Date(year, parseInt(month), 0).getDate();
-    for (let i = 1; i <= daysInMonth; i++) {
-      days.push(String(i).padStart(2, '0'));
-    }
-    return days;
-  };
-
-  const generateMonths = () => {
-    return [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-  };
-
-  const generateYears = () => {
-    const years = [];
-    for (let i = year; i <= year + 10; i++) {
-      years.push(i.toString());
-    }
-    return years;
-  };
+  const displayDate = new Date(currentDate);
+  const dateString = displayDate.toLocaleDateString('en-US', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={datePickerStyles.overlay}>
-        <View style={datePickerStyles.container}>
-          <View style={datePickerStyles.header}>
-            <Text style={datePickerStyles.title}>Select Due Date</Text>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={dpStyles.overlay}>
+        <View style={dpStyles.container}>
+          {/* Header */}
+          <View style={dpStyles.header}>
+            <Text style={dpStyles.headerText}>Select Due Date</Text>
           </View>
 
           {/* Date Display */}
-          <View style={datePickerStyles.displayRow}>
-            <Text style={datePickerStyles.displayText}>
-              {new Date(`${year}-${month}-${day}`).toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-              })}
-            </Text>
+          <View style={dpStyles.displayBox}>
+            <Text style={dpStyles.displayDate}>{dateString}</Text>
           </View>
 
-          {/* Picker Row */}
-          <View style={datePickerStyles.pickerRow}>
-            {/* Day Picker */}
-            <View style={datePickerStyles.pickerColumn}>
-              <Text style={datePickerStyles.pickerLabel}>Day</Text>
-              <ScrollView 
-                style={datePickerStyles.pickerScroll}
-                showsVerticalScrollIndicator={false}
-                scrollEventThrottle={16}
-              >
-                {generateDays().map((d) => {
-                  const isSelected = day === d;
-                  return (
-                    <TouchableOpacity
-                      key={d}
-                      style={[
-                        datePickerStyles.pickerItem,
-                        isSelected && datePickerStyles.pickerItemSelected
-                      ]}
-                      onPress={() => handleDateChange(new Date(`${year}-${month}-${d}`))}
-                    >
-                      <Text style={[
-                        datePickerStyles.pickerItemText,
-                        isSelected && datePickerStyles.pickerItemTextSelected
-                      ]}>
-                        {d}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
+          {/* Navigation */}
+          <View style={dpStyles.navigationRow}>
+            <TouchableOpacity 
+              style={dpStyles.navButton}
+              onPress={() => handleDateChange(-7)}
+            >
+              <Text style={dpStyles.navButtonText}>← Prev Week</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={dpStyles.navButton}
+              onPress={() => handleDateChange(7)}
+            >
+              <Text style={dpStyles.navButtonText}>Next Week →</Text>
+            </TouchableOpacity>
+          </View>
 
-            {/* Month Picker */}
-            <View style={datePickerStyles.pickerColumn}>
-              <Text style={datePickerStyles.pickerLabel}>Month</Text>
-              <ScrollView 
-                style={datePickerStyles.pickerScroll}
-                showsVerticalScrollIndicator={false}
-                scrollEventThrottle={16}
-              >
-                {generateMonths().map((m, i) => {
-                  const monthNum = String(i + 1).padStart(2, '0');
-                  const isSelected = month === monthNum;
-                  return (
-                    <TouchableOpacity
-                      key={m}
-                      style={[
-                        datePickerStyles.pickerItem,
-                        isSelected && datePickerStyles.pickerItemSelected
-                      ]}
-                      onPress={() => {
-                        const daysInNewMonth = new Date(year, i + 1, 0).getDate();
-                        const newDay = Math.min(parseInt(day), daysInNewMonth);
-                        handleDateChange(new Date(`${year}-${monthNum}-${String(newDay).padStart(2, '0')}`));
-                      }}
-                    >
-                      <Text style={[
-                        datePickerStyles.pickerItemText,
-                        isSelected && datePickerStyles.pickerItemTextSelected
-                      ]}>
-                        {m}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-
-            {/* Year Picker */}
-            <View style={datePickerStyles.pickerColumn}>
-              <Text style={datePickerStyles.pickerLabel}>Year</Text>
-              <ScrollView 
-                style={datePickerStyles.pickerScroll}
-                showsVerticalScrollIndicator={false}
-                scrollEventThrottle={16}
-              >
-                {generateYears().map((y) => {
-                  const isSelected = year.toString() === y;
-                  return (
-                    <TouchableOpacity
-                      key={y}
-                      style={[
-                        datePickerStyles.pickerItem,
-                        isSelected && datePickerStyles.pickerItemSelected
-                      ]}
-                      onPress={() => {
-                        const daysInNewMonth = new Date(parseInt(y), parseInt(month), 0).getDate();
-                        const newDay = Math.min(parseInt(day), daysInNewMonth);
-                        handleDateChange(new Date(`${y}-${month}-${String(newDay).padStart(2, '0')}`));
-                      }}
-                    >
-                      <Text style={[
-                        datePickerStyles.pickerItemText,
-                        isSelected && datePickerStyles.pickerItemTextSelected
-                      ]}>
-                        {y}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
+          {/* Quick shortcuts */}
+          <View style={dpStyles.shortcutsContainer}>
+            <TouchableOpacity 
+              style={dpStyles.shortcutButton}
+              onPress={() => {
+                const tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                setCurrentDate(tomorrow.toISOString().split('T')[0]);
+              }}
+            >
+              <Text style={dpStyles.shortcutText}>Tomorrow</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={dpStyles.shortcutButton}
+              onPress={() => {
+                const nextWeek = new Date();
+                nextWeek.setDate(nextWeek.getDate() + 7);
+                setCurrentDate(nextWeek.toISOString().split('T')[0]);
+              }}
+            >
+              <Text style={dpStyles.shortcutText}>+7 days</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={dpStyles.shortcutButton}
+              onPress={() => {
+                const nextMonth = new Date();
+                nextMonth.setMonth(nextMonth.getMonth() + 1);
+                setCurrentDate(nextMonth.toISOString().split('T')[0]);
+              }}
+            >
+              <Text style={dpStyles.shortcutText}>+30 days</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Action Buttons */}
-          <View style={datePickerStyles.buttonRow}>
+          <View style={dpStyles.actionRow}>
             <TouchableOpacity 
-              style={[datePickerStyles.button, datePickerStyles.buttonCancel]}
+              style={[dpStyles.actionButton, dpStyles.cancelButton]}
               onPress={onClose}
             >
-              <Text style={datePickerStyles.buttonCancelText}>Cancel</Text>
+              <Text style={dpStyles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity 
-              style={[datePickerStyles.button, datePickerStyles.buttonConfirm]}
-              onPress={() => onDateSelect(`${year}-${month}-${day}`)}
+              style={[dpStyles.actionButton, dpStyles.confirmButton]}
+              onPress={() => {
+                onDateSelect(currentDate);
+                onClose();
+              }}
             >
-              <Text style={datePickerStyles.buttonConfirmText}>Done</Text>
+              <Text style={dpStyles.confirmButtonText}>Confirm</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -215,6 +139,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
   const [localRiderId, setLocalRiderId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
   
   const [formData, setFormData] = useState({
     customerName: '',
@@ -223,14 +148,9 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
     dueDate: '',
   });
   const [errors, setErrors] = useState({});
-  const [showDatePicker, setShowDatePicker] = useState(false);
 
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
-
-  const openDatePicker = useCallback(() => {
-    setShowDatePicker(true);
-  }, []);
 
   // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
@@ -396,8 +316,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
 
       setSuccessMessage('Trip recorded! 🎉');
       
-      // ✅ NAVIGATE TO PAYMENT SUMMARY SCREEN (Lipa Later Customers Report)
-      // FIXED: Changed from 'PaymentSummary' to 'PaymentSummaryScreen' to match MainNavigator
+      // ✅ NAVIGATE TO PAYMENT SUMMARY SCREEN
       setTimeout(() => {
         navigation.replace('PaymentSummaryScreen');
       }, 600);
@@ -421,7 +340,8 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
 
       {/* Title & Trace */}
       <Text style={styles.screenTitle}>Lipa Later Details</Text>
-      
+      <Text style={styles.screenSub}>RA-03-D · Lipa Later Customer Entry</Text>
+
       {/* Info Banner */}
       {!criticalError && (
         <View style={styles.bannerInfo}>
@@ -502,26 +422,27 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
         )}
       </View>
 
-      {/* ✅ CUSTOM DATE PICKER */}
+      {/* Date Picker Field */}
       <View style={styles.field}>
         <Text style={styles.label}>
           Payment Due Date <Text style={styles.required}>*</Text>
         </Text>
         <TouchableOpacity
           style={[styles.datePickerButton, errors.dueDate && styles.datePickerButtonError]}
-          onPress={() => openDatePicker()}
+          onPress={() => setShowDatePicker(true)}
+          activeOpacity={0.7}
         >
-          <Text style={styles.datePickerButtonText}>
-            {formData.dueDate 
+          <Text style={styles.datePickerText}>
+            {formData.dueDate
               ? new Date(formData.dueDate).toLocaleDateString('en-US', {
                   weekday: 'short',
-                  year: 'numeric',
                   month: 'short',
-                  day: 'numeric'
+                  day: 'numeric',
+                  year: 'numeric'
                 })
               : 'Select date...'}
           </Text>
-          <Text style={styles.datePickerIcon}>📅</Text>
+          <Text style={styles.calendarIcon}>📅</Text>
         </TouchableOpacity>
         {errors.dueDate ? (
           <Text style={styles.errorText}>⚠️ {errors.dueDate}</Text>
@@ -531,13 +452,10 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       </View>
 
       {/* Date Picker Modal */}
-      <DatePickerModal
+      <SimpleDatePickerModal
         visible={showDatePicker}
         onClose={() => setShowDatePicker(false)}
-        onDateSelect={(date) => {
-          handleFieldChange('dueDate', date);
-          setShowDatePicker(false);
-        }}
+        onDateSelect={(date) => handleFieldChange('dueDate', date)}
         minimumDate={minDueDate}
       />
 
@@ -685,6 +603,33 @@ const styles = StyleSheet.create({
     borderColor: '#e0453f',
   },
 
+  datePickerButton: {
+    width: '100%',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    backgroundColor: '#fff',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+
+  datePickerButtonError: {
+    borderColor: '#e0453f',
+  },
+
+  datePickerText: {
+    fontSize: 15,
+    color: '#1a1c20',
+    fontFamily: 'Inter',
+  },
+
+  calendarIcon: {
+    fontSize: 18,
+  },
+
   errorText: {
     fontSize: 11.5,
     color: '#e0453f',
@@ -729,37 +674,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
   },
-
-  datePickerButton: {
-    width: '100%',
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    backgroundColor: '#fff',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  datePickerButtonError: {
-    borderColor: '#e0453f',
-  },
-
-  datePickerButtonText: {
-    fontSize: 15,
-    color: '#1a1c20',
-    fontFamily: 'Inter',
-  },
-
-  datePickerIcon: {
-    fontSize: 18,
-  },
 });
 
 // Date Picker Modal Styles
-const datePickerStyles = StyleSheet.create({
+const dpStyles = StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -770,9 +688,8 @@ const datePickerStyles = StyleSheet.create({
     backgroundColor: '#f6f4ef',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingTop: 20,
     paddingBottom: 30,
-    maxHeight: '85%',
+    paddingTop: 20,
   },
 
   header: {
@@ -780,110 +697,106 @@ const datePickerStyles = StyleSheet.create({
     paddingBottom: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#e7e4db',
+    marginBottom: 16,
   },
 
-  title: {
+  headerText: {
     fontSize: 18,
     fontWeight: '700',
     color: '#1a1c20',
     fontFamily: 'SpaceGrotesk',
   },
 
-  displayRow: {
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    backgroundColor: '#fff',
+  displayBox: {
     marginHorizontal: 16,
-    marginVertical: 12,
+    marginBottom: 20,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#e7e4db',
   },
 
-  displayText: {
-    fontSize: 14,
+  displayDate: {
+    fontSize: 16,
     fontWeight: '600',
     color: '#1a1c20',
     textAlign: 'center',
   },
 
-  pickerRow: {
+  navigationRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 10,
-    marginVertical: 16,
-    height: 200,
+    gap: 10,
+    paddingHorizontal: 16,
+    marginBottom: 16,
   },
 
-  pickerColumn: {
+  navButton: {
     flex: 1,
-    marginHorizontal: 6,
-  },
-
-  pickerLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    color: '#5b606c',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-
-  pickerScroll: {
-    flex: 1,
-  },
-
-  pickerItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e7e4db',
     alignItems: 'center',
   },
 
-  pickerItemSelected: {
+  navButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#5b606c',
+  },
+
+  shortcutsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    marginBottom: 20,
+  },
+
+  shortcutButton: {
+    flex: 1,
+    paddingVertical: 10,
     backgroundColor: '#ffc93c',
     borderRadius: 8,
+    alignItems: 'center',
   },
 
-  pickerItemText: {
-    fontSize: 14,
-    color: '#1a1c20',
-    fontWeight: '500',
-  },
-
-  pickerItemTextSelected: {
+  shortcutText: {
+    fontSize: 12,
     fontWeight: '700',
     color: '#1a1c20',
   },
 
-  buttonRow: {
+  actionRow: {
     flexDirection: 'row',
-    paddingHorizontal: 20,
     gap: 12,
-    marginTop: 16,
+    paddingHorizontal: 16,
   },
 
-  button: {
+  actionButton: {
     flex: 1,
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: 'center',
   },
 
-  buttonCancel: {
+  cancelButton: {
     backgroundColor: '#e9dccc',
   },
 
-  buttonCancelText: {
+  cancelButtonText: {
     fontSize: 15,
     fontWeight: '700',
     color: '#5b606c',
   },
 
-  buttonConfirm: {
+  confirmButton: {
     backgroundColor: '#ffc93c',
   },
 
-  buttonConfirmText: {
+  confirmButtonText: {
     fontSize: 15,
     fontWeight: '700',
     color: '#1a1c20',
