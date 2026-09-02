@@ -247,25 +247,6 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
 
   const today = new Date().toISOString().split('T')[0];
 
-  // ✅ FORMAT DATE FOR DISPLAY
-  const formatDateToDisplay = (isoDateStr) => {
-    if (!isoDateStr) return 'mm/dd/yy';
-    const date = new Date(isoDateStr + 'T00:00:00Z');
-    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(date.getUTCDate()).padStart(2, '0');
-    const year = String(date.getUTCFullYear()).slice(-2);
-    return `${month}/${day}/${year}`;
-  };
-
-  // ✅ HANDLE DATE SELECTION FROM CALENDAR
-  const handleDateSelect = (day) => {
-    const year = calendarDate.getFullYear();
-    const month = calendarDate.getMonth();
-    const iso = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    handleFieldChange('dueDate', iso);
-    setShowDatePicker(false);
-  };
-
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       <BackLink onPress={() => navigation.goBack()} />
@@ -354,150 +335,111 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
         )}
       </View>
 
-      {/* Due Date with Calendar Picker */}
+	  {/* Due Date with Calendar Picker */}
       <View style={styles.field}>
-        <Text style={styles.label}>
-          Payment Due Date <Text style={styles.required}>*</Text>
-        </Text>
+        <Text style={styles.label}>Payment Due Date <Text style={styles.required}>*</Text></Text>
         <TouchableOpacity 
-          style={[styles.datePickerButton, errors.dueDate && styles.datePickerButtonError]}
+          style={[styles.dateInput, errors.dueDate && styles.inputError]}
           onPress={() => setShowDatePicker(true)}
         >
-          <Text style={[styles.datePickerText, !formData.dueDate && { color: '#b0a89d' }]}>
-            {formData.dueDate ? formatDateToDisplay(formData.dueDate) : 'Select a date…'}
+          <Text style={[styles.dateInputText, !formData.dueDate && styles.dateInputPlaceholder]}>
+            {formData.dueDate ? formatDateToDisplay(formData.dueDate) : 'mm/dd/yy'}
           </Text>
           <Text style={styles.calendarIcon}>📅</Text>
         </TouchableOpacity>
         <Text style={styles.hint}>Must be after today — Lipa Later is for future payment, not today.</Text>
-        {errors.dueDate && <Text style={styles.errorText}>⚠️ {errors.dueDate}</Text>}
+        {errors.dueDate && <Text style={styles.errorMsg}>{errors.dueDate}</Text>}
       </View>
 
-      {/* Calendar Modal */}
+	  {/* Calendar Modal */}
       <Modal
         visible={showDatePicker}
         transparent={true}
         animationType="fade"
         onRequestClose={() => setShowDatePicker(false)}
       >
-        <View style={dpStyles.overlay}>
-          <View style={dpStyles.container}>
-            {/* Header */}
-            <View style={dpStyles.header}>
-              <Text style={dpStyles.headerText}>Select Payment Due Date</Text>
-            </View>
-
-            {/* Display Box */}
-            <View style={dpStyles.displayBox}>
-              <Text style={dpStyles.displayDate}>
-                {formData.dueDate ? formatDateToDisplay(formData.dueDate) : 'No date selected'}
-              </Text>
-            </View>
-
-            {/* Navigation */}
-            <View style={dpStyles.navigationRow}>
-              <TouchableOpacity 
-                style={dpStyles.navButton}
-                onPress={() => {
-                  const prev = new Date(calendarDate);
-                  prev.setMonth(prev.getMonth() - 1);
-                  setCalendarDate(prev);
-                }}
-              >
-                <Text style={dpStyles.navButtonText}>← Prev</Text>
+        <View style={styles.modalOverlay}>
+          <View style={styles.calendarModal}>
+            {/* Month/Year Header */}
+            <View style={styles.calendarHeader}>
+              <TouchableOpacity onPress={() => {
+                const prev = new Date(calendarDate);
+                prev.setMonth(prev.getMonth() - 1);
+                setCalendarDate(prev);
+              }}>
+                <Text style={styles.calendarNav}>← Prev</Text>
               </TouchableOpacity>
-              <Text style={{ ...dpStyles.navButtonText, flex: 1, textAlign: 'center' }}>
+              <Text style={styles.calendarTitle}>
                 {calendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
               </Text>
-              <TouchableOpacity 
-                style={dpStyles.navButton}
-                onPress={() => {
-                  const next = new Date(calendarDate);
-                  next.setMonth(next.getMonth() + 1);
-                  setCalendarDate(next);
-                }}
-              >
-                <Text style={dpStyles.navButtonText}>Next →</Text>
+              <TouchableOpacity onPress={() => {
+                const next = new Date(calendarDate);
+                next.setMonth(next.getMonth() + 1);
+                setCalendarDate(next);
+              }}>
+                <Text style={styles.calendarNav}>Next →</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Weekday Headers & Calendar Grid */}
-            <View style={{ paddingHorizontal: 16, marginBottom: 16 }}>
-              {/* Weekday Headers */}
-              <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 8 }}>
-                {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
-                  <Text key={day} style={{ width: '14.3%', textAlign: 'center', fontWeight: '600', color: '#5b606c', fontSize: 12 }}>{day}</Text>
-                ))}
-              </View>
-
-              {/* Calendar Grid */}
-              <View>
-                {Array.from({ length: Math.ceil(calendarDays.length / 7) }).map((_, weekIdx) => (
-                  <View key={`week-${weekIdx}`} style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 4 }}>
-                    {calendarDays.slice(weekIdx * 7, (weekIdx + 1) * 7).map((day, dayIdx) => {
-                      if (day === null) {
-                        return <View key={`empty-${dayIdx}`} style={{ width: '14.3%' }} />;
-                      }
-                      const year = calendarDate.getFullYear();
-                      const month = calendarDate.getMonth();
-                      const cellISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                      const isSelected = cellISO === formData.dueDate;
-                      const isDisabled = cellISO <= today;
-
-                      return (
-                        <TouchableOpacity
-                          key={`day-${day}`}
-                          style={{
-                            width: '14.3%',
-                            aspectRatio: 1,
-                            borderRadius: 8,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            backgroundColor: isSelected ? '#ffc93c' : isDisabled ? '#f0f0f0' : '#fff',
-                            borderWidth: 1,
-                            borderColor: isSelected ? '#ffc93c' : '#e7e4db',
-                          }}
-                          onPress={() => !isDisabled && handleDateSelect(day)}
-                          disabled={isDisabled}
-                        >
-                          <Text style={{
-                            fontWeight: isSelected ? '700' : '500',
-                            color: isSelected ? '#1a1c20' : isDisabled ? '#b0b0b0' : '#1a1c20',
-                            fontSize: 14,
-                          }}>
-                            {day}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                ))}
-              </View>
+            {/* Weekday Headers */}
+            <View style={styles.weekdayRow}>
+              {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(day => (
+                <Text key={day} style={styles.weekday}>{day}</Text>
+              ))}
             </View>
 
-            {/* Action Buttons */}
-            <View style={dpStyles.actionRow}>
-              <TouchableOpacity 
-                style={[dpStyles.actionButton, dpStyles.cancelButton]}
-                onPress={() => setShowDatePicker(false)}
-              >
-                <Text style={dpStyles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[dpStyles.actionButton, dpStyles.confirmButton]}
-                onPress={() => setShowDatePicker(false)}
-              >
-                <Text style={dpStyles.confirmButtonText}>Confirm</Text>
-              </TouchableOpacity>
+            {/* Calendar Days */}
+            <View style={styles.calendarGrid}>
+              {calendarDays.map((day, idx) => {
+                if (day === null) {
+                  return <View key={`empty-${idx}`} style={styles.calendarDayEmpty} />;
+                }
+                // Construct ISO date for comparison (YYYY-MM-DD)
+                const year = calendarDate.getFullYear();
+                const month = calendarDate.getMonth();
+                const cellISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const isSelected = cellISO === formData.dueDate;
+                const isDisabled = cellISO <= today;
+
+                return (
+                  <TouchableOpacity
+                    key={day}
+                    style={[
+                      styles.calendarDay,
+                      isSelected && styles.calendarDaySelected,
+                      isDisabled && styles.calendarDayDisabled,
+                    ]}
+                    onPress={() => !isDisabled && handleDateSelect(day)}
+                    disabled={isDisabled}
+                  >
+                    <Text style={[
+                      styles.calendarDayText,
+                      isSelected && styles.calendarDayTextSelected,
+                      isDisabled && styles.calendarDayTextDisabled,
+                    ]}>
+                      {day}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
+
+            {/* Close Button */}
+            <TouchableOpacity
+              style={styles.calendarCloseBtn}
+              onPress={() => setShowDatePicker(false)}
+            >
+              <Text style={styles.calendarCloseBtnText}>Done</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
 
       {/* Save Button */}
       <TouchableOpacity
-        style={[styles.primaryBtn, (saving) && styles.primaryBtnDisabled]}
+        style={[styles.primaryBtn, (saving || !formData.amount) && styles.primaryBtnDisabled]}
         onPress={handleSave}
-        disabled={saving}
+        disabled={saving || !formData.amount}
         activeOpacity={0.8}
       >
         <View style={styles.btnContent}>
