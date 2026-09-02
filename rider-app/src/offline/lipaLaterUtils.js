@@ -551,6 +551,11 @@ export async function syncLipaLaterFromApi(riderId, trips) {
 
       const customerId = trip.lipaLater.customerId;
       if (!customerMap.has(customerId)) {
+        // Calculate due date (30 days from transaction date)
+        const transactionDate = new Date(trip.ts || trip.created_at);
+        const dueDate = new Date(transactionDate);
+        dueDate.setDate(dueDate.getDate() + 30);
+        
         customerMap.set(customerId, {
           customerId,
           customerName: trip.lipaLater.customerName,
@@ -562,6 +567,10 @@ export async function syncLipaLaterFromApi(riderId, trips) {
           lastTransactionDate: trip.ts,
           createdAt: trip.created_at,
           settled: false,
+          dueDate: dueDate.toISOString().split('T')[0],
+          tripDate: transactionDate.toISOString().split('T')[0],
+          payments: [],
+          totalPaid: 0,
         });
       }
 
@@ -571,6 +580,7 @@ export async function syncLipaLaterFromApi(riderId, trips) {
 
       customer.totalOutstanding += Math.max(0, remaining);
       customer.totalSettled += (trip.lipaLater.originalAmount || 0) - Math.max(0, remaining);
+      customer.totalPaid = customer.totalSettled;
 
       if (trip.lipaLater.settled) {
         customer.settledTrips += 1;
@@ -583,6 +593,17 @@ export async function syncLipaLaterFromApi(riderId, trips) {
         new Date(customer.lastTransactionDate || 0).getTime(),
         trip.ts
       );
+
+      // Update due date to the latest transaction + 30 days
+      const transactionDate = new Date(trip.ts || trip.created_at);
+      const dueDate = new Date(transactionDate);
+      dueDate.setDate(dueDate.getDate() + 30);
+      customer.dueDate = dueDate.toISOString().split('T')[0];
+
+      // Store payment history if available
+      if (trip.lipaLater.payments && Array.isArray(trip.lipaLater.payments)) {
+        customer.payments = trip.lipaLater.payments;
+      }
 
       // Save individual trip
       await saveLipaLaterTripToDb(trip.id, trip);

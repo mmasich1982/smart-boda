@@ -63,6 +63,13 @@ export default function RecordPaymentScreen({ route, navigation }) {
   const remaining = (customerData?.totalOutstanding || 0);
   const originalAmount = totalPaid + remaining;
 
+  // ✅ AUTO-FILL TOTAL OUTSTANDING AMOUNT ON MOUNT
+  useEffect(() => {
+    if (remaining > 0 && !paymentAmount) {
+      setPaymentAmount(remaining.toString());
+    }
+  }, [remaining, paymentAmount]);
+
   const handleSave = async () => {
     try {
       // Validation
@@ -365,10 +372,10 @@ export default function RecordPaymentScreen({ route, navigation }) {
       <TouchableOpacity
         style={[
           styles.primaryBtn,
-          (saving || !paymentAmount) && styles.primaryBtnDisabled
+          saving && styles.primaryBtnDisabled
         ]}
         onPress={handleSave}
-        disabled={saving || !paymentAmount}
+        disabled={saving}
         activeOpacity={0.8}
       >
         <View style={styles.btnContent}>
