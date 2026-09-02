@@ -96,6 +96,36 @@ export default function NewTripScreen({ navigation }) {
 
   const handlePaymentMethodSelect = (methodKey) => {
     console.log('🔘 Payment method selected:', methodKey);
+    
+    // ✅ LIPA LATER: Navigate immediately to details screen
+    if (methodKey === 'LipaLater') {
+      // Validate amount before navigation
+      const amtValue = parseFloat(amount);
+      if (!amount || amtValue <= 0) {
+        showCriticalError(
+          t('validationError_fareAmountRequired') || 'Enter the fare amount first, then choose Lipa Later.',
+          'validation'
+        );
+        return;
+      }
+      
+      console.log('🎯 LIPA LATER SELECTED - Navigating immediately to LipaLaterDetailsScreen');
+      console.log('📱 Amount:', amtValue);
+      console.log('📍 Route name: LipaLaterDetailsScreen');
+      
+      // Clear UI state and navigate
+      clearCriticalError();
+      setSuccessMessage('');
+      
+      // Navigate to Lipa Later details screen
+      navigation.navigate('LipaLaterDetailsScreen', { 
+        amount: amtValue.toString(),
+        riderId: effectiveRiderId
+      });
+      return;
+    }
+    
+    // ✅ CASH/M-PESA: Just select the method, user clicks Save to record trip
     setSelectedMethod(methodKey);
   };
 
@@ -165,33 +195,10 @@ export default function NewTripScreen({ navigation }) {
         return;
       }
 
-      // ✅ CONDITIONAL FLOW: Lipa Later vs Cash/M-Pesa
+      // ✅ CONDITIONAL FLOW: Only Cash/M-Pesa reach here
+      // (Lipa Later navigates immediately when selected, never reaches this function)
       console.log('✅ All validations passed. selectedMethod:', selectedMethod);
       
-      // ✅ LIPA LATER FLOW - DIRECT NAVIGATION (NO ASYNC WAIT)
-      if (selectedMethod === 'LipaLater') {
-        console.log('🎯 LIPA LATER DETECTED - Navigating to LipaLaterDetailsScreen');
-        console.log('📱 Amount:', amtValue);
-        console.log('📍 Route name: LipaLaterDetailsScreen');
-        console.log('📝 Route params:', { 
-          amount: amtValue.toString(),
-          riderId: effectiveRiderId
-        });
-        
-        // Clear UI state before navigation
-        clearCriticalError();
-        setSuccessMessage('');
-        
-        // Direct navigation - React Navigation handles queue automatically
-        navigation.navigate('LipaLaterDetailsScreen', { 
-          amount: amtValue.toString(),
-          riderId: effectiveRiderId
-        });
-        
-        console.log('✅ Navigation to LipaLaterDetailsScreen - returned immediately');
-        return;
-      }
-
       // ✅ CASH / M-PESA FLOW: Save trip immediately and return to Home
       setSaving(true);
       clearCriticalError();
