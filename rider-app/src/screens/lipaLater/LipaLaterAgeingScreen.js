@@ -105,8 +105,10 @@ export default function LipaLaterAgeingScreen({ navigation }) {
               
               // Reload ageing data
               const updatedAgeing = await calculateAgeing(localRiderId);
-              setAgeingData(updatedAgeing);
-              console.log('✅ Synced ageing data from API');
+              if (isMounted) {
+                setAgeingData(updatedAgeing);
+                console.log('✅ Synced ageing data from API');
+              }
             }
           } catch (apiErr) {
             console.warn('⚠️ Failed to sync from API, using cached data:', apiErr.message);
@@ -135,7 +137,7 @@ export default function LipaLaterAgeingScreen({ navigation }) {
     return () => {
       isMounted = false;
     };
-  }, [localRiderId, isInitialized, isConnected, showCriticalError, t]);
+  }, [localRiderId, isInitialized]);
 
   // Filter by search term
   const filterBySearch = useCallback((customers, term) => {

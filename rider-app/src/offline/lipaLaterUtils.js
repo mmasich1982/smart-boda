@@ -175,6 +175,41 @@ export async function saveLipaLaterTripToDb(tripId, tripData) {
  * @param {string} riderId - Rider ID
  * @returns {Promise<Array>} - Array of customer records
  */
+/**
+ * Normalize customer data to ensure all required fields are present
+ * @param {Object} customer - Customer object
+ * @returns {Object} - Normalized customer object
+ */
+function normalizeCustomerData(customer) {
+  if (!customer) return customer;
+  
+  // If dueDate is missing, calculate it from lastTransactionDate or createdAt
+  if (!customer.dueDate && (customer.lastTransactionDate || customer.createdAt)) {
+    const baseDate = new Date(customer.lastTransactionDate || customer.createdAt);
+    const dueDate = new Date(baseDate);
+    dueDate.setDate(dueDate.getDate() + 30);
+    customer.dueDate = dueDate.toISOString().split('T')[0];
+  }
+  
+  // Ensure tripDate is set
+  if (!customer.tripDate && customer.createdAt) {
+    const tripDate = new Date(customer.createdAt);
+    customer.tripDate = tripDate.toISOString().split('T')[0];
+  }
+  
+  // Ensure totalPaid is set
+  if (typeof customer.totalPaid !== 'number') {
+    customer.totalPaid = customer.totalSettled || 0;
+  }
+  
+  // Ensure payments array exists
+  if (!Array.isArray(customer.payments)) {
+    customer.payments = [];
+  }
+  
+  return customer;
+}
+
 export async function loadLipaLaterCustomersCache(riderId) {
   try {
     const cacheKey = `lipa_later_customers_${riderId}`;
@@ -185,6 +220,8 @@ export async function loadLipaLaterCustomersCache(riderId) {
       try {
         items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
         if (!Array.isArray(items)) items = [];
+        // ✅ NORMALIZE ALL CUSTOMER DATA TO ENSURE dueDate IS PRESENT
+        items = items.map(normalizeCustomerData);
       } catch (parseErr) {
         console.warn('⚠️ Customers cache parse error, starting fresh');
         items = [];

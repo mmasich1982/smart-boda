@@ -15,6 +15,7 @@ import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import api from '../../api/client';
 import {
   loadLipaLaterCustomersCache,
   getPendingLipaLaterCustomers,

@@ -7,7 +7,7 @@
 // - Payment Type selector (Full vs Partial)
 // - Amount validation based on remaining balance
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   ScrollView, View, Text, TextInput, TouchableOpacity, StyleSheet, 
   ActivityIndicator, Alert 
@@ -39,6 +39,8 @@ export default function RecordPaymentScreen({ route, navigation }) {
 
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
+  
+  const hasAutoFilledRef = useRef(false);
 
   // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
@@ -63,12 +65,14 @@ export default function RecordPaymentScreen({ route, navigation }) {
   const remaining = (customerData?.totalOutstanding || 0);
   const originalAmount = totalPaid + remaining;
 
-  // ✅ AUTO-FILL TOTAL OUTSTANDING AMOUNT ON MOUNT
+  // ✅ AUTO-FILL TOTAL OUTSTANDING AMOUNT ON MOUNT - ONLY ONCE
   useEffect(() => {
-    if (remaining > 0 && !paymentAmount) {
+    if (remaining > 0 && !hasAutoFilledRef.current) {
       setPaymentAmount(remaining.toString());
+      hasAutoFilledRef.current = true;
+      console.log('✅ Auto-filled payment amount:', remaining);
     }
-  }, [remaining, paymentAmount]);
+  }, [remaining]);
 
   const handleSave = async () => {
     try {
