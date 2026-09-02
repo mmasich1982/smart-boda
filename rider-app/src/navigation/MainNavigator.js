@@ -139,12 +139,10 @@ const screenOptions = {
  */
 export const MainNavigator = () => {
   return (
-    <Stack.Navigator screenOptions={screenOptions} initialRouteName="Dashboard">
-      {/* ===== HOME SCREEN (Entry Point) - RENAMED to Dashboard to avoid circular routing ===== */}
-      {/* FIXED: Was "Home" but MainNavigator itself is the "Home" screen in OnboardingNavigator */}
-      {/* This prevents: OnboardingNavigator.Home -> MainNavigator -> MainNavigator.Home circular reference */}
+    <Stack.Navigator screenOptions={screenOptions} initialRouteName="Home">
+      {/* ===== HOME SCREEN (Entry Point) ===== */}
       <Stack.Screen
-        name="Dashboard"
+        name="Home"
         component={HomeScreen}
         options={{
           headerShown: false,

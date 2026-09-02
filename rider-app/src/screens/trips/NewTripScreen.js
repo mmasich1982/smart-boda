@@ -134,6 +134,9 @@ export default function NewTripScreen({ navigation }) {
 
   const handleSaveTrip = async () => {
     try {
+      console.log('🔍 handleSaveTrip called');
+      console.log('💾 Current state:', { amount, selectedMethod, effectiveRiderId });
+
       // Validation
       const amtValue = parseFloat(amount);
       if (!amount || amtValue <= 0) {
@@ -162,10 +165,17 @@ export default function NewTripScreen({ navigation }) {
       }
 
       // ✅ CONDITIONAL FLOW: Lipa Later vs Cash/M-Pesa
+      console.log('✅ All validations passed. selectedMethod:', selectedMethod);
       if (selectedMethod === 'LipaLater') {
-        // Navigate to Lipa Later Details screen to capture customer info
-        console.log('📱 Routing to Lipa Later Details with amount:', amtValue);
-        navigation.navigate('LipaLaterDetailsScreen', { amount: amtValue.toString() });
+        console.log('🎯 LIPA LATER DETECTED - Navigating to LipaLaterDetailsScreen');
+        console.log('📱 Amount:', amtValue);
+        try {
+          navigation.navigate('LipaLaterDetailsScreen', { amount: amtValue.toString() });
+          console.log('✅ Navigation called successfully');
+        } catch (navErr) {
+          console.error('❌ Navigation error:', navErr);
+          showCriticalError('Failed to navigate to Lipa Later. Please try again.', 'navigation');
+        }
         return;
       }
 
@@ -254,7 +264,7 @@ export default function NewTripScreen({ navigation }) {
             setTimeout(() => {
               setAmount('');
               setSelectedMethod(null);
-              navigation.navigate('Dashboard', { refreshFare: true });
+              navigation.navigate('Home', { refreshFare: true });
             }, 800);
             return;
           }
@@ -274,7 +284,7 @@ export default function NewTripScreen({ navigation }) {
       setTimeout(() => {
         setAmount('');
         setSelectedMethod(null);
-        navigation.navigate('Dashboard', { refreshFare: true });
+        navigation.navigate('Home', { refreshFare: true });
       }, 800);
     } catch (err) {
       console.error('❌ Save error:', err);
@@ -305,7 +315,7 @@ export default function NewTripScreen({ navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink label="← Home" onPress={() => navigation.navigate('Dashboard')} />
+      <BackLink label="← Home" onPress={() => navigation.navigate('Home')} />
 
       <Text style={styles.screenTitle}>Record Trip</Text>
       <Text style={styles.screenSubtitle}>Add a new trip to today's total</Text>

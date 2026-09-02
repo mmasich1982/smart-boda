@@ -301,7 +301,7 @@ export default function DailyTradeSummaryScreen({ navigation, route }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink label="← Home" onPress={() => navigation.navigate('Dashboard')} />
+      <BackLink label="← Home" onPress={() => navigation.navigate('Home')} />
 
       <Text style={styles.screenTitle}>My Daily Trade Summary</Text>
 
