@@ -44,24 +44,20 @@ function toEATString(timestamp) {
  * ============================================================================
  * SUBSCRIPTION PRICING
  * ============================================================================
- * Bi-Weekly Plan:  KSh 500  (14 days)
- * Monthly Plan:    KSh 1000 (30 days)
- * Free Trial:      2 Hours (default for new subscribers)
+ * Weekly Plan:      KSh 125  (7 days)
+ * 2-Week Plan:      KSh 250  (14 days)
+ * 3-Week Plan:      KSh 375  (21 days)
+ * Monthly Plan:     KSh 500  (30 days)
+ * FREE TRIAL:       REMOVED - Payment required immediately
  * 
  * ============================================================================
  * BUSINESS RULES
  * ============================================================================
  * 
  * FREE TRIAL:
- * • All new riders get a 2-hour free trial automatically
- * • Trial banner shown on Home Screen immediately on first load
- * • Trial status persisted in IndexedDB
- * • Can pay before or after trial expiry
- *
- * REMINDERS:
- * • Reminder banner appears 2 days before expiry
- * • Limited to 3 checks per day
- * • Not shown if already paid ahead
+ * • ✅ REMOVED - No free trial period
+ * • Riders must pay immediately to use the app
+ * • No trial banner or reminder logic
  *
  * EXPIRY HANDLING:
  * • On expiry without payment: Account lock screen instead of Home
@@ -78,23 +74,35 @@ function toEATString(timestamp) {
  */
 
 export const SUBSCRIPTION_PLANS = {
-  biweekly: {
-    key: 'biweekly',
-    label: 'Bi-Weekly Plan',
-    amount: 500,
+  weekly: {
+    key: 'weekly',
+    label: 'Weekly Plan',
+    amount: 125,
+    days: 7,
+  },
+  two_weeks: {
+    key: 'two_weeks',
+    label: '2-Week Plan',
+    amount: 250,
     days: 14,
+  },
+  three_weeks: {
+    key: 'three_weeks',
+    label: '3-Week Plan',
+    amount: 375,
+    days: 21,
   },
   monthly: {
     key: 'monthly',
     label: 'Monthly Plan',
-    amount: 1000,
+    amount: 500,
     days: 30,
   },
 };
 
-// ✅ 2-HOUR FREE TRIAL (7,200,000 milliseconds)
-export const FREE_TRIAL_HOURS = 2;
-export const FREE_TRIAL_MS = 2 * 60 * 60 * 1000; // 7200000 ms
+// ✅ FREE TRIAL REMOVED - No trial period
+export const FREE_TRIAL_HOURS = 0;
+export const FREE_TRIAL_MS = 0; // No trial
 export const REMINDER_DAYS_BEFORE = 2;
 export const REMINDER_CHECKS_PER_DAY = 3;
 
@@ -163,28 +171,16 @@ export async function checkAndEnforceLock(riderId) {
         });
       }
     } 
-    // ✅ PRIORITY 2: Check trial only if NO paid subscription exists
-    else if (state?.trialStarted && state?.trialEndDate) {
-      const trialEndMs = new Date(state.trialEndDate).getTime();
-      if (trialEndMs > now) {
-        // Trial still active - DO NOT LOCK
-        console.log('✅ [checkAndEnforceLock] Active trial found - NOT locking');
-        shouldLock = false;
-      } else if (trialEndMs <= now) {
-        // Trial expired and no paid subscription
-        shouldLock = true;
-        lockReason = 'Trial period expired';
-        console.log('🔒 [checkAndEnforceLock] Trial expired:', {
-          trialEndDate: state.trialEndDate,
-          now: toEATString(now),
-        });
-      }
-    } 
-    // ✅ PRIORITY 3: No subscription and no trial = new rider
-    else if (!state?.trialStarted) {
-      console.log('ℹ️ [checkAndEnforceLock] No subscription or trial - initializing trial');
-      await ensureFreeTrial(riderId);
-      return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
+    // ✅ PRIORITY 2: No paid subscription exists and no trial available
+    // Free trial REMOVED - riders must pay immediately
+    else {
+      // No paid subscription found
+      shouldLock = true;
+      lockReason = 'Payment required to use the app';
+      console.log('🔒 [checkAndEnforceLock] No active subscription - locking account:', {
+        riderId,
+        now: toEATString(now),
+      });
     }
 
     // ✅ 5. Update lock state if needed
@@ -552,33 +548,34 @@ export async function createSubscription(riderId, plan, paymentMethod = 'mpesa')
 }
 
 /**
- * Initialize free trial for new rider
+ * ✅ DEPRECATED: Initialize free trial for new rider
+ * FREE TRIAL REMOVED - This function is no longer used
+ * Riders must pay immediately to use the app
  */
 export async function initializeFreeTrial(riderId) {
   try {
+    console.log('⚠️ [initializeFreeTrial] DEPRECATED - Free trial has been removed');
+    
     const now = Date.now();
-    const trialEndMs = now + FREE_TRIAL_MS; // 2 hours
-
     const state = {
-      trialStarted: true,
-      trialStartDate: toEATString(now),
-      trialEndDate: toEATString(trialEndMs),
-      trialEndMs: trialEndMs,
+      trialStarted: false,
+      trialStartDate: null,
+      trialEndDate: null,
+      trialEndMs: null,
       reminderCount: 0,
       lastReminderCheck: null,
-      lockedAt: null,
-      lockReason: null,
+      lockedAt: now, // Lock immediately - payment required
+      lockReason: 'Payment required to use the app',
     };
 
     const key = `subscription_state_${riderId}`;
     await indexedDbAdapter.kvSet(key, JSON.stringify(state));
 
-    console.log('✅ Free trial initialized for rider:', riderId);
-    console.log('   Trial duration: 2 hours');
-    console.log('   Trial ends at:', toEATString(trialEndMs));
+    console.log('ℹ️ [initializeFreeTrial] Account created (locked - payment required)');
+    console.log('   Rider must pay to access the app');
     return state;
   } catch (err) {
-    console.error('❌ Error initializing trial:', err);
+    console.error('❌ Error initializing subscription state:', err);
     return null;
   }
 }
@@ -670,7 +667,7 @@ export async function getSubscriptionHistory(riderId) {
 
 /**
  * RESET SUBSCRIPTION STATE FOR TESTING
- * Call this to clear locked state and reinitialize trial
+ * Call this to clear subscription and reset to locked state (no trial)
  * Usage: await resetSubscriptionForTesting(riderId)
  */
 export async function resetSubscriptionForTesting(riderId) {
@@ -685,27 +682,26 @@ export async function resetSubscriptionForTesting(riderId) {
     const historyKey = `subscription_history_${riderId}`;
     await indexedDbAdapter.kvSet(historyKey, null);
     
-    // Initialize fresh free trial
+    // ✅ FREE TRIAL REMOVED - Lock account immediately
     const now = Date.now();
-    const trialEndMs = now + FREE_TRIAL_MS; // 2 hours
     
     const freshState = {
-      trialStarted: true,
-      trialStartDate: toEATString(now),
-      trialEndDate: toEATString(trialEndMs),
-      trialEndMs: trialEndMs,
+      trialStarted: false,
+      trialStartDate: null,
+      trialEndDate: null,
+      trialEndMs: null,
       reminderCount: 0,
       lastReminderCheck: null,
-      lockedAt: null,
-      lockReason: null,
+      lockedAt: toEATString(now),
+      lockReason: 'Payment required to use the app',
     };
     
     const stateKey = `subscription_state_${riderId}`;
     await indexedDbAdapter.kvSet(stateKey, JSON.stringify(freshState));
     
     console.log('✅ [resetSubscriptionForTesting] Subscription state reset successfully');
-    console.log('   Trial period: 2 hours');
-    console.log('   Trial expires:', toEATString(trialEndMs));
+    console.log('   Account is locked - payment required');
+    console.log('   No trial period available');
     
     return freshState;
   } catch (err) {

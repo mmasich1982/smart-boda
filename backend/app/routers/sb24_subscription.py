@@ -1,8 +1,8 @@
 # backend/app/routers/sb24_subscription.py
 # ============================================================================
-# CORRECT IMPLEMENTATION: Bi-Weekly and Monthly plans ONLY - NO WEEKLY
-# Requirements Coverage: REQ-1.1 (1-day trial), REQ-1.2 (2 plans), REQ-2.1-2.5
-# Trial: 1 DAY | Plans: Biweekly (500 KES/14 days) + Monthly (1000 KES/30 days)
+# UPDATED IMPLEMENTATION: 4 subscription plans (Weekly, 2-Week, 3-Week, Monthly)
+# FREE TRIAL: REMOVED - No longer supported
+# Plans: Weekly (125 KES/7 days) + 2-Week (250 KES/14 days) + 3-Week (375 KES/21 days) + Monthly (500 KES/30 days)
 # ============================================================================
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,23 +16,37 @@ import math
 
 router = APIRouter(prefix="/subscription", tags=["sb-24"])
 
-# ✅ ONLY BIWEEKLY AND MONTHLY - NO WEEKLY OR DAILY
-TRIAL_PERIOD_DAYS = 1  # REQ-1.1: 1-day free trial
+# ✅ TRIAL REMOVED - No free trial period
+TRIAL_PERIOD_DAYS = 0  # FREE TRIAL REMOVED
 
 FREQUENCIES = {
-    "biweekly": {
-        "label": "Bi-Weekly",
+    "weekly": {
+        "label": "Weekly",
+        "days": 7,
+        "emoji": "📆",
+        "price_kes": 125,
+        "daily_price": 17.86  # 125 / 7
+    },
+    "two_weeks": {
+        "label": "2 Weeks",
         "days": 14,
         "emoji": "📆",
-        "price_kes": 500,
-        "daily_price": 35.71  # 500 / 14
+        "price_kes": 250,
+        "daily_price": 17.86  # 250 / 14
+    },
+    "three_weeks": {
+        "label": "3 Weeks",
+        "days": 21,
+        "emoji": "📆",
+        "price_kes": 375,
+        "daily_price": 17.86  # 375 / 21
     },
     "monthly": {
         "label": "Monthly",
         "days": 30,
         "emoji": "📆",
-        "price_kes": 1000,
-        "daily_price": 33.33  # 1000 / 30
+        "price_kes": 500,
+        "daily_price": 16.67  # 500 / 30
     }
 }
 
@@ -82,33 +96,59 @@ def check_lock(sub: RiderSubscription):
 
 def ensure_subscription_plans_exist(db: Session):
     """
-    ✅ REQ-1.2: Create 2 default subscription plans if none exist.
-    Plan 1: Smart Boda Bi-Weekly (500 KES for 14 days = 35.71 KES/day)
-    Plan 2: Smart Boda Monthly (1000 KES for 30 days = 33.33 KES/day)
+    ✅ Create 4 default subscription plans if none exist.
+    Plan 1: Smart Boda Weekly (125 KES for 7 days = 17.86 KES/day)
+    Plan 2: Smart Boda 2-Week (250 KES for 14 days = 17.86 KES/day)
+    Plan 3: Smart Boda 3-Week (375 KES for 21 days = 17.86 KES/day)
+    Plan 4: Smart Boda Monthly (500 KES for 30 days = 16.67 KES/day)
     """
     plan_count = db.query(SubscriptionPlan).count()
     
     if plan_count == 0:
-        # Bi-Weekly Plan: 500 KES / 14 days = 35.71 KES/day
-        biweekly_plan = SubscriptionPlan(
-            name="Smart Boda Bi-Weekly",
-            daily_price=35.71,
+        # Weekly Plan: 125 KES / 7 days = 17.86 KES/day
+        weekly_plan = SubscriptionPlan(
+            name="Smart Boda Weekly",
+            daily_price=17.86,
             trial_days=TRIAL_PERIOD_DAYS,
-            tier_name="biweekly",
-            tier_label="Bi-Weekly Plan",
-            tier_description="500 KES for 2 weeks",
+            tier_name="weekly",
+            tier_label="Weekly Plan",
+            tier_description="125 KES for 1 week",
             is_active=True
         )
-        db.add(biweekly_plan)
+        db.add(weekly_plan)
+
+        # 2-Week Plan: 250 KES / 14 days = 17.86 KES/day
+        two_week_plan = SubscriptionPlan(
+            name="Smart Boda 2-Week",
+            daily_price=17.86,
+            trial_days=TRIAL_PERIOD_DAYS,
+            tier_name="two_weeks",
+            tier_label="2-Week Plan",
+            tier_description="250 KES for 2 weeks",
+            is_active=True
+        )
+        db.add(two_week_plan)
+
+        # 3-Week Plan: 375 KES / 21 days = 17.86 KES/day
+        three_week_plan = SubscriptionPlan(
+            name="Smart Boda 3-Week",
+            daily_price=17.86,
+            trial_days=TRIAL_PERIOD_DAYS,
+            tier_name="three_weeks",
+            tier_label="3-Week Plan",
+            tier_description="375 KES for 3 weeks",
+            is_active=True
+        )
+        db.add(three_week_plan)
         
-        # Monthly Plan: 1000 KES / 30 days = 33.33 KES/day
+        # Monthly Plan: 500 KES / 30 days = 16.67 KES/day
         monthly_plan = SubscriptionPlan(
             name="Smart Boda Monthly",
-            daily_price=33.33,
+            daily_price=16.67,
             trial_days=TRIAL_PERIOD_DAYS,
             tier_name="monthly",
             tier_label="Monthly Plan",
-            tier_description="1000 KES for 1 month",
+            tier_description="500 KES for 1 month",
             is_active=True
         )
         db.add(monthly_plan)
@@ -116,8 +156,8 @@ def ensure_subscription_plans_exist(db: Session):
 
 def ensure_subscription_exists(rider_uuid: UUID, db: Session) -> RiderSubscription:
     """
-    ✅ REQ-1.1: Ensure subscription record exists for rider.
-    If not, create one with 1-day free trial (no plan assigned yet).
+    ✅ Ensure subscription record exists for rider.
+    If not, create one (no free trial - payment required immediately).
     """
     ensure_subscription_plans_exist(db)
     
@@ -129,7 +169,7 @@ def ensure_subscription_exists(rider_uuid: UUID, db: Session) -> RiderSubscripti
         if not plan:
             plan = SubscriptionPlan(
                 name="Smart Boda Monthly",
-                daily_price=33.33,
+                daily_price=16.67,
                 trial_days=TRIAL_PERIOD_DAYS,
                 tier_name="monthly",
                 tier_label="Monthly Plan",
@@ -140,12 +180,13 @@ def ensure_subscription_exists(rider_uuid: UUID, db: Session) -> RiderSubscripti
             db.refresh(plan)
         
         now = datetime.now(timezone.utc)
-        trial_expiry = now + timedelta(days=TRIAL_PERIOD_DAYS)  # 1-day trial
+        # ✅ FREE TRIAL REMOVED - Set expiry to now (subscription not active until payment)
+        expiry = now
         
         sub = RiderSubscription(
             rider_id=rider_uuid,
-            plan_id=None,  # ✅ REQ-1.3: No plan assigned during trial
-            expiry_at=trial_expiry,
+            plan_id=None,  # No plan assigned until payment
+            expiry_at=expiry,
             frequency="monthly",  # Default for display
             has_ever_paid=False,
             locked=False,
@@ -168,7 +209,8 @@ def get_subscription(
     db: Session = Depends(get_db)
 ):
     """
-    ✅ REQ-1.1: Get subscription status and available plans (Biweekly & Monthly ONLY).
+    ✅ Get subscription status and available plans (Weekly, 2-Week, 3-Week, Monthly).
+    ✅ No free trial - payment required immediately.
     """
     if not rider_id:
         raise HTTPException(422, "rider_id is required")
@@ -219,8 +261,8 @@ def get_subscription(
 @router.get("/payment-details")
 def get_payment_details():
     """
-    ✅ REQ-2.4: Payment configuration endpoint.
-    Returns Safaricom number, payment method, etc.
+    ✅ Payment configuration endpoint.
+    Returns Safaricom number, payment method, and supported frequencies.
     """
     return {
         **PAYMENT_CONFIG,
@@ -234,15 +276,15 @@ def get_payment_details():
 @router.post("/pay")
 def submit_payment(
     rider_id: str = Query(..., description="Rider ID is required"),
-    frequency_key: str = Query(..., description="'biweekly' or 'monthly' ONLY"),
+    frequency_key: str = Query(..., description="'weekly', 'two_weeks', 'three_weeks', or 'monthly'"),
     mpesa_code: str = Query(..., description="M-Pesa confirmation code"),
     db: Session = Depends(get_db)
 ):
     """
-    ✅ REQ-2.1: Immediate unlock upon payment submission.
-    ✅ REQ-2.2: Payment recorded as "Pending Super Admin Review".
-    ✅ REQ-2.3: M-Pesa code validation (min 8 chars).
-    ✅ REQ-2.5: Payment stacking.
+    ✅ Record payment submission for subscription.
+    ✅ Payment recorded as "Pending Super Admin Review".
+    ✅ M-Pesa code validation (min 8 chars).
+    ✅ Support payment stacking for duration extension.
     """
     if not rider_id:
         raise HTTPException(422, "rider_id is required")
@@ -339,8 +381,8 @@ def submit_prepay(
     except ValueError:
         raise HTTPException(400, "Invalid rider_id format")
     
-    if not (3 <= days <= 60):
-        raise HTTPException(422, "Prepayment must be between 3 and 60 days.")
+    if not (8 <= days <= 60):
+        raise HTTPException(422, "Prepayment must be between 8 and 60 days.")
     
     code = (mpesa_code or "").strip().upper()
     if not code or len(code) < 8:

@@ -191,11 +191,25 @@ const FrequencySelectScreen = () => {
   // ========================================================================
   const frequencies = [
     {
-      key: 'biweekly',
-      label: '📆 Bi-Weekly',
+      key: 'weekly',
+      label: '📆 Weekly',
       emoji: '📆',
-      days: SUBSCRIPTION_PLANS.biweekly.days,
-      amount: SUBSCRIPTION_PLANS.biweekly.amount
+      days: SUBSCRIPTION_PLANS.weekly.days,
+      amount: SUBSCRIPTION_PLANS.weekly.amount
+    },
+    {
+      key: 'two_weeks',
+      label: '📆 2 Weeks',
+      emoji: '📆',
+      days: SUBSCRIPTION_PLANS.two_weeks.days,
+      amount: SUBSCRIPTION_PLANS.two_weeks.amount
+    },
+    {
+      key: 'three_weeks',
+      label: '📆 3 Weeks',
+      emoji: '📆',
+      days: SUBSCRIPTION_PLANS.three_weeks.days,
+      amount: SUBSCRIPTION_PLANS.three_weeks.amount
     },
     {
       key: 'monthly',
@@ -224,7 +238,9 @@ const FrequencySelectScreen = () => {
       <View style={styles.hintCard}>
         <Text style={styles.hintTitle}>Daily Rate Breakdown</Text>
         <Text style={styles.hintText}>
-          Bi-Weekly: KSh {Math.round(SUBSCRIPTION_PLANS.biweekly.amount / SUBSCRIPTION_PLANS.biweekly.days)}/day{'\n'}
+          Weekly: KSh {Math.round(SUBSCRIPTION_PLANS.weekly.amount / SUBSCRIPTION_PLANS.weekly.days)}/day{'\n'}
+          2-Weeks: KSh {Math.round(SUBSCRIPTION_PLANS.two_weeks.amount / SUBSCRIPTION_PLANS.two_weeks.days)}/day{'\n'}
+          3-Weeks: KSh {Math.round(SUBSCRIPTION_PLANS.three_weeks.amount / SUBSCRIPTION_PLANS.three_weeks.days)}/day{'\n'}
           Monthly: KSh {Math.round(SUBSCRIPTION_PLANS.monthly.amount / SUBSCRIPTION_PLANS.monthly.days)}/day
         </Text>
       </View>
@@ -276,22 +292,24 @@ const styles = StyleSheet.create({
 
   // Title & Subtitle (handled by HeroBand now)
 
-  // Tile Grid
+  // Tile Grid - 2 tiles per row
   tileGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
-    marginHorizontal: 14,
+    marginHorizontal: 10,
     marginBottom: 14,
+    justifyContent: 'space-between',
   },
 
-  // Tile
+  // Tile - 2 columns layout
   tile: {
-    flex: 1,
+    width: '48%',
     backgroundColor: '#fff',
     borderRadius: 14,
     borderWidth: 1.5,
     borderColor: '#e7e4db',
-    padding: 14,
+    padding: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
