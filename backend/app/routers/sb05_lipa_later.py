@@ -22,7 +22,7 @@ from app.models.lipa_later_record import LipaLaterRecord
 from app.models.payment import Payment
 
 
-router = APIRouter(prefix="/trips/lipa-later", tags=["sb-05-lipa-later"])
+router = APIRouter(prefix="/lipa-later", tags=["sb-05-lipa-later"])
 
 
 # ============= Request/Response Schemas =============
@@ -129,7 +129,7 @@ def update_lipa_later_status(record: LipaLaterRecord, db: Session) -> str:
 
 # ============= Core Endpoints =============
 
-@router.post("", response_model=dict)
+@router.post("/record-trip", response_model=dict)
 def create_lipa_later_trip(
     payload: LipaLaterCreateRequest, 
     rider_id: str, 
@@ -203,7 +203,7 @@ def create_lipa_later_trip(
         raise HTTPException(500, f"Error creating Lipa Later record: {str(e)}")
 
 
-@router.get("", response_model=list)
+@router.get("/customer-list", response_model=list)
 def list_lipa_later_records(
     rider_id: str,
     include_paid: bool = False,
