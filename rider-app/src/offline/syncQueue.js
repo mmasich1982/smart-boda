@@ -11,6 +11,7 @@
 // ✅ FEATURE: Queue statistics and diagnostic tools
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
+import api from '../api/client';
 
 // ============================================================================
 // CONFIGURATION CONSTANTS
@@ -132,6 +133,76 @@ export async function enqueue(type, data) {
   } catch (err) {
     console.error('❌ Error in enqueue:', err.message);
     return false;
+  }
+}
+
+/**
+ * Get all queued records (alias for getPendingItems for backward compatibility)
+ * ✅ FIXED: Provides a simple API for screens querying pending records
+ * @returns {Promise<Array>} - Array of pending queue items
+ */
+export async function getQueuedRecords() {
+  return await getPendingItems();
+}
+
+/**
+ * Process pending sync items and attempt to sync with backend
+ * ✅ FIXED: Handles syncing of queued records to backend API
+ * @returns {Promise<Object>} - Result summary {synced, failed, errors}
+ */
+export async function processPendingSync() {
+  try {
+    const pending = await getPendingItems();
+    
+    if (!pending || pending.length === 0) {
+      console.log('✅ No pending items to sync');
+      return { synced: 0, failed: 0, errors: [] };
+    }
+
+    console.log(`🔄 Processing ${pending.length} pending sync items`);
+    
+    let synced = 0;
+    let failed = 0;
+    const errors = [];
+
+    // Process each pending item
+    for (const item of pending) {
+      try {
+        // Construct the full endpoint with query parameters if needed
+        const endpoint = item.endpoint.includes('?') 
+          ? item.endpoint 
+          : item.endpoint + (item.data?.rider_id ? `?rider_id=${item.data.rider_id}` : '');
+
+        console.log(`📤 Syncing ${item.type} (${item.id}) to ${endpoint}`);
+
+        // Attempt to POST the item to the backend
+        const response = await api.post(item.endpoint, item.data);
+
+        // Mark as synced
+        await markAsSynced(item.id);
+        synced++;
+        console.log(`✅ Synced ${item.type} (${item.id})`);
+      } catch (err) {
+        failed++;
+        const errorMsg = err.response?.data?.message || err.message;
+        errors.push({
+          id: item.id,
+          type: item.type,
+          error: errorMsg
+        });
+        
+        // Mark as failed with error message
+        await markAsFailed(item.id, errorMsg);
+        console.error(`❌ Failed to sync ${item.type} (${item.id}):`, errorMsg);
+      }
+    }
+
+    const summary = { synced, failed, errors };
+    console.log('✅ Sync process completed:', summary);
+    return summary;
+  } catch (err) {
+    console.error('❌ Error in processPendingSync:', err.message);
+    return { synced: 0, failed: 0, errors: [{ error: err.message }] };
   }
 }
 
@@ -871,6 +942,8 @@ export async function resetQueueCompletely() {
 // Export all functions as default for backward compatibility
 export default {
   enqueue,
+  getQueuedRecords,
+  processPendingSync,
   addToSyncQueue,
   loadSyncQueue,
   saveSyncQueue,
