@@ -23,6 +23,7 @@ from app.models.goal_contribution import GoalContribution
 from app.models.goal_type_master import GoalTypeMaster
 from app.models.legal_content import LegalContent
 from app.models.lipa_later_record import LipaLaterRecord
+from app.models.lipa_later_payment import LipaLaterPayment
 from app.models.maintenance_entry import MaintenanceEntry
 from app.models.master_data import (
     LanguageMaster,
@@ -91,6 +92,7 @@ __all__ = [
     "GoalTypeMaster",
     "LegalContent",
     "LipaLaterRecord",
+    "LipaLaterPayment",
     "MaintenanceEntry",
     "LanguageMaster",
     "UiStringMaster",
