@@ -244,7 +244,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
     };
     
     console.log('📱 Navigating to RecordPayment with customer:', customerId);
-    navigation.navigate('RecordPayment', { 
+    navigation.navigate('RecordPaymentScreen', { 
       customerId: customerId,
       customerData: customerDataToPass 
     });
