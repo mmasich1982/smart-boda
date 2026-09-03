@@ -1,18 +1,19 @@
 # backend/app/routers/sb05_lipa_later.py
-# ✅ FIXED: Flexible field handling for frontend data
-# ✅ FIXED: Extra fields like paymentMethod are ignored
-# ✅ FIXED: Detailed logging for debugging 500 errors
-# ✅ FIXED: Router prefix changed from /trips/lipa-later to /lipa-later
-# ✅ FIXED: Endpoint paths updated to match frontend: /record-trip, /customer-list
+# ✅ ROOT CAUSE FIXED: Using correct Trip model field names
+# ✅ FIXED: payment_channel_code instead of payment_method
+# ✅ FIXED: recorded_at instead of trip_date (Trip model doesn't have trip_date)
+# ✅ FIXED: status="active" instead of "completed" (Trip model uses active/voided)
+# ✅ FIXED: Router prefix is /lipa-later (not /trips/lipa-later)
+# ✅ FIXED: Endpoint paths are /record-trip and /customer-list
+# ✅ FIXED: Field aliasing for camelCase from frontend
 
 from datetime import datetime, date, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from decimal import Decimal
 import logging
-import json
 
 from app.database import get_db
 from app.models.trip import Trip
@@ -29,17 +30,29 @@ router = APIRouter(prefix="/lipa-later", tags=["sb-05-lipa-later"])
 
 class LipaLaterCreateRequest(BaseModel):
     """
-    Flexible request schema that accepts both camelCase and snake_case.
-    Ignores extra fields like paymentMethod.
+    Request to create a Lipa Later trip and record.
+    
+    Accepts both camelCase (from frontend) and snake_case field names.
+    Frontend sends: customerName, customerPhone, amount, dueDate
+    Backend automatically converts to: customer_name, customer_mobile, amount, due_date
+    
+    Example request body:
+    {
+        "customerName": "Marto",
+        "customerPhone": "0712333444",
+        "amount": 300,
+        "dueDate": "2026-09-30",
+        "paymentMethod": "LipaLater"  // Extra field, will be ignored
+    }
     """
     customer_name: str = Field(..., alias="customerName")
     customer_mobile: str = Field(..., alias="customerPhone")
-    amount: float = Field(...)
+    amount: float = Field(..., gt=0)
     due_date: date = Field(..., alias="dueDate")
     
     model_config = ConfigDict(
         populate_by_name=True,
-        extra='ignore'  # ✅ CRITICAL: Ignore extra fields like paymentMethod
+        extra='ignore'  # Ignore extra fields like paymentMethod
     )
 
 
@@ -113,8 +126,8 @@ def update_lipa_later_status(record: LipaLaterRecord, db: Session) -> str:
 # ============= Core Endpoints =============
 
 @router.post("/record-trip", response_model=dict)
-async def create_lipa_later_trip(
-    request: Request,
+def create_lipa_later_trip(
+    payload: LipaLaterCreateRequest, 
     rider_id: str, 
     db: Session = Depends(get_db)
 ):
@@ -123,66 +136,60 @@ async def create_lipa_later_trip(
     
     Endpoint: POST /lipa-later/record-trip?rider_id={rider_id}
     
-    Frontend sends:
+    This endpoint:
+    1. Validates customer details and amount
+    2. Creates a Trip record for income tracking
+    3. Creates a LipaLaterRecord for payment follow-up
+    
+    Frontend sends (camelCase - automatically converted):
     {
-        "amount": 300,
-        "paymentMethod": "LipaLater",
         "customerName": "Marto",
         "customerPhone": "0712333444",
-        "dueDate": "2026-09-30"
+        "amount": 300,
+        "dueDate": "2026-09-30",
+        "paymentMethod": "LipaLater"
     }
+    
+    Returns: trip_id and lipa_later_record_id
     """
-    logger.info(f"[LIPA_LATER] ========== CREATE TRIP START ==========")
-    logger.info(f"[LIPA_LATER] Rider ID: {rider_id}")
+    logger.info(f"[LIPA_LATER] CREATE_TRIP - Rider: {rider_id}, Customer: {payload.customer_name}")
     
     try:
-        # Parse raw request to see what we're receiving
-        body = await request.body()
-        logger.info(f"[LIPA_LATER] Raw request body: {body.decode()}")
-        
-        # Parse JSON manually for debugging
-        raw_data = json.loads(body)
-        logger.info(f"[LIPA_LATER] Parsed JSON: {raw_data}")
-        
-        # Validate with Pydantic
-        payload = LipaLaterCreateRequest(**raw_data)
-        logger.info(f"[LIPA_LATER] ✅ Payload validated: customer_name={payload.customer_name}, customer_mobile={payload.customer_mobile}, amount={payload.amount}, due_date={payload.due_date}")
-        
         # Validation
         if not payload.customer_name or not payload.customer_name.strip():
-            logger.warning("[LIPA_LATER] ❌ Customer name is empty")
+            logger.warning("[LIPA_LATER] Validation failed: empty customer name")
             raise HTTPException(422, "Enter the customer's name.")
         
         if not payload.customer_mobile or not payload.customer_mobile.strip():
-            logger.warning("[LIPA_LATER] ❌ Customer mobile is empty")
+            logger.warning("[LIPA_LATER] Validation failed: empty customer phone")
             raise HTTPException(422, "Enter the customer's mobile number.")
         
         if payload.amount <= 0:
-            logger.warning(f"[LIPA_LATER] ❌ Invalid amount: {payload.amount}")
+            logger.warning(f"[LIPA_LATER] Validation failed: invalid amount {payload.amount}")
             raise HTTPException(422, "Enter an amount greater than zero.")
         
         today = date.today()
         if payload.due_date <= today:
-            logger.warning(f"[LIPA_LATER] ❌ Due date {payload.due_date} not after today {today}")
+            logger.warning(f"[LIPA_LATER] Validation failed: due_date {payload.due_date} not after {today}")
             raise HTTPException(422, "Due date must be after today.")
-        
-        logger.info("[LIPA_LATER] ✅ All validations passed")
         
         now = datetime.now(timezone.utc)
         
-        # Create Trip record
+        # ✅ CRITICAL FIX: Use correct Trip model field names!
+        # Trip model has: payment_channel_code (not payment_method)
+        # Trip model has: recorded_at (not trip_date)
+        # Trip model uses: status="active" (not "completed")
         logger.info("[LIPA_LATER] Creating Trip record...")
         trip = Trip(
             rider_id=rider_id,
             amount=Decimal(str(payload.amount)),
-            payment_method="lipa_later",
-            status="completed",
-            trip_date=now,
-            recorded_at=now,
+            payment_channel_code="LipaLater",  # ✅ CORRECT: matches payment_channel_master codes
+            status="active",  # ✅ CORRECT: Trip model uses "active" or "voided"
+            recorded_at=now,  # ✅ CORRECT: Trip model uses recorded_at, not trip_date
             sync_status="synced"
         )
         db.add(trip)
-        db.flush()
+        db.flush()  # Get trip.id without committing yet
         logger.info(f"[LIPA_LATER] ✅ Trip created: {trip.id}")
         
         # Create LipaLaterRecord
@@ -193,7 +200,7 @@ async def create_lipa_later_trip(
             customer_name=payload.customer_name.strip(),
             customer_mobile=payload.customer_mobile.strip(),
             amount=Decimal(str(payload.amount)),
-            trip_date=now,
+            trip_date=now,  # LipaLaterRecord captures trip_date
             due_date=payload.due_date,
             status="pending",
         )
@@ -212,24 +219,16 @@ async def create_lipa_later_trip(
             "status": record.status,
         }
         
-        logger.info(f"[LIPA_LATER] ✅ Response: {response}")
-        logger.info(f"[LIPA_LATER] ========== CREATE TRIP SUCCESS ==========")
+        logger.info(f"[LIPA_LATER] ✅ CREATE_TRIP successful")
         return response
         
     except HTTPException as he:
         db.rollback()
         logger.error(f"[LIPA_LATER] ❌ HTTP Exception: {he.detail}")
-        logger.info(f"[LIPA_LATER] ========== CREATE TRIP FAILED ==========")
         raise he
-    except json.JSONDecodeError as je:
-        db.rollback()
-        logger.error(f"[LIPA_LATER] ❌ JSON Decode Error: {str(je)}", exc_info=True)
-        logger.info(f"[LIPA_LATER] ========== CREATE TRIP FAILED ==========")
-        raise HTTPException(400, f"Invalid JSON: {str(je)}")
     except Exception as e:
         db.rollback()
         logger.error(f"[LIPA_LATER] ❌ Unexpected error: {str(e)}", exc_info=True)
-        logger.info(f"[LIPA_LATER] ========== CREATE TRIP FAILED ==========")
         raise HTTPException(500, f"Error creating Lipa Later record: {str(e)}")
 
 
@@ -245,7 +244,7 @@ def list_lipa_later_records(
     
     Endpoint: GET /lipa-later/customer-list?rider_id={rider_id}
     """
-    logger.info(f"[LIPA_LATER] Fetching customer list for rider {rider_id}")
+    logger.info(f"[LIPA_LATER] CUSTOMER_LIST - Rider: {rider_id}")
     
     try:
         query = db.query(LipaLaterRecord).filter_by(rider_id=rider_id)
@@ -348,7 +347,7 @@ def record_payment(
     db: Session = Depends(get_db)
 ):
     """Record a payment against a Lipa Later record"""
-    logger.info(f"[LIPA_LATER] Recording payment for record {record_id}")
+    logger.info(f"[LIPA_LATER] RECORD_PAYMENT - Record: {record_id}, Amount: {payload.amount_paid}")
     
     try:
         record = db.query(LipaLaterRecord).filter_by(id=record_id).first()
