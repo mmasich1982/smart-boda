@@ -1,11 +1,10 @@
 # backend/app/routers/sb05_lipa_later.py
-# ✅ ROOT CAUSE FIXED: Using correct Trip model field names
-# ✅ FIXED: payment_channel_code instead of payment_method
-# ✅ FIXED: recorded_at instead of trip_date (Trip model doesn't have trip_date)
-# ✅ FIXED: status="active" instead of "completed" (Trip model uses active/voided)
+# ✅ ROOT CAUSE FIXED: Using correct LipaLaterPayment model (not generic Payment)
 # ✅ FIXED: Router prefix is /lipa-later (not /trips/lipa-later)
 # ✅ FIXED: Endpoint paths are /record-trip and /customer-list
+# ✅ FIXED: Trip model field names (payment_channel_code, recorded_at, status="active")
 # ✅ FIXED: Field aliasing for camelCase from frontend
+# ✅ FIXED: Using LipaLaterPayment model with correct schema
 
 from datetime import datetime, date, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -18,7 +17,7 @@ import logging
 from app.database import get_db
 from app.models.trip import Trip
 from app.models.lipa_later_record import LipaLaterRecord
-from app.models.payment import Payment
+from app.models.lipa_later_payment import LipaLaterPayment
 
 # Setup logging for debugging
 logger = logging.getLogger(__name__)
@@ -96,9 +95,10 @@ def get_remaining_balance(lipa_later_record: LipaLaterRecord, db: Session) -> fl
         return 0.0
     
     try:
-        total_paid = db.query(Payment).filter(
-            Payment.lipa_later_id == lipa_later_record.id
-        ).with_entities(Payment.amount_ksh).all()
+        # Query LipaLaterPayment (not Payment!)
+        total_paid = db.query(LipaLaterPayment).filter(
+            LipaLaterPayment.lipa_later_id == lipa_later_record.id
+        ).with_entities(LipaLaterPayment.amount_ksh).all()
         
         paid_sum = sum(Decimal(str(p[0])) for p in total_paid if p[0]) if total_paid else Decimal('0')
         original_amount = Decimal(str(lipa_later_record.amount))
@@ -176,9 +176,6 @@ def create_lipa_later_trip(
         now = datetime.now(timezone.utc)
         
         # ✅ CRITICAL FIX: Use correct Trip model field names!
-        # Trip model has: payment_channel_code (not payment_method)
-        # Trip model has: recorded_at (not trip_date)
-        # Trip model uses: status="active" (not "completed")
         logger.info("[LIPA_LATER] Creating Trip record...")
         trip = Trip(
             rider_id=rider_id,
@@ -266,8 +263,9 @@ def list_lipa_later_records(
             remaining_balance = get_remaining_balance(r, db)
             total_paid = float(r.amount) - remaining_balance
             
-            payment_count = db.query(Payment).filter(
-                Payment.lipa_later_id == r.id
+            # Query LipaLaterPayment instead of Payment!
+            payment_count = db.query(LipaLaterPayment).filter(
+                LipaLaterPayment.lipa_later_id == r.id
             ).count()
             
             result.append({
@@ -306,7 +304,7 @@ def get_lipa_later_record(record_id: str, db: Session = Depends(get_db)):
         total_paid = float(record.amount) - remaining_balance
         today = date.today()
         
-        payments = db.query(Payment).filter(Payment.lipa_later_id == record.id).all()
+        payments = db.query(LipaLaterPayment).filter(LipaLaterPayment.lipa_later_id == record.id).all()
         
         return {
             "id": str(record.id),
@@ -359,7 +357,8 @@ def record_payment(
         if payload.amount_paid > remaining_before:
             raise HTTPException(400, f"Payment amount exceeds remaining balance of {remaining_before}.")
         
-        payment = Payment(
+        # ✅ Use LipaLaterPayment model!
+        payment = LipaLaterPayment(
             rider_id=record.rider_id,
             lipa_later_id=record.id,
             amount_ksh=Decimal(str(payload.amount_paid)),

@@ -6,6 +6,7 @@
 import uuid
 from sqlalchemy import Column, String, Numeric, Date, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 
@@ -22,3 +23,6 @@ class LipaLaterRecord(Base):
     status = Column(String(10), default="pending")  # pending | paid
     paid_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationship to LipaLaterPayment (one-to-many)
+    payments = relationship("LipaLaterPayment", back_populates="lipa_later_record", cascade="all, delete-orphan")
