@@ -113,6 +113,29 @@ function validateRecordType(type, data, endpoint) {
 }
 
 /**
+ * Simplified enqueue function for basic sync operations
+ * ✅ FIXED: Provides a simple API for common use cases
+ * @param {string} type - Type of sync operation (e.g., 'bike_profile', 'lipa_later_payment')
+ * @param {Object} data - Data payload to sync
+ * @returns {Promise<boolean>} - True if successfully added to queue
+ */
+export async function enqueue(type, data) {
+  try {
+    const record = {
+      id: `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type,
+      endpoint: `/api/sync/${type}`,
+      data: data || {},
+      timestamp: new Date(),
+    };
+    return await addToSyncQueue(record);
+  } catch (err) {
+    console.error('❌ Error in enqueue:', err.message);
+    return false;
+  }
+}
+
+/**
  * Add a record to the sync queue
  * ✅ FIXED: Validates all required parameters before enqueueing
  * ✅ FIXED: Priority-based queue management
@@ -847,6 +870,7 @@ export async function resetQueueCompletely() {
 
 // Export all functions as default for backward compatibility
 export default {
+  enqueue,
   addToSyncQueue,
   loadSyncQueue,
   saveSyncQueue,
