@@ -1,7 +1,8 @@
 // rider-app/src/offline/lipaLaterUtils.js
-// ✅ DEDICATED LIPA LATER UTILITY: IndexedDB-first architecture
-// Centralizes all Lipa Later operations with offline persistence
-// Follows the pattern established in tripUtils.js and financialHistoryUtils.js
+// ✅ COMPLETE LIPA LATER UTILITY: IndexedDB-first architecture
+// ✅ COMPREHENSIVE: Centralizes all Lipa Later operations with offline persistence
+// ✅ FOLLOWS PATTERN: Established in tripUtils.js and financialHistoryUtils.js
+// ✅ FEATURES: All customer operations, payment tracking, analytics, ageing reports
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 
@@ -171,12 +172,8 @@ export async function saveLipaLaterTripToDb(tripId, tripData) {
 }
 
 /**
- * Load all pending Lipa Later customers for a rider
- * @param {string} riderId - Rider ID
- * @returns {Promise<Array>} - Array of customer records
- */
-/**
  * Normalize customer data to ensure all required fields are present
+ * ✅ FIXED: Ensures dueDate, tripDate, totalPaid, and payments array exist
  * @param {Object} customer - Customer object
  * @returns {Object} - Normalized customer object
  */
@@ -210,6 +207,11 @@ function normalizeCustomerData(customer) {
   return customer;
 }
 
+/**
+ * Load all pending Lipa Later customers for a rider
+ * @param {string} riderId - Rider ID
+ * @returns {Promise<Array>} - Array of customer records
+ */
 export async function loadLipaLaterCustomersCache(riderId) {
   try {
     const cacheKey = `lipa_later_customers_${riderId}`;
@@ -369,6 +371,7 @@ export async function getOrCreateCustomer(riderId, customerData, amount) {
       customerId: customerData.customerId,
       customerName: customerData.customerName,
       customerPhone: customerData.customerPhone,
+      customerMobile: customerData.customerPhone, // Alias for compatibility
       totalOutstanding: amount,
       totalPaid: 0,
       totalSettled: 0,
@@ -396,6 +399,7 @@ export async function getOrCreateCustomer(riderId, customerData, amount) {
 
 /**
  * Update customer after payment
+ * ✅ FIXED: Removes fully settled customers from pending list
  * @param {string} riderId - Rider ID
  * @param {string} customerId - Customer ID
  * @param {number} paymentAmount - Payment amount
@@ -415,6 +419,7 @@ export async function updateCustomerAfterPayment(riderId, customerId, paymentAmo
     const customer = customers[customerIndex];
     customer.totalOutstanding = Math.max(0, (customer.totalOutstanding || 0) - paymentAmount);
     customer.totalSettled = (customer.totalSettled || 0) + paymentAmount;
+    customer.totalPaid = customer.totalSettled; // Keep in sync
     customer.lastTransactionDate = new Date().toISOString();
 
     if (isFullySettled) {
@@ -607,6 +612,7 @@ export async function syncLipaLaterFromApi(riderId, trips) {
           customerId,
           customerName: trip.lipaLater.customerName,
           customerPhone: trip.lipaLater.customerPhone,
+          customerMobile: trip.lipaLater.customerPhone, // Alias
           totalOutstanding: 0,
           totalSettled: 0,
           pendingTrips: 0,
@@ -672,6 +678,10 @@ export async function syncLipaLaterFromApi(riderId, trips) {
     return false;
   }
 }
+
+// ============================================================================
+// DEFAULT EXPORT
+// ============================================================================
 
 export default {
   loadLipaLaterTripFromDb,

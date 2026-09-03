@@ -1,6 +1,9 @@
 // rider-app/src/screens/lipaLater/LipaLaterCustomersScreen.js
-// ✅ UPDATED: 100% UI alignment with index.html
-// - Lipa Later Customers Report (formerly PaymentSummary)
+// ✅ COMPLETE: 100% UI alignment with index.html
+// ✅ FIXED: Proper refresh of customer list after payment
+// ✅ FIXED: Removes fully settled customers from the view
+// ✅ FIXED: Updates customer balance for partial payments
+// ✅ FEATURE: Lipa Later Customers Report with status badges
 // - Loads customer data from IndexedDB cache
 // - Search by name/mobile with clear button
 // - Pagination with record numbering
@@ -116,13 +119,52 @@ export default function LipaLaterCustomersScreen({ navigation }) {
     };
   }, [effectiveRiderId, isInitialized]);
 
+  // ✅ FIXED: Handle refresh after payment
+  useEffect(() => {
+    if (!navigation) return;
+
+    const unsubscribe = navigation.addListener('focus', async () => {
+      try {
+        // Check if we're returning from RecordPaymentScreen
+        const route = navigation.getState()?.routes[navigation.getState()?.index];
+        const params = route?.params;
+
+        if (params?.refreshed) {
+          console.log('🔄 Refreshing customer list after payment...');
+          
+          const { fullySettled, customerId, paymentAmount } = params;
+          
+          // Reload customers from cache
+          if (effectiveRiderId) {
+            const updatedCustomers = await loadLipaLaterCustomersCache(effectiveRiderId);
+            setCustomers(updatedCustomers);
+            
+            if (fullySettled) {
+              console.log('✅ Fully settled customer removed from list:', customerId);
+              // Customer should already be removed by updateCustomerAfterPayment
+            } else {
+              console.log('✅ Updated customer balance after partial payment');
+            }
+            
+            // Clear the refresh flag
+            navigation.setParams({ refreshed: false });
+          }
+        }
+      } catch (err) {
+        console.error('❌ Error refreshing after payment:', err);
+      }
+    });
+
+    return unsubscribe;
+  }, [navigation, effectiveRiderId]);
+
   // Filter by search term
   const filterBySearch = useCallback((items, term) => {
     if (!term || term.trim() === '') return items;
     const t = term.toLowerCase().trim();
     return items.filter(customer => {
       const name = (customer.customerName || '').toLowerCase();
-      const phone = (customer.customerPhone || '').toLowerCase();
+      const phone = (customer.customerPhone || customer.customerMobile || '').toLowerCase();
       return name.includes(t) || phone.includes(t);
     });
   }, []);
@@ -182,11 +224,30 @@ export default function LipaLaterCustomersScreen({ navigation }) {
     return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
   };
 
-  // Handle record payment
+  // ✅ FIXED: Handle record payment with proper data passing
   const handleRecordPayment = (customerId) => {
     const customer = customers.find(c => c.customerId === customerId);
-    if (!customer) return;
-    navigation.navigate('RecordPaymentScreen', { customerId, customerData: customer });
+    if (!customer) {
+      console.warn('⚠️ Customer not found:', customerId);
+      return;
+    }
+    
+    // Pass customerId as string, ensure customerData has all required fields
+    const customerDataToPass = {
+      customerId: String(customer.customerId),
+      customerName: customer.customerName || 'Unknown',
+      customerMobile: customer.customerMobile || customer.customerPhone || '—',
+      totalOutstanding: parseFloat(customer.totalOutstanding || 0),
+      totalPaid: parseFloat(customer.totalPaid || 0),
+      originalAmount: parseFloat(customer.originalAmount || 0),
+      dueDate: customer.dueDate,
+    };
+    
+    console.log('📱 Navigating to RecordPayment with customer:', customerId);
+    navigation.navigate('RecordPayment', { 
+      customerId: customerId,
+      customerData: customerDataToPass 
+    });
   };
 
   // Handle go to ageing
@@ -297,79 +358,88 @@ export default function LipaLaterCustomersScreen({ navigation }) {
                   <View style={styles.topRow}>
                     <Text style={styles.customerName}>{customer.customerName}</Text>
                     <View style={[styles.statusBadge, status.badgeStyle]}>
-                      <Text style={styles.statusBadgeText}>{status.label}</Text>
+                      <Text style={[styles.statusBadgeText, 
+                        status.label === 'Overdue' && styles.badgeRedText,
+                        status.label === 'Due Today' && styles.badgeAmberText,
+                        status.label === 'Upcoming' && styles.badgeGreyText
+                      ]}>
+                        {status.label}
+                      </Text>
                     </View>
                   </View>
-
-                  {/* Phone */}
-                  <Text style={styles.customerPhone}>📞 {customer.customerPhone}</Text>
+                  
+                  {/* Phone number */}
+                  <Text style={styles.customerPhone}>
+                    📞 {customer.customerMobile || customer.customerPhone || '—'}
+                  </Text>
 
                   {/* Details Grid */}
                   <View style={styles.detailsGrid}>
                     <View style={styles.gridItem}>
-                      <Text style={styles.gridLabel}>Original Amount</Text>
-                      <Text style={styles.gridValue}>KSh {originalAmount.toLocaleString()}</Text>
-                    </View>
-                    <View style={styles.gridItem}>
                       <Text style={styles.gridLabel}>Trip Date</Text>
-                      <Text style={styles.gridValue}>
-                        {formatDate(customer.tripDate || customer.createdAt)}
-                      </Text>
+                      <Text style={styles.gridValue}>{formatDate(customer.tripDate)}</Text>
                     </View>
                     <View style={styles.gridItem}>
                       <Text style={styles.gridLabel}>Due Date</Text>
                       <Text style={styles.gridValue}>{formatDate(customer.dueDate)}</Text>
                     </View>
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Amount</Text>
+                      <Text style={styles.gridValue}>KSh {originalAmount.toLocaleString()}</Text>
+                    </View>
                   </View>
 
-                  {/* Payment Summary (if paid) */}
-                  {totalPaid > 0 && (
-                    <View style={styles.paymentSummary}>
-                      <View style={styles.paymentRow}>
-                        <Text>Paid so far:</Text>
-                        <Text style={styles.paidAmount}>KSh {totalPaid.toLocaleString()}</Text>
-                      </View>
-                      <View style={styles.paymentRow}>
-                        <Text>Still owing:</Text>
-                        <Text style={[
-                          styles.owingAmount,
-                          remaining > 0 ? styles.owingAmountWarning : styles.owingAmountSuccess
-                        ]}>
-                          KSh {remaining.toLocaleString()}
-                        </Text>
-                      </View>
+                  {/* Payment Summary */}
+                  <View style={styles.paymentSummary}>
+                    <View style={styles.paymentRow}>
+                      <Text style={styles.paidAmount}>
+                        ✅ Paid: KSh {totalPaid.toLocaleString()}
+                      </Text>
                     </View>
-                  )}
+                    <View style={styles.paymentRow}>
+                      <Text style={[
+                        styles.owingAmount,
+                        remaining > 0 ? styles.owingAmountWarning : styles.owingAmountSuccess
+                      ]}>
+                        {remaining > 0 ? '⏳ Owing' : '✓ Settled'}: KSh {remaining.toLocaleString()}
+                      </Text>
+                    </View>
+                  </View>
 
                   {/* Payment History */}
                   {payments.length > 0 && (
                     <View style={styles.paymentHistory}>
-                      <Text style={styles.paymentHistoryLabel}>Payment History:</Text>
-                      {payments.map((p, i) => (
+                      <Text style={styles.paymentHistoryLabel}>💳 Payment History</Text>
+                      {payments.slice(0, 3).map((payment, i) => (
                         <View key={i} style={styles.paymentHistoryRow}>
                           <Text style={styles.paymentHistoryAmount}>
-                            KSh {(p.amount || 0).toLocaleString()}
+                            KSh {(payment.amount || 0).toLocaleString()}
                           </Text>
                           <Text style={styles.paymentHistoryDate}>
-                            {formatDate(p.date)}
+                            {formatDate(payment.date)}
                           </Text>
                         </View>
                       ))}
+                      {payments.length > 3 && (
+                        <Text style={styles.paymentHistoryLabel}>
+                          +{payments.length - 3} more payment{payments.length - 3 !== 1 ? 's' : ''}
+                        </Text>
+                      )}
                     </View>
                   )}
 
                   {/* Record Payment Button or Settled Badge */}
-                  {!customer.settled && remaining > 0 ? (
-                    <TouchableOpacity
+                  {customer.settled ? (
+                    <View style={styles.settledBadge}>
+                      <Text style={styles.settledBadgeText}>✓ Fully Settled</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity 
                       style={styles.recordPaymentBtn}
                       onPress={() => handleRecordPayment(customer.customerId)}
                     >
-                      <Text style={styles.recordPaymentBtnText}>💳 Record Payment</Text>
+                      <Text style={styles.recordPaymentBtnText}>Record Payment</Text>
                     </TouchableOpacity>
-                  ) : (
-                    <View style={styles.settledBadge}>
-                      <Text style={styles.settledBadgeText}>✓ Fully settled</Text>
-                    </View>
                   )}
                 </View>
               </View>
@@ -378,9 +448,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
         ) : (
           <View style={styles.emptyState}>
             <Text style={styles.emptyStateText}>
-              {searchTerm 
-                ? '❌ No customers match your search.' 
-                : '✅ No pending Lipa Later payments right now. 🎉'}
+              {searchTerm ? '❌ No customers match your search.' : '✅ No pending Lipa Later customers!'}
             </Text>
           </View>
         )}
@@ -390,7 +458,8 @@ export default function LipaLaterCustomersScreen({ navigation }) {
       {paginationData.totalPages > 1 && (
         <View style={styles.paginationContainer}>
           <Text style={styles.paginationInfo}>
-            Showing {paginationData.records.length === 0 ? 0 : paginationData.startIndex + 1}–{paginationData.endIndex} of {paginationData.filteredCount} {searchTerm ? 'matching ' : ''}customers (Page {paginationData.currentPage} of {paginationData.totalPages})
+            Showing {paginationData.records.length > 0 ? paginationData.startIndex + 1 : 0}-{paginationData.endIndex} of {paginationData.filteredCount}
+            {searchTerm && ` (filtered from ${paginationData.totalRecords})`}
           </Text>
           <View style={styles.paginationButtons}>
             <TouchableOpacity
@@ -398,7 +467,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
                 styles.paginationBtn,
                 paginationData.currentPage === 1 && styles.paginationBtnDisabled
               ]}
-              onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              onPress={() => setCurrentPage(Math.max(1, currentPage - 1))}
               disabled={paginationData.currentPage === 1}
             >
               <Text style={styles.paginationBtnText}>← Previous</Text>
@@ -408,7 +477,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
                 styles.paginationBtn,
                 paginationData.currentPage === paginationData.totalPages && styles.paginationBtnDisabled
               ]}
-              onPress={() => setCurrentPage(prev => Math.min(paginationData.totalPages, prev + 1))}
+              onPress={() => setCurrentPage(Math.min(paginationData.totalPages, currentPage + 1))}
               disabled={paginationData.currentPage === paginationData.totalPages}
             >
               <Text style={styles.paginationBtnText}>Next →</Text>
@@ -417,16 +486,19 @@ export default function LipaLaterCustomersScreen({ navigation }) {
         </View>
       )}
 
-      {/* Ageing Report Button */}
-      <TouchableOpacity style={styles.ageingButton} onPress={handleGoToAgeing}>
-        <Text style={styles.ageingButtonText}>📊 View Payment Ageing Report</Text>
+      {/* Ageing Button */}
+      <TouchableOpacity 
+        style={styles.ageingButton}
+        onPress={handleGoToAgeing}
+      >
+        <Text style={styles.ageingButtonText}>📊 View Ageing Report</Text>
       </TouchableOpacity>
 
-      {/* Offline Indicator */}
+      {/* Offline Status */}
       {!isConnected && (
         <View style={styles.offlineBanner}>
           <Text style={styles.offlineText}>
-            📱 Offline: Changes will sync when connection is restored.
+            📱 Offline Mode: Data synced when connection is restored.
           </Text>
         </View>
       )}
@@ -445,19 +517,13 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 11.5,
-    color: '#5b606c',
-    marginBottom: 16,
-    fontWeight: '500',
+    marginBottom: 12,
   },
 
   warningBanner: {
-    backgroundColor: '#fdf3df',
+    backgroundColor: '#fffaf9',
     borderLeftWidth: 4,
-    borderLeftColor: '#c98a12',
+    borderLeftColor: '#e0453f',
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,

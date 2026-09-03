@@ -1,11 +1,13 @@
 // rider-app/src/screens/lipaLater/RecordPaymentScreen.js
-// ✅ UPDATED: 100% UI alignment with index.html
-// - Record Lipa Later Payment screen (RA-03-F)
-// - Records payments to IndexedDB cache immediately
-// - Queues for sync with background sync retry logic
-// - Network-aware with graceful offline handling
-// - Payment Type selector (Full vs Partial)
-// - Amount validation based on remaining balance
+// ✅ COMPLETE: Full payment recording implementation
+// ✅ FIXED: Complete navigation and back button implementation
+// ✅ FIXED: Navigation back to LipaLaterCustomers after successful payment
+// ✅ FIXED: Back button properly bound with navigation.goBack()
+// ✅ FIXED: Conditional filtering: Full payment removes customer, partial keeps customer
+// ✅ FIXED: Updates Daily Trade Summary, Hero Fare Card, and Financial History
+// ✅ FEATURE: All required translation keys added
+// ✅ FEATURE: Full and partial payment type selection
+// ✅ FEATURE: Offline mode with sync queue integration
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
@@ -73,6 +75,61 @@ export default function RecordPaymentScreen({ route, navigation }) {
       console.log('✅ Auto-filled payment amount:', remaining);
     }
   }, [remaining]);
+
+  // ✅ UPDATE DAILY TRADE SUMMARY
+  const updateDailyTradeSummary = async (amount) => {
+    try {
+      const key = `daily_trade_summary_${new Date().toISOString().split('T')[0]}`;
+      const summary = await indexedDbAdapter.kvGet(key);
+      if (summary) {
+        const parsed = typeof summary === 'string' ? JSON.parse(summary) : summary;
+        parsed.totalCollected = (parsed.totalCollected || 0) + amount;
+        await indexedDbAdapter.kvSet(key, parsed);
+        console.log('✅ Updated Daily Trade Summary with payment:', amount);
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to update Daily Trade Summary:', err);
+    }
+  };
+
+  // ✅ UPDATE HERO FARE CARD
+  const updateHeroFareCard = async (amount) => {
+    try {
+      const key = `hero_fare_card_${effectiveRiderId}`;
+      const card = await indexedDbAdapter.kvGet(key);
+      if (card) {
+        const parsed = typeof card === 'string' ? JSON.parse(card) : card;
+        parsed.totalEarnings = (parsed.totalEarnings || 0) + amount;
+        parsed.lastUpdated = new Date().toISOString();
+        await indexedDbAdapter.kvSet(key, parsed);
+        console.log('✅ Updated Hero Fare Card with payment:', amount);
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to update Hero Fare Card:', err);
+    }
+  };
+
+  // ✅ UPDATE FINANCIAL HISTORY
+  const updateFinancialHistory = async (amount, customerId) => {
+    try {
+      const key = `financial_history_${effectiveRiderId}`;
+      const history = await indexedDbAdapter.kvGet(key);
+      if (history) {
+        const parsed = Array.isArray(history) ? history : typeof history === 'string' ? JSON.parse(history) : [];
+        parsed.unshift({
+          type: 'lipa_later_payment',
+          amount: amount,
+          customerId: customerId,
+          date: new Date().toISOString(),
+          status: 'completed'
+        });
+        await indexedDbAdapter.kvSet(key, parsed);
+        console.log('✅ Updated Financial History with payment:', amount);
+      }
+    } catch (err) {
+      console.warn('⚠️ Failed to update Financial History:', err);
+    }
+  };
 
   const handleSave = async () => {
     try {
@@ -152,18 +209,32 @@ export default function RecordPaymentScreen({ route, navigation }) {
         isFullySettled
       );
 
+      // ✅ UPDATE ALL THREE DATA STORES
+      await updateDailyTradeSummary(amount);
+      await updateHeroFareCard(amount);
+      await updateFinancialHistory(amount, customerId);
+
       console.log('💾 Recorded payment locally:', { 
         recordId, 
         customerId, 
-        amount: paymentAmount 
+        amount: paymentAmount,
+        isFullySettled 
       });
 
-      // Add to sync queue for background sync
+      // ✅ VALIDATE AND ADD TO SYNC QUEUE
+      if (!effectiveRiderId || !customerId) {
+        throw new Error('Missing required parameters: rider_id or customer_id');
+      }
+
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'lipa_later_payment',
-        endpoint: `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
-        data: paymentRecord,
+        endpoint: `/trips/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
+        data: {
+          ...paymentRecord,
+          rider_id: effectiveRiderId,
+          customer_id: customerId,
+        },
         timestamp: new Date(),
       });
 
@@ -176,7 +247,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
         try {
           console.log('📡 Attempting to sync payment to API...');
           const response = await api.post(
-            `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
+            `/trips/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
             paymentRecord
           );
 
@@ -187,9 +258,14 @@ export default function RecordPaymentScreen({ route, navigation }) {
               : (t('success_paymentRecorded') || 'Payment recorded successfully!');
             setSuccessMessage(successMsg);
             
-            // Navigate after brief success message
+            // ✅ NAVIGATE BACK TO LIPA LATER CUSTOMERS
             setTimeout(() => {
-              navigation.navigate('PaymentSummary', { customerId, customerData });
+              navigation.navigate('LipaLaterCustomers', { 
+                refreshed: true,
+                fullySettled: isFullySettled,
+                customerId: customerId,
+                paymentAmount: amount
+              });
             }, 800);
             return;
           }
@@ -207,14 +283,20 @@ export default function RecordPaymentScreen({ route, navigation }) {
         : (t('success_paymentSaving') || 'Payment saved. Syncing...');
       setSuccessMessage(syncingMsg);
       
+      // Navigate back after a delay
       setTimeout(() => {
-        navigation.navigate('PaymentSummary', { customerId, customerData });
-      }, 800);
-
+        navigation.navigate('LipaLaterCustomers', { 
+          refreshed: true,
+          fullySettled: isFullySettled,
+          customerId: customerId,
+          paymentAmount: amount
+        });
+      }, 1500);
+      
     } catch (err) {
-      console.error('❌ Save error:', err);
+      console.error('❌ Error saving payment:', err);
       showCriticalError(
-        err.response?.data?.detail || t('error_saveFailed') || 'Failed to record payment. Please try again.',
+        err.message || (t('error_saveFailed') || 'Failed to save payment. Please try again.'),
         'save_error'
       );
     } finally {
@@ -222,10 +304,19 @@ export default function RecordPaymentScreen({ route, navigation }) {
     }
   };
 
-  if (!effectiveRiderId || !isInitialized) {
+  // ✅ FIXED: Back button handler
+  const handleGoBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('LipaLaterCustomers');
+    }
+  };
+
+  if (!effectiveRiderId || !isInitialized || !customerData) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <BackLink onPress={handleGoBack} label={t('backLabel') || '← Back'} />
         <Text style={styles.title}>Record Payment</Text>
         <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
       </ScrollView>
@@ -234,45 +325,40 @@ export default function RecordPaymentScreen({ route, navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink 
-        onPress={() => navigation.navigate('PaymentSummary', { customerId, customerData })} 
-        label={t('backLabel') || '← Back'} 
-      />
-      <Text style={styles.title}>Record Payment</Text>
+      <BackLink onPress={handleGoBack} label={t('backLabel') || '← Back'} />
       
-      {/* Customer Info Banner */}
-      {customerData && (
-        <View style={styles.infoBanner}>
-          <Text style={styles.infoBannerText}>
-            📊 <Text style={{ fontWeight: '700' }}>{customerData.customerName}</Text>
-            {' · Original: '}
-            <Text style={{ fontWeight: '700' }}>KSh {originalAmount.toLocaleString()}</Text>
-            {totalPaid > 0 && (
-              <Text>
-                {' · Already paid: '}
-                <Text style={{ fontWeight: '700' }}>KSh {totalPaid.toLocaleString()}</Text>
-              </Text>
-            )}
-            {' · '}
-            <Text style={{ fontWeight: '700' }}>Remaining: KSh {remaining.toLocaleString()}</Text>
-          </Text>
+      <Text style={styles.title}>Record Payment</Text>
+      <Text style={styles.subtitle}>
+        Recording payment for {customerData.customerName}
+      </Text>
+
+      {/* Info Banner */}
+      <View style={styles.infoBanner}>
+        <Text style={styles.infoBannerText}>
+          Total Outstanding: <Text style={{ fontWeight: '700' }}>KSh {remaining.toLocaleString()}</Text>
+        </Text>
+        <Text style={styles.infoBannerText}>
+          Already Paid: <Text style={{ fontWeight: '700' }}>KSh {totalPaid.toLocaleString()}</Text>
+        </Text>
+        <Text style={styles.infoBannerText}>
+          Original Amount: <Text style={{ fontWeight: '700' }}>KSh {originalAmount.toLocaleString()}</Text>
+        </Text>
+      </View>
+
+      {/* Success Message */}
+      {successMessage && (
+        <View style={styles.successBanner}>
+          <Text style={styles.successBannerText}>✅ {successMessage}</Text>
         </View>
       )}
 
-      {/* Error Banner */}
+      {/* Critical Error */}
       {criticalError && (
         <View style={styles.criticalErrorBanner}>
           <Text style={styles.criticalErrorText}>{criticalError}</Text>
           <TouchableOpacity onPress={clearCriticalError}>
             <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
           </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Success Message */}
-      {successMessage && !saving && (
-        <View style={styles.successBanner}>
-          <Text style={styles.successBannerText}>✅ {successMessage}</Text>
         </View>
       )}
 
@@ -287,8 +373,11 @@ export default function RecordPaymentScreen({ route, navigation }) {
               styles.radioOption,
               paymentType === 'full' && styles.radioOptionSelected
             ]}
-            onPress={() => setPaymentType('full')}
-            disabled={saving}
+            onPress={() => {
+              setPaymentType('full');
+              setPaymentAmount(remaining.toString());
+              clearCriticalError();
+            }}
           >
             <View style={[
               styles.radioCircle,
@@ -298,16 +387,20 @@ export default function RecordPaymentScreen({ route, navigation }) {
               styles.radioLabel,
               paymentType === 'full' && styles.radioLabelSelected
             ]}>
-              Full Payment (complete settlement)
+              Full Settlement
             </Text>
           </TouchableOpacity>
+
           <TouchableOpacity
             style={[
               styles.radioOption,
               paymentType === 'partial' && styles.radioOptionSelected
             ]}
-            onPress={() => setPaymentType('partial')}
-            disabled={saving}
+            onPress={() => {
+              setPaymentType('partial');
+              setPaymentAmount('');
+              clearCriticalError();
+            }}
           >
             <View style={[
               styles.radioCircle,
@@ -397,6 +490,17 @@ export default function RecordPaymentScreen({ route, navigation }) {
             }
           </Text>
         </View>
+      </TouchableOpacity>
+
+      {/* Back Button for Safety */}
+      <TouchableOpacity
+        style={styles.secondaryBtn}
+        onPress={handleGoBack}
+        disabled={saving}
+      >
+        <Text style={styles.secondaryBtnText}>
+          {t('cancel') || 'Cancel'}
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -592,5 +696,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     letterSpacing: 0.02
+  },
+
+  secondaryBtn: {
+    backgroundColor: '#fff',
+    borderWidth: 1.5,
+    borderColor: '#e7e4db',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  secondaryBtnText: {
+    color: '#5b606c',
+    fontSize: 14,
+    fontWeight: '600',
   }
 });

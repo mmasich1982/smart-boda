@@ -709,4 +709,73 @@ export default {
   "totalEntries": "Total Entries",
   "costPerEntry": "Cost per Entry",
   
+  // ADD THESE KEYS TO YOUR EXISTING en-fallback.js TRANSLATION OBJECT:
+ 
+const MISSING_KEYS = {
+  // ✅ Payment Type Labels
+  'paymentType': 'Payment Type',
+  'paymentType_full': 'Full Settlement',
+  'paymentType_partial': 'Partial Payment',
+  
+  // ✅ Success Messages
+  'success_paymentSaving': 'Payment saved. Syncing...',
+  'success_paymentRecorded': 'Payment recorded successfully!',
+  'success_paymentRecordedFull': 'Payment recorded! Account settled.',
+  
+  // ✅ Payment Screen Labels
+  'recordPaymentButton': 'Record Payment →',
+  'paymentAmount': 'Amount Received (KSh)',
+  'notes': 'Notes (optional)',
+  'saving': 'Saving...',
+  
+  // ✅ Validation Errors
+  'validationError_enterValidCost': 'Please enter a valid payment amount greater than zero.',
+  'error_noCustomer': 'Customer not found.',
+  'error_loadCustomersFailed': 'Unable to load customers. Please try again.',
+  'authError_riderIdNotAvailable': 'Rider ID not available. Please restart the app.',
+  
+  // ✅ Lipa Later Screen Labels
+  'lipaLaterCustomers': 'Lipa Later Customers',
+  'lipaLaterRecordPayment': 'Record Payment',
+  'lipaLaterAgeingReport': 'Ageing Report',
+  'lipaLaterPaymentSummary': 'Payment Summary',
+  
+  // ✅ Customer Status Badges
+  'status_overdue': 'Overdue',
+  'status_dueToday': 'Due Today',
+  'status_upcoming': 'Upcoming',
+  'status_paid': 'Paid',
+  'status_partial': 'Partial',
+  'status_pending': 'Pending',
+  
+  // ✅ Customer List Labels
+  'customerName': 'Customer Name',
+  'customerMobile': 'Mobile Number',
+  'totalOutstanding': 'Outstanding',
+  'totalPaid': 'Paid',
+  'dueDate': 'Due Date',
+  'viewDetails': 'View Details',
+  'recordPayment': 'Record Payment',
+  
+  // ✅ Ageing Report Buckets
+  'ageingCurrent': 'Current',
+  'ageingOverdue1_30': 'Overdue 1-30 days',
+  'ageingOverdue31_60': 'Overdue 31-60 days',
+  'ageingOverdue61_90': 'Overdue 61-90 days',
+  'ageingOverdue90Plus': 'Overdue 90+ days',
+  
+  // ✅ Back Navigation
+  'back': 'Back',
+  'backToCustomers': 'Back to Customers',
+  
+  // ✅ Empty States
+  'noCustomersFound': 'No Lipa Later customers found',
+  'startByCreatingTrip': 'Start by creating a Lipa Later trip',
+  'searchCustomers': 'Search by name or mobile...',
+  'clearSearch': 'Clear',
+  
+  // ✅ Offline Messages
+  'offlineMode': 'Offline Mode',
+  'paymentWillSyncWhenOnline': 'Payment will sync when connection is restored.',
+  
 };
