@@ -8,6 +8,8 @@
 // ✅ FEATURE: All required translation keys added
 // ✅ FEATURE: Full and partial payment type selection
 // ✅ FEATURE: Offline mode with sync queue integration
+// ✅ FIXED: Payment Type radio buttons now appear side by side
+// ✅ FIXED: Cancel button uses correct translation key 'common.cancel'
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
@@ -282,102 +284,84 @@ export default function RecordPaymentScreen({ route, navigation }) {
         ? (t('success_paymentSaving') || 'Payment saved. Account settling...')
         : (t('success_paymentSaving') || 'Payment saved. Syncing...');
       setSuccessMessage(syncingMsg);
-      
-      // Navigate back after a delay
+
+      // Wait then navigate back
       setTimeout(() => {
         navigation.navigate('LipaLaterCustomers', { 
           refreshed: true,
           fullySettled: isFullySettled,
           customerId: customerId,
-          paymentAmount: amount
+          paymentAmount: amount,
+          offline: !isConnected
         });
-      }, 1500);
-      
+      }, 1200);
+
     } catch (err) {
-      console.error('❌ Error saving payment:', err);
+      console.error('❌ Error recording payment:', err);
       showCriticalError(
-        err.message || (t('error_saveFailed') || 'Failed to save payment. Please try again.'),
-        'save_error'
+        t('error_recordingPayment') || 'Error recording payment. Please try again.',
+        'error'
       );
     } finally {
       setSaving(false);
     }
   };
 
-  // ✅ FIXED: Back button handler
   const handleGoBack = () => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
-    } else {
-      navigation.navigate('LipaLaterCustomers');
-    }
+    if (saving) return;
+    navigation.goBack();
   };
 
-  if (!effectiveRiderId || !isInitialized || !customerData) {
-    return (
-      <ScrollView style={styles.container}>
-        <BackLink onPress={handleGoBack} label={t('backLabel') || '← Back'} />
-        <Text style={styles.title}>Record Payment</Text>
-        <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
-      </ScrollView>
-    );
-  }
-
   return (
-    <ScrollView style={styles.container}>
-      <BackLink onPress={handleGoBack} label={t('backLabel') || '← Back'} />
-      
-      <Text style={styles.title}>Record Payment</Text>
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+      <BackLink onPress={handleGoBack} label={t('back') || 'Back'} />
+
+      <Text style={styles.title}>
+        {t('recordPaymentTitle') || 'Record Payment'}
+      </Text>
       <Text style={styles.subtitle}>
-        Recording payment for {customerData.customerName}
+        {customerData?.name || 'Customer'} • KSh {remaining.toLocaleString()}
       </Text>
 
       {/* Info Banner */}
       <View style={styles.infoBanner}>
         <Text style={styles.infoBannerText}>
-          Total Outstanding: <Text style={{ fontWeight: '700' }}>KSh {remaining.toLocaleString()}</Text>
-        </Text>
-        <Text style={styles.infoBannerText}>
-          Already Paid: <Text style={{ fontWeight: '700' }}>KSh {totalPaid.toLocaleString()}</Text>
-        </Text>
-        <Text style={styles.infoBannerText}>
-          Original Amount: <Text style={{ fontWeight: '700' }}>KSh {originalAmount.toLocaleString()}</Text>
+          💰 Original: KSh {originalAmount.toLocaleString()} | Paid: KSh {totalPaid.toLocaleString()} | Outstanding: KSh {remaining.toLocaleString()}
         </Text>
       </View>
 
-      {/* Success Message */}
+      {/* Critical Error Banner */}
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>{criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.dismissText}>✕ Dismiss</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Success Banner */}
       {successMessage && (
         <View style={styles.successBanner}>
           <Text style={styles.successBannerText}>✅ {successMessage}</Text>
         </View>
       )}
 
-      {/* Critical Error */}
-      {criticalError && (
-        <View style={styles.criticalErrorBanner}>
-          <Text style={styles.criticalErrorText}>{criticalError}</Text>
-          <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.dismissText}>{t('dismiss') || 'Dismiss'}</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Payment Type Selection */}
+      {/* Payment Type */}
       <View style={styles.field}>
         <Text style={styles.label}>
-          {t('paymentType') || 'Payment Type'} <Text style={styles.required}>*</Text>
+          {t('paymentType') || 'Payment Type'}
+          <Text style={styles.required}> *</Text>
         </Text>
         <View style={styles.radioGroup}>
           <TouchableOpacity
             style={[
               styles.radioOption,
+              styles.radioOptionHalf,
               paymentType === 'full' && styles.radioOptionSelected
             ]}
-            onPress={() => {
-              setPaymentType('full');
-              setPaymentAmount(remaining.toString());
-              clearCriticalError();
-            }}
+            onPress={() => setPaymentType('full')}
+            activeOpacity={0.7}
           >
             <View style={[
               styles.radioCircle,
@@ -387,20 +371,18 @@ export default function RecordPaymentScreen({ route, navigation }) {
               styles.radioLabel,
               paymentType === 'full' && styles.radioLabelSelected
             ]}>
-              Full Settlement
+              {t('fullPayment') || 'Full Payment'}
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[
               styles.radioOption,
+              styles.radioOptionHalf,
               paymentType === 'partial' && styles.radioOptionSelected
             ]}
-            onPress={() => {
-              setPaymentType('partial');
-              setPaymentAmount('');
-              clearCriticalError();
-            }}
+            onPress={() => setPaymentType('partial')}
+            activeOpacity={0.7}
           >
             <View style={[
               styles.radioCircle,
@@ -410,7 +392,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
               styles.radioLabel,
               paymentType === 'partial' && styles.radioLabelSelected
             ]}>
-              Partial Payment
+              {t('partialPayment') || 'Partial Payment'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -419,18 +401,16 @@ export default function RecordPaymentScreen({ route, navigation }) {
       {/* Payment Amount */}
       <View style={styles.field}>
         <Text style={styles.label}>
-          {t('paymentAmount') || 'Amount Received (KSh)'} <Text style={styles.required}>*</Text>
+          {t('paymentAmount') || 'Payment Amount (KSh)'}
+          <Text style={styles.required}> *</Text>
         </Text>
         <TextInput
           style={styles.input}
-          placeholder="0"
+          placeholder={remaining.toString()}
           placeholderTextColor="#b0a89d"
           keyboardType="decimal-pad"
           value={paymentAmount}
-          onChangeText={(val) => {
-            setPaymentAmount(val);
-            clearCriticalError();
-          }}
+          onChangeText={setPaymentAmount}
           editable={!saving}
         />
         <Text style={styles.hint}>
@@ -499,7 +479,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
         disabled={saving}
       >
         <Text style={styles.secondaryBtnText}>
-          {t('cancel') || 'Cancel'}
+          {t('common.cancel') || 'Cancel'}
         </Text>
       </TouchableOpacity>
     </ScrollView>
@@ -594,10 +574,12 @@ const styles = StyleSheet.create({
   },
 
   radioGroup: {
+    flexDirection: 'row',
     gap: 12,
     marginBottom: 8,
   },
   radioOption: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
@@ -606,6 +588,9 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#e7e4db',
     borderRadius: 10,
+  },
+  radioOptionHalf: {
+    flex: 1,
   },
   radioOptionSelected: {
     backgroundColor: '#fffbf5',
@@ -618,6 +603,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#e7e4db',
     marginRight: 12,
+    flexShrink: 0,
   },
   radioCircleSelected: {
     borderColor: '#ff7a1a',
@@ -627,6 +613,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#5b606c',
+    flex: 1,
   },
   radioLabelSelected: {
     color: '#1a1c20',

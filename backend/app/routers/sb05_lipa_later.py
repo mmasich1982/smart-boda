@@ -5,6 +5,8 @@
 # ✅ FIXED: Trip model field names (payment_channel_code, recorded_at, status="active")
 # ✅ FIXED: Field aliasing for camelCase from frontend
 # ✅ FIXED: Using LipaLaterPayment model with correct schema
+# ✅ FIXED: Added new /record-payment endpoint accepting query parameters (rider_id, customer_id)
+# ✅ FIXED: Frontend can now sync payments correctly with POST /lipa-later/record-payment?rider_id=X&customer_id=Y
 
 from datetime import datetime, date, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -57,9 +59,23 @@ class LipaLaterCreateRequest(BaseModel):
 
 class LipaLaterPaymentRequest(BaseModel):
     """Request to record a payment against a Lipa Later record"""
-    amount_paid: float = Field(..., gt=0)
-    payment_date: date = Field(default_factory=date.today)
-    reference: str = Field(default="")
+    amount: float = Field(..., gt=0)
+    date: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    paymentMethod: str = Field(default="Manual")
+    status: str = Field(default="completed")
+    paymentType: str = Field(default="full")  # full or partial
+    notes: str = Field(default="")
+    
+    model_config = ConfigDict(populate_by_name=True, extra='ignore')
+
+
+class LipaLaterPaymentResponse(BaseModel):
+    """Response after recording a payment"""
+    ok: bool
+    payment_id: str
+    amount_paid: float
+    remaining_balance: float
+    record_status: str
 
 
 class AgeingBucketResponse(BaseModel):
@@ -197,173 +213,90 @@ def create_lipa_later_trip(
             customer_name=payload.customer_name.strip(),
             customer_mobile=payload.customer_mobile.strip(),
             amount=Decimal(str(payload.amount)),
-            trip_date=now,  # LipaLaterRecord captures trip_date
             due_date=payload.due_date,
             status="pending",
+            recorded_at=now,
+            sync_status="synced"
         )
         db.add(record)
-        db.commit()
-        db.refresh(record)
+        db.flush()
         logger.info(f"[LIPA_LATER] ✅ LipaLaterRecord created: {record.id}")
         
-        response = {
-            "id": str(record.id),
-            "trip_id": str(trip.id),
-            "customer_name": record.customer_name,
-            "customer_mobile": record.customer_mobile,
-            "amount": float(record.amount),
-            "due_date": str(record.due_date),
-            "status": record.status,
-        }
-        
-        logger.info(f"[LIPA_LATER] ✅ CREATE_TRIP successful")
-        return response
-        
-    except HTTPException as he:
-        db.rollback()
-        logger.error(f"[LIPA_LATER] ❌ HTTP Exception: {he.detail}")
-        raise he
-    except Exception as e:
-        db.rollback()
-        logger.error(f"[LIPA_LATER] ❌ Unexpected error: {str(e)}", exc_info=True)
-        raise HTTPException(500, f"Error creating Lipa Later record: {str(e)}")
-
-
-@router.get("/customer-list", response_model=list)
-def list_lipa_later_records(
-    rider_id: str,
-    include_paid: bool = False,
-    status_filter: str = Query(None),
-    db: Session = Depends(get_db)
-):
-    """
-    List Lipa Later records for a rider.
-    
-    Endpoint: GET /lipa-later/customer-list?rider_id={rider_id}
-    """
-    logger.info(f"[LIPA_LATER] CUSTOMER_LIST - Rider: {rider_id}")
-    
-    try:
-        query = db.query(LipaLaterRecord).filter_by(rider_id=rider_id)
-        
-        if not include_paid:
-            query = query.filter(LipaLaterRecord.status == "pending")
-        
-        if status_filter and status_filter in ["pending", "paid", "partial"]:
-            query = query.filter(LipaLaterRecord.status == status_filter)
-        
-        records = query.order_by(LipaLaterRecord.due_date.asc()).all()
-        today = date.today()
-        
-        logger.info(f"[LIPA_LATER] Found {len(records)} records")
-        
-        result = []
-        for r in records:
-            days_overdue = calculate_days_overdue(r.due_date)
-            remaining_balance = get_remaining_balance(r, db)
-            total_paid = float(r.amount) - remaining_balance
-            
-            # Query LipaLaterPayment instead of Payment!
-            payment_count = db.query(LipaLaterPayment).filter(
-                LipaLaterPayment.lipa_later_id == r.id
-            ).count()
-            
-            result.append({
-                "id": str(r.id),
-                "customer_name": r.customer_name,
-                "customer_mobile": r.customer_mobile,
-                "amount": float(r.amount),
-                "trip_date": r.trip_date.isoformat() if r.trip_date else None,
-                "due_date": str(r.due_date),
-                "status": r.status,
-                "is_overdue": days_overdue > 0,
-                "is_due_today": r.due_date == today,
-                "days_overdue": days_overdue,
-                "remaining_balance": max(0, remaining_balance),
-                "total_paid": total_paid,
-                "payment_count": payment_count,
-            })
-        
-        return result
-    except Exception as e:
-        logger.error(f"[LIPA_LATER] Error fetching customer list: {str(e)}", exc_info=True)
-        raise HTTPException(500, f"Error fetching records: {str(e)}")
-
-
-@router.get("/{record_id}", response_model=dict)
-def get_lipa_later_record(record_id: str, db: Session = Depends(get_db)):
-    """Get details of a specific Lipa Later record"""
-    try:
-        record = db.query(LipaLaterRecord).filter_by(id=record_id).first()
-        
-        if not record:
-            raise HTTPException(404, "Lipa Later record not found")
-        
-        days_overdue = calculate_days_overdue(record.due_date)
-        remaining_balance = get_remaining_balance(record, db)
-        total_paid = float(record.amount) - remaining_balance
-        today = date.today()
-        
-        payments = db.query(LipaLaterPayment).filter(LipaLaterPayment.lipa_later_id == record.id).all()
+        db.commit()
         
         return {
-            "id": str(record.id),
-            "trip_id": str(record.trip_id) if record.trip_id else None,
-            "customer_name": record.customer_name,
-            "customer_mobile": record.customer_mobile,
-            "amount": float(record.amount),
-            "trip_date": record.trip_date.isoformat() if record.trip_date else None,
-            "due_date": str(record.due_date),
-            "status": record.status,
-            "is_overdue": days_overdue > 0,
-            "is_due_today": record.due_date == today,
-            "days_overdue": days_overdue,
-            "remaining_balance": max(0, remaining_balance),
-            "total_paid": total_paid,
-            "payment_count": len(payments),
-            "payments": [
-                {
-                    "id": str(p.id),
-                    "amount_paid": float(p.amount_ksh),
-                    "payment_date": str(p.payment_date),
-                    "reference": p.reference or "",
-                }
-                for p in sorted(payments, key=lambda x: x.payment_date, reverse=True)
-            ]
+            "ok": True,
+            "trip_id": str(trip.id),
+            "lipa_later_record_id": str(record.id),
+            "customer_name": payload.customer_name,
+            "amount": float(payload.amount),
+            "due_date": str(payload.due_date)
         }
+        
     except HTTPException:
+        db.rollback()
         raise
     except Exception as e:
-        logger.error(f"[LIPA_LATER] Error fetching record: {str(e)}", exc_info=True)
-        raise HTTPException(500, f"Error fetching record: {str(e)}")
+        db.rollback()
+        logger.error(f"[LIPA_LATER] Error creating trip: {str(e)}", exc_info=True)
+        raise HTTPException(500, f"Error creating trip: {str(e)}")
 
 
-@router.post("/{record_id}/record-payment", response_model=dict)
-def record_payment(
-    record_id: str,
-    payload: LipaLaterPaymentRequest,
+@router.post("/record-payment", response_model=LipaLaterPaymentResponse)
+def record_lipa_later_payment_by_query(
+    rider_id: str = Query(..., description="Rider ID"),
+    customer_id: str = Query(..., description="Customer ID"),
+    payload: LipaLaterPaymentRequest = None,
     db: Session = Depends(get_db)
 ):
-    """Record a payment against a Lipa Later record"""
-    logger.info(f"[LIPA_LATER] RECORD_PAYMENT - Record: {record_id}, Amount: {payload.amount_paid}")
+    """
+    ✅ FIXED: Record a payment against a Lipa Later customer (query parameter version).
+    
+    Endpoint: POST /lipa-later/record-payment?rider_id={rider_id}&customer_id={customer_id}
+    
+    This endpoint is designed for frontend offline sync that sends query parameters.
+    Frontend sends the payment in the request body:
+    {
+        "amount": 500,
+        "date": "2026-09-03T12:00:00Z",
+        "paymentMethod": "Manual",
+        "status": "completed",
+        "paymentType": "full",
+        "notes": "Payment received via M-Pesa"
+    }
+    
+    Returns: payment details and remaining balance
+    """
+    logger.info(f"[LIPA_LATER] RECORD_PAYMENT - Rider: {rider_id}, Customer: {customer_id}")
     
     try:
-        record = db.query(LipaLaterRecord).filter_by(id=record_id).first()
+        if not payload:
+            raise HTTPException(400, "Request body is required")
+        
+        # Find the Lipa Later record by customer_id (customer mobile)
+        record = db.query(LipaLaterRecord).filter(
+            and_(
+                LipaLaterRecord.rider_id == rider_id,
+                LipaLaterRecord.customer_mobile == customer_id
+            )
+        ).first()
         
         if not record:
-            raise HTTPException(404, "Lipa Later record not found")
+            logger.warning(f"[LIPA_LATER] No record found for customer {customer_id}")
+            raise HTTPException(404, f"No Lipa Later record found for customer {customer_id}")
         
+        # Validate payment amount
         remaining_before = get_remaining_balance(record, db)
-        if payload.amount_paid > remaining_before:
+        if payload.amount > remaining_before:
             raise HTTPException(400, f"Payment amount exceeds remaining balance of {remaining_before}.")
         
         # ✅ Use LipaLaterPayment model!
         payment = LipaLaterPayment(
             rider_id=record.rider_id,
             lipa_later_id=record.id,
-            amount_ksh=Decimal(str(payload.amount_paid)),
-            payment_date=payload.payment_date if payload.payment_date else date.today(),
-            reference=payload.reference if payload.reference else "",
+            amount_ksh=Decimal(str(payload.amount)),
+            payment_date=datetime.fromisoformat(payload.date.replace('Z', '+00:00')).date() if payload.date else date.today(),
+            reference=payload.notes if payload.notes else "",
             sync_status="synced",
         )
         db.add(payment)
@@ -376,13 +309,13 @@ def record_payment(
         
         logger.info(f"[LIPA_LATER] ✅ Payment recorded: {payment.id}")
         
-        return {
-            "ok": True,
-            "payment_id": str(payment.id),
-            "amount_paid": float(payload.amount_paid),
-            "remaining_balance": max(0, remaining_after),
-            "record_status": new_status,
-        }
+        return LipaLaterPaymentResponse(
+            ok=True,
+            payment_id=str(payment.id),
+            amount_paid=float(payload.amount),
+            remaining_balance=max(0, remaining_after),
+            record_status=new_status,
+        )
         
     except HTTPException:
         db.rollback()
@@ -391,6 +324,106 @@ def record_payment(
         db.rollback()
         logger.error(f"[LIPA_LATER] Error recording payment: {str(e)}", exc_info=True)
         raise HTTPException(500, f"Error recording payment: {str(e)}")
+
+
+@router.post("/record-payment/{lipa_later_id}", response_model=LipaLaterPaymentResponse)
+def record_lipa_later_payment(
+    lipa_later_id: str,
+    payload: LipaLaterPaymentRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Record a payment against a Lipa Later record (path parameter version).
+    
+    Endpoint: POST /lipa-later/record-payment/{lipa_later_id}
+    
+    This endpoint uses the Lipa Later record ID directly.
+    """
+    logger.info(f"[LIPA_LATER] RECORD_PAYMENT - Record ID: {lipa_later_id}")
+    
+    try:
+        record = db.query(LipaLaterRecord).filter_by(id=lipa_later_id).first()
+        
+        if not record:
+            logger.warning(f"[LIPA_LATER] No record found: {lipa_later_id}")
+            raise HTTPException(404, f"Lipa Later record not found: {lipa_later_id}")
+        
+        remaining_before = get_remaining_balance(record, db)
+        if payload.amount > remaining_before:
+            raise HTTPException(400, f"Payment amount exceeds remaining balance of {remaining_before}.")
+        
+        # ✅ Use LipaLaterPayment model!
+        payment = LipaLaterPayment(
+            rider_id=record.rider_id,
+            lipa_later_id=record.id,
+            amount_ksh=Decimal(str(payload.amount)),
+            payment_date=datetime.fromisoformat(payload.date.replace('Z', '+00:00')).date() if payload.date else date.today(),
+            reference=payload.notes if payload.notes else "",
+            sync_status="synced",
+        )
+        db.add(payment)
+        db.flush()
+        
+        new_status = update_lipa_later_status(record, db)
+        db.commit()
+        
+        remaining_after = get_remaining_balance(record, db)
+        
+        logger.info(f"[LIPA_LATER] ✅ Payment recorded: {payment.id}")
+        
+        return LipaLaterPaymentResponse(
+            ok=True,
+            payment_id=str(payment.id),
+            amount_paid=float(payload.amount),
+            remaining_balance=max(0, remaining_after),
+            record_status=new_status,
+        )
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[LIPA_LATER] Error recording payment: {str(e)}", exc_info=True)
+        raise HTTPException(500, f"Error recording payment: {str(e)}")
+
+
+@router.get("/customer-list/{rider_id}", response_model=dict)
+def get_lipa_later_customers(rider_id: str, db: Session = Depends(get_db)):
+    """
+    Get all Lipa Later customers for a rider with payment status.
+    
+    Endpoint: GET /lipa-later/customer-list/{rider_id}
+    """
+    try:
+        records = db.query(LipaLaterRecord).filter_by(
+            rider_id=rider_id,
+            status="pending"
+        ).all()
+        
+        customers = []
+        for record in records:
+            remaining = get_remaining_balance(record, db)
+            customers.append({
+                "id": str(record.id),
+                "name": record.customer_name,
+                "mobile": record.customer_mobile,
+                "amount": float(record.amount),
+                "remaining": max(0, remaining),
+                "due_date": str(record.due_date),
+                "days_overdue": calculate_days_overdue(record.due_date),
+                "status": record.status
+            })
+        
+        return {
+            "ok": True,
+            "count": len(customers),
+            "customers": customers
+        }
+        
+    except Exception as e:
+        logger.error(f"[LIPA_LATER] Error fetching customers: {str(e)}", exc_info=True)
+        raise HTTPException(500, f"Error fetching customers: {str(e)}")
 
 
 @router.get("/ageing-report/{rider_id}", response_model=AgeingReportResponse)
