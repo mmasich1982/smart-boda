@@ -231,7 +231,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'lipa_later_payment',
-        endpoint: `/trips/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
+        endpoint: `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
         data: {
           ...paymentRecord,
           rider_id: effectiveRiderId,
@@ -249,7 +249,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
         try {
           console.log('📡 Attempting to sync payment to API...');
           const response = await api.post(
-            `/trips/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
+            `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
             paymentRecord
           );
 
@@ -262,7 +262,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
             
             // ✅ NAVIGATE BACK TO LIPA LATER CUSTOMERS
             setTimeout(() => {
-              navigation.navigate('LipaLaterCustomers', { 
+              navigation.navigate('LipaLaterCustomersScreen', { 
                 refreshed: true,
                 fullySettled: isFullySettled,
                 customerId: customerId,
