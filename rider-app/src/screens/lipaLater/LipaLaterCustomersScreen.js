@@ -363,8 +363,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
     };
     
     console.log('🔗 Navigating to RecordPaymentScreen with customer:', customerDataToPass);
-    
-    navigation.navigate('RecordPayment', {
+    navigation.navigate('RecordPaymentScreen', {
       customerId: String(customerId),
       customerData: customerDataToPass,
     });
@@ -383,7 +382,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
   if (!effectiveRiderId || !isInitialized) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+        <BackLink onPress={() => navigation.navigate('HomeScreen')} label={t('backLabel') || '← Back'} />
         <Text style={styles.title}>Lipa Later Customers Report</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
@@ -392,7 +391,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
+      <BackLink onPress={() => navigation.navigate('HomeScreen')} label={t('backLabel') || '← Back'} />
       
       <Text style={styles.title}>Lipa Later Customers Report</Text>
 
