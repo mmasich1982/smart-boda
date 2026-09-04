@@ -14,6 +14,7 @@ from uuid import UUID
 from app.database import get_db
 from app.auth import verify_token
 from app.models import Rider, Trip, FuelEntry, MaintenanceEntry, OtherExpense
+from app.models.lipa_later_payment import LipaLaterPayment
 from app.schemas.financial_performance import (
     NetProfitResponse,
     OtherExpenseRequest,
@@ -87,6 +88,25 @@ def calculate_income_for_period(db: Session, rider_id: UUID, period_start: datet
     for trip in trips:
         if trip.amount:
             total_income += trip.amount
+    
+    # ✅ NEW: Include Lipa Later payments in earnings
+    lipa_later_query = db.query(LipaLaterPayment).filter(
+        LipaLaterPayment.rider_id == rider_id,
+    )
+    
+    # ✅ NEW: Filter by time period
+    # Convert payment_date to datetime for comparison if needed
+    if rider_onboarding_date:
+        retention_limit = rider_onboarding_date + timedelta(days=DATA_RETENTION_MONTHS * 30)
+        lipa_later_query = lipa_later_query.filter(
+            LipaLaterPayment.payment_date >= rider_onboarding_date.date() if hasattr(rider_onboarding_date, 'date') else rider_onboarding_date,
+            LipaLaterPayment.payment_date <= retention_limit.date() if hasattr(retention_limit, 'date') else retention_limit
+        )
+    
+    lipa_later_payments = lipa_later_query.all()
+    for payment in lipa_later_payments:
+        if payment.amount_ksh:
+            total_income += float(payment.amount_ksh)
     
     return total_income
 

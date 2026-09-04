@@ -15,6 +15,7 @@ from app.models.trip import Trip
 from app.models.fuel_entry import FuelEntry
 from app.models.maintenance_entry import MaintenanceEntry
 from app.models.other_expense import OtherExpense
+from app.models.lipa_later_payment import LipaLaterPayment
 from app.models.compliance_master_data import ComplianceRuleConfig
 from app.services.quick_range_service import quick_range_bounds
 
@@ -259,6 +260,25 @@ def get_transactions(
                 "type": o.category or "Other",  # ✅ FIXED: category
                 "ts": o.created_at.isoformat() if hasattr(o.created_at, 'isoformat') else str(o.created_at),
                 "amount": float(o.amount_ksh),  # ✅ FIXED: amount_ksh
+                "voided": False,
+                "corrected": False
+            })
+    
+    # ✅ NEW: Lipa Later payments as income transactions
+    # Include Lipa Later payments in the transaction history
+    if type_filter in ("all", "trip"):
+        # Convert start and end to date objects for comparison with payment_date
+        start_date = start.date() if hasattr(start, 'date') else start
+        end_date = end.date() if hasattr(end, 'date') else end
+        
+        for lp in db.query(LipaLaterPayment).filter(
+            LipaLaterPayment.rider_id == rider_uuid,
+            LipaLaterPayment.payment_date.between(start_date, end_date)
+        ):
+            all_txns.append({
+                "type": "Lipa Later Payment",
+                "ts": datetime.combine(lp.payment_date, datetime.min.time()).isoformat() if lp.payment_date else datetime.now(timezone.utc).isoformat(),
+                "amount": float(lp.amount_ksh) if lp.amount_ksh else 0.0,
                 "voided": False,
                 "corrected": False
             })

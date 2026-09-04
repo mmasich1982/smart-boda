@@ -19,6 +19,7 @@ from app.models.trip import Trip
 from app.models.fuel_entry import FuelEntry
 from app.models.maintenance_entry import MaintenanceEntry
 from app.models.other_expense import OtherExpense
+from app.models.lipa_later_payment import LipaLaterPayment
 from app.models.statement import Statement
 from app.models.rider import Rider
 from app.models.compliance_master_data import ComplianceRuleConfig
@@ -239,6 +240,39 @@ def fetch_all_transactions(rider_id, start_dt: datetime, end_dt: datetime, db: S
                 "amount": float(other.amount_ksh),
                 "timestamp": other.created_at,
                 "id": str(other.id),
+                "voided": False,
+                "corrected": False
+            })
+    
+    # ✅ NEW: Lipa Later payments as income transactions
+    # Filter by rider_id to prevent cross-customer data access
+    if transaction_type in ("all", "income", "trip"):
+        # Convert date range to work with payment_date (which is a date, not datetime)
+        start_date = start_dt.date() if hasattr(start_dt, 'date') else start_dt
+        end_date = end_dt.date() if hasattr(end_dt, 'date') else end_dt
+        
+        lipa_query = db.query(LipaLaterPayment).filter(
+            LipaLaterPayment.rider_id == rider_id,  # ✅ CRITICAL: Rider ID filter
+            LipaLaterPayment.payment_date >= start_date,
+            LipaLaterPayment.payment_date <= end_date,
+        )
+        
+        # ✅ NEW: Only show payments from after onboarding
+        if onboarding_date:
+            onboarding_date_only = onboarding_date.date() if hasattr(onboarding_date, 'date') else onboarding_date
+            lipa_query = lipa_query.filter(LipaLaterPayment.payment_date >= onboarding_date_only)
+        
+        lipa_payments = lipa_query.all()
+        
+        for lipa in lipa_payments:
+            # Convert payment_date to datetime for consistent timestamp handling
+            payment_dt = datetime.combine(lipa.payment_date, datetime.min.time()) if lipa.payment_date else datetime.now(timezone.utc)
+            transactions.append({
+                "type": "Lipa Later Payment",
+                "description": "Lipa Later Payment",
+                "amount": float(lipa.amount_ksh) if lipa.amount_ksh else 0.0,
+                "timestamp": payment_dt,
+                "id": str(lipa.id),
                 "voided": False,
                 "corrected": False
             })

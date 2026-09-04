@@ -10,7 +10,7 @@
 # ✅ ADDED: New POST /record-payment endpoint with query parameters for frontend offline sync
 
 from datetime import datetime, date, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -427,7 +427,7 @@ def record_payment_for_record(
 def record_payment(
     rider_id: str = Query(..., description="Rider ID"),
     customer_id: str = Query(..., description="Customer ID"),
-    payload: LipaLaterPaymentQueryRequest = None,
+    payload: LipaLaterPaymentQueryRequest = Body(..., description="Payment details"),
     db: Session = Depends(get_db)
 ):
     """
