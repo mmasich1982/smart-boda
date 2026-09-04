@@ -1,5 +1,7 @@
 // rider-app/src/screens/lipaLater/LipaLaterCustomersScreen.js
 // ✅ COMPLETE: 100% UI alignment with index.html
+// ✅ OFFLINE PERSISTENCE: IndexedDB adapter for local-first storage
+// ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, clean UI, immediate feedback
 // ✅ FIXED: Proper refresh of customer list after payment
 // ✅ FIXED: Removes fully settled customers from the view
 // ✅ FIXED: Updates customer balance for partial payments
@@ -24,6 +26,7 @@ import BackLink from '../../components/BackLink';
 import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { getLocalRiderId } from '../../offline/db';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import api from '../../api/client';
 import {
@@ -47,6 +50,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
   
+  // ✅ Track if we've already loaded data on mount
   const hasLoadedRef = useRef(false);
 
   // ✅ LOAD RIDER ID ON MOUNT
@@ -78,16 +82,43 @@ export default function LipaLaterCustomersScreen({ navigation }) {
     const loadCustomers = async () => {
       try {
         setLoading(true);
-        const cachedCustomers = await loadLipaLaterCustomersCache(effectiveRiderId);
         
-        if (isMounted) {
-          setCustomers(cachedCustomers);
-          console.log('✅ Loaded', cachedCustomers.length, 'Lipa Later customers from cache');
+        // ✅ CRITICAL: Mark as loaded FIRST to prevent race conditions
+        hasLoadedRef.current = true;
+        clearCriticalError();
+
+        // Try to load from IndexedDB cache first
+        const cacheKey = `lipa_later_customers_${effectiveRiderId}`;
+        console.log('📦 Checking IndexedDB cache for Lipa Later customers...');
+        
+        const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+        if (cachedData && isMounted) {
+          try {
+            const items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+            if (Array.isArray(items) && items.length > 0) {
+              setCustomers(items);
+              console.log(`✅ Loaded ${items.length} Lipa Later customers from IndexedDB cache`);
+            }
+          } catch (parseErr) {
+            console.warn('⚠️ Cache parse error, loading from API');
+            const cachedCustomers = await loadLipaLaterCustomersCache(effectiveRiderId);
+            if (isMounted) {
+              setCustomers(cachedCustomers);
+            }
+          }
+        } else {
+          // No IndexedDB cache, fall back to lipaLaterUtils cache
+          const cachedCustomers = await loadLipaLaterCustomersCache(effectiveRiderId);
+          if (isMounted) {
+            setCustomers(cachedCustomers);
+            console.log('✅ Loaded', cachedCustomers.length, 'Lipa Later customers from lipaLaterUtils cache');
+          }
         }
 
         // Try to sync from API if online
         if (isConnected && isMounted) {
           try {
+            console.log('📡 Syncing Lipa Later customers from API...');
             const response = await api.get('/lipa-later/customer-list', {
               params: { rider_id: effectiveRiderId }
             });
@@ -97,7 +128,10 @@ export default function LipaLaterCustomersScreen({ navigation }) {
               const updatedCustomers = await loadLipaLaterCustomersCache(effectiveRiderId);
               if (isMounted) {
                 setCustomers(updatedCustomers);
-                console.log('✅ Synced Lipa Later customers from API');
+                
+                // Cache to IndexedDB for offline access
+                await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(updatedCustomers));
+                console.log('✅ Synced Lipa Later customers from API and cached to IndexedDB');
               }
             }
           } catch (apiErr) {
@@ -114,7 +148,6 @@ export default function LipaLaterCustomersScreen({ navigation }) {
         }
       } finally {
         if (isMounted) {
-          hasLoadedRef.current = true;
           setLoading(false);
         }
       }
@@ -125,9 +158,37 @@ export default function LipaLaterCustomersScreen({ navigation }) {
     return () => {
       isMounted = false;
     };
-  }, [effectiveRiderId, isInitialized]);
+  }, [effectiveRiderId, isInitialized, clearCriticalError, t]);
 
-  // ✅ FIXED: Complete refresh after payment using useFocusEffect pattern
+  // ✅ SOFT REFRESH ON SCREEN FOCUS - Does NOT trigger full reload
+  useFocusEffect(
+    useCallback(() => {
+      if (!effectiveRiderId || !hasLoadedRef.current) {
+        return;
+      }
+
+      const softRefreshCache = async () => {
+        try {
+          const cacheKey = `lipa_later_customers_${effectiveRiderId}`;
+          const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+          
+          if (cachedData) {
+            const items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+            if (Array.isArray(items)) {
+              setCustomers(items);
+              console.log('✅ Refreshed Lipa Later customers cache on focus');
+            }
+          }
+        } catch (err) {
+          console.warn('⚠️ Error in focus refresh:', err);
+        }
+      };
+
+      softRefreshCache();
+    }, [effectiveRiderId])
+  );
+
+  // ✅ ORIGINAL LOGIC: Complete refresh after payment using useFocusEffect pattern
   useFocusEffect(
     useCallback(() => {
       if (!effectiveRiderId || !hasLoadedRef.current) {
@@ -155,6 +216,11 @@ export default function LipaLaterCustomersScreen({ navigation }) {
           });
           
           setCustomers(pendingCustomers);
+          
+          // Cache to IndexedDB
+          const cacheKey = `lipa_later_customers_${effectiveRiderId}`;
+          await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(pendingCustomers));
+          
           console.log('✅ Refreshed customer list, removed', updatedCustomers.length - pendingCustomers.length, 'settled customers');
           
           // Try to sync fresh data from API if online
@@ -175,6 +241,10 @@ export default function LipaLaterCustomersScreen({ navigation }) {
                 });
                 
                 setCustomers(freshPendingCustomers);
+                
+                // Cache to IndexedDB
+                await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(freshPendingCustomers));
+                
                 console.log('✅ Synced and refreshed from API');
               }
             } catch (apiErr) {
@@ -282,269 +352,255 @@ export default function LipaLaterCustomersScreen({ navigation }) {
     
     // Pass customerId as string, ensure customerData has all required fields
     const customerDataToPass = {
-      customerId: String(customer.customerId),
-      customerName: customer.customerName || 'Unknown',
-      customerMobile: customer.customerMobile || customer.customerPhone || '—',
-      totalOutstanding: parseFloat(remaining),
-      totalPaid: parseFloat(totalPaid),
-      originalAmount: parseFloat((totalPaid + remaining) || 0),
-      dueDate: customer.dueDate,
+      customerId: String(customerId),
+      customerName: customer.customerName || '',
+      customerPhone: customer.customerPhone || customer.customerMobile || '',
+      originalAmount: customer.originalAmount || 0,
+      totalPaid: totalPaid,
+      totalOutstanding: remaining,
+      dueDate: customer.dueDate || '',
+      payments: customer.payments || [],
     };
     
-    console.log('📱 Navigating to RecordPayment with customer:', customerId, 'Remaining balance:', remaining);
-    navigation.navigate('RecordPaymentScreen', { 
-      customerId: customerId,
-      customerData: customerDataToPass 
+    console.log('🔗 Navigating to RecordPaymentScreen with customer:', customerDataToPass);
+    
+    navigation.navigate('RecordPayment', {
+      customerId: String(customerId),
+      customerData: customerDataToPass,
     });
   };
 
-  // Handle go to ageing
-  const handleGoToAgeing = () => {
-    navigation.navigate('LipaLaterAgeingScreen');
-  };
-
-  // Handle go home
-  const handleGoHome = () => {
-    navigation.navigate('Home');
-  };
-
-  // Handle search clear
-  const handleClearSearch = () => {
+  const handleClearSearch = useCallback(() => {
     setSearchTerm('');
     setCurrentPage(1);
-  };
+  }, []);
 
-  if (!effectiveRiderId || !isInitialized || loading) {
+  const handleViewAgeingReport = useCallback(() => {
+    clearCriticalError();
+    navigation.navigate('LipaLaterAgeing');
+  }, [navigation, clearCriticalError]);
+
+  if (!effectiveRiderId || !isInitialized) {
     return (
       <ScrollView style={styles.container}>
-        <BackLink onPress={handleGoHome} label={t('backLabel') || '← Home'} />
+        <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
         <Text style={styles.title}>Lipa Later Customers Report</Text>
-        <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
+        <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
   }
 
   return (
     <ScrollView style={styles.container}>
-      <BackLink onPress={handleGoHome} label={t('backLabel') || '← Home'} />
+      <BackLink onPress={() => navigation.goBack()} label={t('backLabel') || '← Back'} />
       
       <Text style={styles.title}>Lipa Later Customers Report</Text>
-      
-      {/* ✅ WARNING BANNER for overdue or due-today customers */}
+
+      {/* CRITICAL ERROR ONLY - Never show status/offline info */}
+      {criticalError && (
+        <View style={styles.criticalErrorBanner}>
+          <Text style={styles.criticalErrorText}>⚠️ {criticalError}</Text>
+          <TouchableOpacity onPress={clearCriticalError}>
+            <Text style={styles.criticalErrorDismiss}>{t('dismiss') || 'Dismiss'}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* WARNING BANNER - Only show if there are overdue or due today customers */}
       {(overdueCount > 0 || dueTodayCount > 0) && (
         <View style={styles.warningBanner}>
-          <Text style={styles.warningText}>
-            <Text style={{ fontWeight: '700' }}>
-              ⚠️ {overdueCount} overdue
-            </Text>
-            {dueTodayCount > 0 && (
-              <Text style={{ fontWeight: '700' }}>
-                , {dueTodayCount} due today
-              </Text>
-            )}
-            <Text> — highlighted below for quick follow-up.</Text>
+          <Text style={styles.warningBannerText}>
+            ⚠️ <Text style={styles.warningBold}>{overdueCount} overdue</Text>
+            {dueTodayCount > 0 && <Text>, <Text style={styles.warningBold}>{dueTodayCount} due today</Text></Text>}
+            {' '} — highlighted below for quick follow-up.
           </Text>
         </View>
       )}
 
-      {/* Critical Error */}
-      {criticalError && (
-        <View style={styles.criticalErrorBanner}>
-          <Text style={styles.criticalErrorText}>{criticalError}</Text>
-          <TouchableOpacity onPress={clearCriticalError}>
-            <Text style={styles.dismissText}>✕</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Summary Stats */}
-      {paginationData.totalRecords > 0 && (
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Total</Text>
-            <Text style={styles.statValue}>{paginationData.totalRecords}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Overdue</Text>
-            <Text style={[styles.statValue, { color: '#e0453f' }]}>{overdueCount}</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Due Today</Text>
-            <Text style={[styles.statValue, { color: '#b3710d' }]}>{dueTodayCount}</Text>
-          </View>
-        </View>
-      )}
-
-      {/* Search */}
+      {/* SEARCH CONTAINER - Clean search input with clear button */}
       <View style={styles.searchContainer}>
         <TextInput
           style={styles.searchInput}
-          placeholder={t('searchPlaceholder') || 'Search by name or phone…'}
+          placeholder="🔍 Search by customer name or mobile number…"
           placeholderTextColor="#b0a89d"
           value={searchTerm}
-          onChangeText={setSearchTerm}
+          onChangeText={(text) => {
+            setSearchTerm(text);
+            setCurrentPage(1);
+          }}
         />
-        {searchTerm && (
+        {searchTerm ? (
           <TouchableOpacity style={styles.clearButton} onPress={handleClearSearch}>
-            <Text style={styles.clearButtonText}>Clear</Text>
+            <Text style={styles.clearButtonText}>{t('clear') || 'Clear'}</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
 
-      {/* Records */}
-      {paginationData.records.length > 0 ? (
-        <View style={styles.recordsContainer}>
-          {paginationData.records.map((customer, index) => {
+      {/* RECORDS CONTAINER */}
+      <View style={styles.recordsContainer}>
+        {paginationData.records.length > 0 ? (
+          paginationData.records.map((customer, idx) => {
+            const recordNum = paginationData.startIndex + idx + 1;
             const statusInfo = getStatusInfo(customer);
             const remaining = customer.totalOutstanding || 0;
-            const paid = customer.totalPaid || 0;
-            const recordNumber = paginationData.startIndex + index + 1;
-            
-            // ✅ Calculate days overdue for display
-            const dueDate = customer.dueDate || '';
-            const overdueBy = dueDate < today ? Math.floor((new Date(today) - new Date(dueDate)) / (1000 * 60 * 60 * 24)) : 0;
-            
+            const totalPaid = customer.totalPaid || 0;
+            const isOverdue = customer.dueDate && customer.dueDate < today;
+            const isDueToday = customer.dueDate && customer.dueDate === today;
+
             return (
-              <View
-                key={customer.customerId}
+              <View 
+                key={customer.customerId} 
                 style={[
                   styles.recordItem,
-                  dueDate < today && styles.recordItemOverdue,
-                  dueDate === today && styles.recordItemDueToday,
+                  isOverdue && styles.recordItemOverdue,
+                  isDueToday && styles.recordItemDueToday,
                 ]}
               >
+                {/* RECORD NUMBER BADGE */}
                 <View style={styles.recordNumber}>
-                  <Text style={styles.recordNumberText}>{recordNumber}</Text>
+                  <Text style={styles.recordNumberText}>{recordNum}</Text>
                 </View>
 
+                {/* RECORD CONTENT */}
                 <View style={styles.recordContent}>
-                  {/* Top row: Name + Status */}
+                  {/* TOP ROW: Name + Status Badge */}
                   <View style={styles.topRow}>
-                    <Text style={styles.customerName}>{customer.customerName || 'Unknown'}</Text>
+                    <Text style={styles.customerName}>{customer.customerName || '—'}</Text>
                     <View style={[styles.statusBadge, statusInfo.badgeStyle]}>
-                      <Text style={[styles.statusBadgeText, 
-                        dueDate < today && styles.badgeRedText,
-                        dueDate === today && styles.badgeAmberText,
-                        dueDate >= today && styles.badgeGreyText
+                      <Text style={[
+                        styles.statusBadgeText,
+                        isOverdue ? styles.badgeRedText : isDueToday ? styles.badgeAmberText : styles.badgeGreyText
                       ]}>
                         {statusInfo.label}
-                        {overdueBy > 0 && ` (${overdueBy}d)`}
                       </Text>
                     </View>
                   </View>
 
-                  {/* Phone */}
+                  {/* PHONE NUMBER */}
                   <Text style={styles.customerPhone}>
-                    📱 {customer.customerMobile || customer.customerPhone || '—'}
+                    📞 {customer.customerPhone || customer.customerMobile || '—'}
                   </Text>
 
-                  {/* Details grid */}
+                  {/* DETAILS GRID: Original Amount, Trip Date, Due Date */}
                   <View style={styles.detailsGrid}>
                     <View style={styles.gridItem}>
-                      <Text style={styles.gridLabel}>Due Date</Text>
-                      <Text style={styles.gridValue}>{formatDate(customer.dueDate)}</Text>
-                    </View>
-                    <View style={styles.gridItem}>
-                      <Text style={styles.gridLabel}>Original</Text>
-                      <Text style={styles.gridValue}>KSh {(paid + remaining).toLocaleString('en-US', { maximumFractionDigits: 2 })}</Text>
+                      <Text style={styles.gridLabel}>Original Amount</Text>
+                      <Text style={styles.gridValue}>
+                        KSh {(customer.originalAmount || 0).toLocaleString()}
+                      </Text>
                     </View>
                     <View style={styles.gridItem}>
                       <Text style={styles.gridLabel}>Trip Date</Text>
-                      <Text style={styles.gridValue}>{formatDate(customer.tripDate || customer.createdAt)}</Text>
+                      <Text style={styles.gridValue}>
+                        {customer.tripDate ? formatDate(customer.tripDate) : '—'}
+                      </Text>
                     </View>
-                  </View>
-
-                  {/* Payment Summary */}
-                  <View style={styles.paymentSummary}>
-                    <View style={styles.paymentRow}>
-                      <Text style={{ color: '#5b606c' }}>Paid:</Text>
-                      <Text style={styles.paidAmount}>KSh {paid.toLocaleString('en-US', { maximumFractionDigits: 2 })}</Text>
-                    </View>
-                    <View style={styles.paymentRow}>
-                      <Text style={{ color: '#5b606c' }}>Owing:</Text>
-                      <Text style={[
-                        styles.owingAmount,
-                        remaining > 0 ? styles.owingAmountWarning : styles.owingAmountSuccess
-                      ]}>
-                        KSh {remaining.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                    <View style={styles.gridItem}>
+                      <Text style={styles.gridLabel}>Due Date</Text>
+                      <Text style={styles.gridValue}>
+                        {customer.dueDate ? formatDate(customer.dueDate) : '—'}
                       </Text>
                     </View>
                   </View>
 
-                  {/* Payment History */}
-                  {Array.isArray(customer.payments) && customer.payments.length > 0 && (
+                  {/* PAYMENT SUMMARY - Paid vs Owing */}
+                  {totalPaid > 0 ? (
+                    <View style={styles.paymentSummary}>
+                      <View style={styles.paymentRow}>
+                        <Text>Paid so far:</Text>
+                        <Text style={styles.paidAmount}>KSh {totalPaid.toLocaleString()}</Text>
+                      </View>
+                      <View style={styles.paymentRow}>
+                        <Text>Still owing:</Text>
+                        <Text style={[
+                          styles.owingAmount,
+                          remaining > 0 ? styles.owingAmountWarning : styles.owingAmountSuccess
+                        ]}>
+                          KSh {remaining.toLocaleString()}
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
+
+                  {/* PAYMENT HISTORY */}
+                  {customer.payments && customer.payments.length > 0 ? (
                     <View style={styles.paymentHistory}>
                       <Text style={styles.paymentHistoryLabel}>Payment History:</Text>
-                      {customer.payments.slice(0, 2).map((payment, idx) => (
-                        <View key={idx} style={styles.paymentHistoryRow}>
+                      {customer.payments.map((payment, pidx) => (
+                        <View key={pidx} style={styles.paymentHistoryRow}>
                           <Text style={styles.paymentHistoryAmount}>
-                            KSh {payment.amount?.toLocaleString('en-US', { maximumFractionDigits: 2 }) || '0'}
+                            KSh {(payment.amount || 0).toLocaleString()}
                           </Text>
-                          <Text style={styles.paymentHistoryDate}>{formatDate(payment.date)}</Text>
+                          <Text style={styles.paymentHistoryDate}>
+                            {formatDate(payment.date || payment.dateReceived)}
+                          </Text>
                         </View>
                       ))}
-                      {customer.payments.length > 2 && (
-                        <Text style={styles.paymentHistoryLabel}>
-                          +{customer.payments.length - 2} more payment{customer.payments.length - 2 !== 1 ? 's' : ''}
-                        </Text>
-                      )}
                     </View>
-                  )}
+                  ) : null}
 
-                  {/* Record Payment Button */}
-                  {remaining > 0 && (
+                  {/* RECORD PAYMENT BUTTON - Only if not fully settled */}
+                  {!customer.settled && remaining > 0 ? (
                     <TouchableOpacity
                       style={styles.recordPaymentBtn}
                       onPress={() => handleRecordPayment(customer.customerId)}
                       activeOpacity={0.8}
                     >
-                      <Text style={styles.recordPaymentBtnText}>
-                        Record Payment {remaining > 0 ? `→` : ''}
-                      </Text>
+                      <Text style={styles.recordPaymentBtnText}>💳 Record Payment</Text>
                     </TouchableOpacity>
-                  )}
+                  ) : null}
+
+                  {/* FULLY SETTLED INDICATOR */}
+                  {customer.settled || remaining <= 0 ? (
+                    <View style={styles.settledIndicator}>
+                      <Text style={styles.settledText}>✓ Fully settled</Text>
+                    </View>
+                  ) : null}
                 </View>
               </View>
             );
-          })}
-        </View>
-      ) : (
-        <View style={styles.emptyState}>
-          <Text style={styles.emptyStateText}>
-            {paginationData.totalRecords === 0
-              ? 'No pending customers. Great work! 🎉'
-              : 'No matching customers found.'}
-          </Text>
-        </View>
-      )}
+          })
+        ) : (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyStateText}>
+              {searchTerm 
+                ? '❌ No customers match your search.' 
+                : '✅ No pending Lipa Later payments right now. 🎉'
+              }
+            </Text>
+          </View>
+        )}
+      </View>
 
-      {/* Pagination */}
+      {/* PAGINATION */}
       {paginationData.totalPages > 1 && (
         <View style={styles.paginationContainer}>
           <Text style={styles.paginationInfo}>
-            Page {paginationData.currentPage} of {paginationData.totalPages}
-            {searchTerm && ` (${paginationData.filteredCount} results)`}
+            {paginationData.records.length === 0 
+              ? 'No results'
+              : `Showing ${paginationData.startIndex + 1}–${paginationData.endIndex} of ${paginationData.filteredCount} ${searchTerm ? 'matching ' : ''}customers (Page ${paginationData.currentPage} of ${paginationData.totalPages})`
+            }
           </Text>
           <View style={styles.paginationButtons}>
             <TouchableOpacity
               style={[
                 styles.paginationBtn,
-                paginationData.currentPage === 1 && styles.paginationBtnDisabled,
+                paginationData.currentPage === 1 && styles.paginationBtnDisabled
               ]}
-              onPress={() => setCurrentPage(paginationData.currentPage - 1)}
+              onPress={() => setCurrentPage(Math.max(1, paginationData.currentPage - 1))}
               disabled={paginationData.currentPage === 1}
-              activeOpacity={0.7}
+              activeOpacity={0.8}
             >
               <Text style={styles.paginationBtnText}>← Previous</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
                 styles.paginationBtn,
-                paginationData.currentPage === paginationData.totalPages && styles.paginationBtnDisabled,
+                paginationData.currentPage === paginationData.totalPages && styles.paginationBtnDisabled
               ]}
-              onPress={() => setCurrentPage(paginationData.currentPage + 1)}
+              onPress={() => setCurrentPage(Math.min(paginationData.totalPages, paginationData.currentPage + 1))}
               disabled={paginationData.currentPage === paginationData.totalPages}
-              activeOpacity={0.7}
+              activeOpacity={0.8}
             >
               <Text style={styles.paginationBtnText}>Next →</Text>
             </TouchableOpacity>
@@ -552,13 +608,13 @@ export default function LipaLaterCustomersScreen({ navigation }) {
         </View>
       )}
 
-      {/* Ageing Button */}
+      {/* VIEW AGEING REPORT BUTTON */}
       <TouchableOpacity
         style={styles.ageingButton}
-        onPress={handleGoToAgeing}
+        onPress={handleViewAgeingReport}
         activeOpacity={0.8}
       >
-        <Text style={styles.ageingButtonText}>View Ageing Report →</Text>
+        <Text style={styles.ageingButtonText}>📊 View Payment Ageing Report</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -567,37 +623,27 @@ export default function LipaLaterCustomersScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 20,
-    backgroundColor: '#f6f4ef'
+    backgroundColor: '#f6f4ef',
+    padding: 0,
   },
   title: {
     fontFamily: 'SpaceGrotesk-Bold',
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 16,
+    marginBottom: 8,
+    paddingHorizontal: 20,
+    marginTop: 16,
   },
 
-  warningBanner: {
-    backgroundColor: '#fffbf5',
-    borderLeftWidth: 4,
-    borderLeftColor: '#ff7a1a',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-  },
-  warningText: {
-    fontSize: 12,
-    color: '#5b606c',
-    lineHeight: 18,
-  },
-
+  // CRITICAL ERROR ONLY
   criticalErrorBanner: {
     backgroundColor: '#fdecea',
     borderWidth: 1.5,
     borderColor: '#f6cac7',
     borderRadius: 14,
-    padding: 12,
+    padding: 14,
+    marginHorizontal: 20,
     marginBottom: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -609,37 +655,33 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
   },
-  dismissText: {
-    fontSize: 16,
+  criticalErrorDismiss: {
+    fontSize: 11,
     color: '#a5312c',
     fontWeight: '700',
+    textDecorationLine: 'underline',
     marginLeft: 12,
   },
 
-  statsRow: {
-    flexDirection: 'row',
-    gap: 12,
+  // WARNING BANNER - Overdue/Due Today
+  warningBanner: {
+    backgroundColor: '#fffbf5',
+    borderWidth: 1.5,
+    borderColor: '#fdf3df',
+    borderRadius: 14,
+    padding: 12,
+    marginHorizontal: 20,
     marginBottom: 16,
   },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e7e4db',
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-  },
-  statLabel: {
-    fontSize: 10,
+  warningBannerText: {
+    fontSize: 12,
     color: '#5b606c',
-    fontWeight: '600',
-    marginBottom: 4,
+    fontWeight: '500',
+    lineHeight: 18,
   },
-  statValue: {
-    fontSize: 18,
+  warningBold: {
     fontWeight: '700',
-    color: '#1a1c20',
+    color: '#c98a12',
   },
 
   searchContainer: {
@@ -647,6 +689,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 16,
     gap: 10,
+    paddingHorizontal: 20,
   },
   searchInput: {
     flex: 1,
@@ -675,6 +718,7 @@ const styles = StyleSheet.create({
 
   recordsContainer: {
     marginBottom: 20,
+    paddingHorizontal: 20,
   },
   recordItem: {
     flexDirection: 'row',
@@ -848,6 +892,19 @@ const styles = StyleSheet.create({
     color: '#1a1c20',
   },
 
+  settledIndicator: {
+    marginTop: 10,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(30,158,111,.15)',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  settledText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1e9e6f',
+  },
+
   emptyState: {
     backgroundColor: '#f9f9f9',
     borderRadius: 12,
@@ -863,6 +920,7 @@ const styles = StyleSheet.create({
 
   paginationContainer: {
     marginBottom: 16,
+    paddingHorizontal: 20,
   },
   paginationInfo: {
     fontSize: 11,
@@ -902,6 +960,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
     marginBottom: 20,
+    marginHorizontal: 20,
   },
   ageingButtonText: {
     fontSize: 14,
