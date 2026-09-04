@@ -423,19 +423,19 @@ def record_payment_for_record(
         raise HTTPException(500, f"Error recording payment: {str(e)}")
 
 
-@router.post("/record-payment-query", response_model=dict)
-def record_payment_by_query(
+@router.post("/record-payment", response_model=dict)
+def record_payment(
     rider_id: str = Query(..., description="Rider ID"),
     customer_id: str = Query(..., description="Customer ID"),
     payload: LipaLaterPaymentQueryRequest = None,
     db: Session = Depends(get_db)
 ):
     """
-    ✅ ADDED: New endpoint for frontend offline sync with query parameters.
+    ✅ MAIN ENDPOINT: Record a payment using query parameters (for frontend offline sync queue).
     
-    Record a payment using query parameters (for frontend offline sync queue).
+    Record a payment via POST with query parameters.
     
-    Endpoint: POST /lipa-later/record-payment-query?rider_id={rider_id}&customer_id={customer_id}
+    Endpoint: POST /lipa-later/record-payment?rider_id={rider_id}&customer_id={customer_id}
     
     Request body:
     {
@@ -501,6 +501,78 @@ def record_payment_by_query(
     except Exception as e:
         db.rollback()
         logger.error(f"[LIPA_LATER] Error recording payment via query: {str(e)}", exc_info=True)
+        raise HTTPException(500, f"Error recording payment: {str(e)}")
+
+
+@router.post("/record-payment-query", response_model=dict)
+def record_payment_by_query_alias(
+    rider_id: str = Query(..., description="Rider ID"),
+    customer_id: str = Query(..., description="Customer ID"),
+    payload: LipaLaterPaymentQueryRequest = None,
+    db: Session = Depends(get_db)
+):
+    """
+    ✅ ALIAS ENDPOINT: For backward compatibility
+    
+    This endpoint is an alias for /record-payment (same functionality).
+    
+    Endpoint: POST /lipa-later/record-payment-query?rider_id={rider_id}&customer_id={customer_id}
+    
+    Use /lipa-later/record-payment instead (preferred).
+    """
+    logger.info(f"[LIPA_LATER] RECORD_PAYMENT_QUERY (ALIAS) - Rider: {rider_id}, Customer: {customer_id}")
+    
+    try:
+        if not payload:
+            raise HTTPException(400, "Request body is required")
+        
+        # Find the Lipa Later record
+        record = db.query(LipaLaterRecord).filter(
+            and_(
+                LipaLaterRecord.rider_id == rider_id,
+                LipaLaterRecord.customer_mobile == customer_id
+            )
+        ).first()
+        
+        if not record:
+            raise HTTPException(404, f"Lipa Later record not found for customer {customer_id}")
+        
+        remaining_before = get_remaining_balance(record, db)
+        if payload.amount > remaining_before:
+            raise HTTPException(400, f"Payment amount exceeds remaining balance of {remaining_before}.")
+        
+        payment = LipaLaterPayment(
+            rider_id=record.rider_id,
+            lipa_later_id=record.id,
+            amount_ksh=Decimal(str(payload.amount)),
+            payment_date=datetime.fromisoformat(payload.date.replace('Z', '+00:00')).date() if payload.date else date.today(),
+            reference=payload.notes if payload.notes else "",
+            sync_status="synced",
+        )
+        db.add(payment)
+        db.flush()
+        
+        new_status = update_lipa_later_status(record, db)
+        db.commit()
+        
+        remaining_after = get_remaining_balance(record, db)
+        
+        logger.info(f"[LIPA_LATER] ✅ Payment recorded via query alias: {payment.id}")
+        
+        return {
+            "ok": True,
+            "payment_id": str(payment.id),
+            "amount_paid": float(payload.amount),
+            "remaining_balance": max(0, remaining_after),
+            "record_status": new_status,
+        }
+        
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[LIPA_LATER] Error recording payment via query alias: {str(e)}", exc_info=True)
         raise HTTPException(500, f"Error recording payment: {str(e)}")
 
 

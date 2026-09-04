@@ -714,6 +714,13 @@ export default {
   "paymentType": "Payment Type",
   "paymentType_full": "Full Settlement",
   "paymentType_partial": "Partial Payment",
+  "fullPayment": "Full Settlement",
+  "partialPayment": "Partial Payment",
+  
+  // ✅ Payment Screen Title & Labels
+  "recordPaymentTitle": "Record Payment",
+  "fullPaymentLabel": "Full Settlement",
+  "partialPaymentLabel": "Partial Payment",
   
   // ✅ Success Messages
   "success_paymentSaving": "Payment saved. Syncing...",

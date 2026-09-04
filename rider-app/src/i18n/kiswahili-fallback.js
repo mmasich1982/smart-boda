@@ -593,4 +593,74 @@ export default {
   "totalSpent": "Jumla Iliyotumwa",
   "totalEntries": "Jumla ya Maingizo",
   "costPerEntry": "Gharama kwa Ingizo",
+
+  // ==================== LIPA LATER FUNCTIONALITY ====================
+  // ✅ Payment Type Labels
+  "paymentType": "Aina ya Malipo",
+  "paymentType_full": "Kukamatia Kamili",
+  "paymentType_partial": "Malipo ya Sehemu",
+  "fullPayment": "Kukamatia Kamili",
+  "partialPayment": "Malipo ya Sehemu",
+  
+  // ✅ Payment Screen Title & Labels
+  "recordPaymentTitle": "Rekodi Malipo",
+  "fullPaymentLabel": "Kukamatia Kamili",
+  "partialPaymentLabel": "Malipo ya Sehemu",
+  
+  // ✅ Success Messages
+  "success_paymentSaving": "Malipo yalihifadhiwa. Inasawazisha...",
+  "success_paymentRecorded": "Malipo yamerekodiwwa kwa mafanikio!",
+  "success_paymentRecordedFull": "Malipo yamerekodiwwa! Akaunti iliyokamatia.",
+  
+  // ✅ Payment Screen Labels
+  "recordPaymentButton": "Rekodi Malipo →",
+  "paymentAmount": "Kiasi Kilichopokelewa (KSh)",
+  "notes": "Maelezo (chaguo)",
+  "saving": "Inahifadhi...",
+  
+  // ✅ Validation Errors
+  "validationError_enterValidCost": "Tafadhali ingiza kiasi cha malipo halali zaidi ya sifuri.",
+  "error_noCustomer": "Mteja haipatikani.",
+  "error_loadCustomersFailed": "Imeshindwa kupakia wateja. Tafadhali jaribu tena.",
+  "authError_riderIdNotAvailable": "Kitambulisho cha mgeni hakiko. Tafadhali anzisha upya programu.",
+  
+  // ✅ Lipa Later Screen Labels
+  "lipaLaterCustomers": "Wateja wa Lipa Baadaye",
+  "lipaLaterRecordPayment": "Rekodi Malipo",
+  "lipaLaterAgeingReport": "Ripoti ya Umri",
+  "lipaLaterPaymentSummary": "Muhtasari wa Malipo",
+  
+  // ✅ Customer Status Badges
+  "status_overdue": "Kupita Muda",
+  "status_dueToday": "Inatarajiwa Leo",
+  "status_upcoming": "Kinachokuja",
+  "status_paid": "Kulipwa",
+  "status_partial": "Sehemu",
+  "status_pending": "Inangoja",
+  
+  // ✅ Customer List Labels
+  "customerName": "Jina la Mteja",
+  "customerMobile": "Namba ya Simu",
+  "totalOutstanding": "Iko Nje",
+  "totalPaid": "Kulipwa",
+  "dueDate": "Tarehe Inatarajiwa",
+  "viewDetails": "Tazama Maelezo",
+  "recordPayment": "Rekodi Malipo",
+  
+  // ✅ Ageing Report Buckets
+  "ageingCurrent": "Sasa",
+  "ageingOverdue1_30": "Kupita Muda 1-30 siku",
+  "ageingOverdue31_60": "Kupita Muda 31-60 siku",
+  "ageingOverdue61_90": "Kupita Muda 61-90 siku",
+  "ageingOverdue90Plus": "Kupita Muda 90+ siku",
+  
+  // ✅ Back Navigation
+  "back": "Nyuma",
+  "backToCustomers": "Rudi kwa Wateja",
+  
+  // ✅ Empty States
+  "noCustomersFound": "Hakuna wateja wa Lipa Baadaye waliopo",
+  "startByCreatingTrip": "Anza kwa kuundwa safari ya Lipa Baadaye",
+  "searchCustomers": "Tafuta kwa jina au simu...",
+  "clearSearch": "Futa",
 };
