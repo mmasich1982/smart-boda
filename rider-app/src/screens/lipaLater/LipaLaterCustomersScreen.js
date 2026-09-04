@@ -18,7 +18,8 @@
 // - Balance updates for partial payments
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, ActivityIndicator, useFocusEffect } from 'react-native';
+import { ScrollView, View, Text, TouchableOpacity, StyleSheet, TextInput, ActivityIndicator } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
 import { useRider } from '../../rider/RiderContext';
 import { useTranslation } from '../../i18n/LocalizationProvider';
