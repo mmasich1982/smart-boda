@@ -508,7 +508,7 @@ def record_payment(
 def record_payment_by_query_alias(
     rider_id: str = Query(..., description="Rider ID"),
     customer_id: str = Query(..., description="Customer ID"),
-    payload: LipaLaterPaymentQueryRequest = None,
+    payload: LipaLaterPaymentQueryRequest = Body(..., description="Payment details"),
     db: Session = Depends(get_db)
 ):
     """

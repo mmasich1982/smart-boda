@@ -305,6 +305,25 @@ def calculate_financial_summary(rider_id, start_dt: datetime, end_dt: datetime, 
     
     income = income_query.scalar() or 0
     income = float(income)
+    
+    # ✅ NEW: Include Lipa Later payments in income
+    start_date = start_dt.date() if hasattr(start_dt, 'date') else start_dt
+    end_date = end_dt.date() if hasattr(end_dt, 'date') else end_dt
+    
+    lipa_income_query = db.query(func.sum(LipaLaterPayment.amount_ksh)).filter(
+        LipaLaterPayment.rider_id == rider_id,  # ✅ CRITICAL: Rider ID filter
+        LipaLaterPayment.payment_date >= start_date,
+        LipaLaterPayment.payment_date <= end_date,
+    )
+    
+    # ✅ NEW: Only count payments from after onboarding
+    if onboarding_date:
+        onboarding_date_only = onboarding_date.date() if hasattr(onboarding_date, 'date') else onboarding_date
+        lipa_income_query = lipa_income_query.filter(LipaLaterPayment.payment_date >= onboarding_date_only)
+    
+    lipa_income = lipa_income_query.scalar() or 0
+    lipa_income = float(lipa_income)
+    income += lipa_income
 
     # Fuel/battery expense
     # ✅ FIXED: Filter by rider_id

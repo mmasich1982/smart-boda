@@ -90,6 +90,15 @@ def get_summary(
         )
     )
     
+    # ✅ NEW: Include Lipa Later payments in income
+    lipa_later_income = sum(
+        float(p.amount_ksh) for p in db.query(LipaLaterPayment).filter(
+            LipaLaterPayment.rider_id == rider_uuid,
+            LipaLaterPayment.payment_date.between(start.date(), end.date())
+        )
+    )
+    income += lipa_later_income
+    
     # ✅ FIXED: Fuel/Battery expense with correct fields
     # Field corrections: cost ✓, submitted_at ✓
     fuel_total = sum(
