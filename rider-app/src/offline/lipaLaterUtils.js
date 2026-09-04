@@ -173,7 +173,7 @@ export async function saveLipaLaterTripToDb(tripId, tripData) {
 
 /**
  * Normalize customer data to ensure all required fields are present
- * ✅ FIXED: Ensures dueDate, tripDate, totalPaid, and payments array exist
+ * ✅ FIXED: Ensures dueDate, tripDate, totalPaid, originalAmount, and payments array exist
  * @param {Object} customer - Customer object
  * @returns {Object} - Normalized customer object
  */
@@ -197,6 +197,11 @@ function normalizeCustomerData(customer) {
   // Ensure totalPaid is set
   if (typeof customer.totalPaid !== 'number') {
     customer.totalPaid = customer.totalSettled || 0;
+  }
+  
+  // ✅ FIXED: Ensure originalAmount is set (sum of totalOutstanding + totalPaid)
+  if (typeof customer.originalAmount !== 'number' || customer.originalAmount === 0) {
+    customer.originalAmount = (customer.totalOutstanding || 0) + (customer.totalPaid || 0);
   }
   
   // Ensure payments array exists
@@ -356,6 +361,8 @@ export async function getOrCreateCustomer(riderId, customerData, amount) {
     if (existing) {
       // Update pending trip count
       existing.pendingTrips = (existing.pendingTrips || 0) + 1;
+      // ✅ FIXED: Accumulate originalAmount from all trips for this customer
+      existing.originalAmount = (existing.originalAmount || 0) + amount;
       existing.totalOutstanding = (existing.totalOutstanding || 0) + amount;
       // Update due date if the new transaction has a different due date
       if (customerData.dueDate && customerData.dueDate > (existing.dueDate || '')) {
@@ -372,6 +379,7 @@ export async function getOrCreateCustomer(riderId, customerData, amount) {
       customerName: customerData.customerName,
       customerPhone: customerData.customerPhone,
       customerMobile: customerData.customerPhone, // Alias for compatibility
+      originalAmount: amount, // ✅ FIXED: Set originalAmount for new customer
       totalOutstanding: amount,
       totalPaid: 0,
       totalSettled: 0,
@@ -613,6 +621,7 @@ export async function syncLipaLaterFromApi(riderId, trips) {
           customerName: trip.lipaLater.customerName,
           customerPhone: trip.lipaLater.customerPhone,
           customerMobile: trip.lipaLater.customerPhone, // Alias
+          originalAmount: 0, // ✅ FIXED: Initialize originalAmount to sum all trip amounts
           totalOutstanding: 0,
           totalSettled: 0,
           pendingTrips: 0,
@@ -628,11 +637,14 @@ export async function syncLipaLaterFromApi(riderId, trips) {
       }
 
       const customer = customerMap.get(customerId);
-      const remaining = (trip.lipaLater.originalAmount || 0) - 
+      const tripOriginalAmount = trip.lipaLater.originalAmount || 0;
+      const remaining = tripOriginalAmount - 
         ((trip.lipaLater.payments || []).reduce((s, p) => s + (p.amount || 0), 0));
 
+      // ✅ FIXED: Accumulate originalAmount from all trips for this customer
+      customer.originalAmount += tripOriginalAmount;
       customer.totalOutstanding += Math.max(0, remaining);
-      customer.totalSettled += (trip.lipaLater.originalAmount || 0) - Math.max(0, remaining);
+      customer.totalSettled += tripOriginalAmount - Math.max(0, remaining);
       customer.totalPaid = customer.totalSettled;
 
       if (trip.lipaLater.settled) {
@@ -666,7 +678,11 @@ export async function syncLipaLaterFromApi(riderId, trips) {
     const customers = Array.from(customerMap.values()).sort((a, b) => 
       b.lastTransactionDate - a.lastTransactionDate
     );
-    await saveLipaLaterCustomersCache(riderId, customers);
+    
+    // ✅ FIXED: Normalize all customer data to ensure originalAmount is present
+    const normalizedCustomers = customers.map(c => normalizeCustomerData(c));
+    
+    await saveLipaLaterCustomersCache(riderId, normalizedCustomers);
 
     // Update summary
     await calculateLipaLaterSummary(riderId);
