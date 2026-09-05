@@ -297,14 +297,14 @@ export default function RecordPaymentScreen({ route, navigation }) {
             method: 'LipaLater',
             status: 'active',
             syncStatus: 'synced',
-            ts: now,
-            timestamp: now,
+            ts: now,                                    // ✅ Milliseconds for period filtering (MoneyMasteryScreen)
+            timestamp: now,                             // ✅ Milliseconds for backup
             date: new Date().toISOString().split('T')[0],
             created_at: new Date().toISOString(),
             lipaLater: {
               customerId: customerId,
               settled: isFullySettled,
-              paymentDate: new Date().toISOString(),
+              paymentDate: now,                         // ✅ FIXED: Store as milliseconds, not ISO string!
               paymentType: paymentType,
               notes: notes.trim(),
             }
