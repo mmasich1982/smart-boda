@@ -191,10 +191,11 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       });
 
       // Try to sync immediately if online
+      let lipaLaterId = null;
       if (isConnected && isInitialized) {
         try {
           console.log('📡 Syncing to API...');
-          await api.post(
+          const response = await api.post(
             `/lipa-later/record-trip?rider_id=${effectiveRiderId}`,
             {
               amount: parseFloat(formData.amount),
@@ -204,6 +205,36 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
               dueDate: formData.dueDate,
             }
           );
+          
+          // ✅ CRITICAL FIX: Capture the lipa_later_id from API response
+          if (response.data && response.data.lipa_later_id) {
+            lipaLaterId = response.data.lipa_later_id;
+            console.log('✅ Captured lipa_later_id from API:', lipaLaterId);
+            
+            // ✅ UPDATE customer record with the REAL lipa_later_id
+            await getOrCreateCustomer(
+              effectiveRiderId,
+              {
+                customerId: customerId,
+                lipaLaterId: lipaLaterId,
+                customerName: formData.customerName.trim(),
+                customerPhone: formData.customerPhone.trim(),
+                dueDate: formData.dueDate,
+                tripDate: new Date().toISOString().split('T')[0],
+                createdAt: new Date().toISOString(),
+              },
+              parseFloat(formData.amount)
+            );
+            console.log('✅ Updated customer record with lipaLaterId');
+            
+            // ✅ UPDATE local trip record with lipa_later_id
+            lipaLaterTrip.lipaLaterId = lipaLaterId;
+            await saveLipaLaterTripToDb(tripId, lipaLaterTrip);
+            console.log('✅ Updated local trip record with lipaLaterId');
+          } else {
+            console.warn('⚠️ API response missing lipa_later_id:', response.data);
+          }
+          
           console.log('✅ Synced to API');
         } catch (apiErr) {
           console.warn('⚠️ API sync will retry:', apiErr.message);

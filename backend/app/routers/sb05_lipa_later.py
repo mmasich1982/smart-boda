@@ -232,7 +232,9 @@ def create_lipa_later_trip(
         logger.info(f"[LIPA_LATER] ✅ LipaLaterRecord created: {record.id}")
         
         response = {
+            "ok": True,
             "id": str(record.id),
+            "lipa_later_id": str(record.id),
             "trip_id": str(trip.id),
             "customer_name": record.customer_name,
             "customer_mobile": record.customer_mobile,
@@ -241,7 +243,7 @@ def create_lipa_later_trip(
             "status": record.status,
         }
         
-        logger.info(f"[LIPA_LATER] ✅ CREATE_TRIP successful")
+        logger.info(f"[LIPA_LATER] ✅ CREATE_TRIP successful - Returned lipa_later_id: {record.id}")
         return response
         
     except HTTPException as he:

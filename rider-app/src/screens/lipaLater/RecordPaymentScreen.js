@@ -228,14 +228,26 @@ export default function RecordPaymentScreen({ route, navigation }) {
         throw new Error('Missing required parameters: rider_id or customer_id');
       }
 
+      // ✅ CRITICAL FIX: Try to use lipaLaterId (real UUID) instead of customerId (generated ID)
+      // This is the key fix - the backend expects the actual lipa_later_id, not the generated customerId
+      let syncCustomerId = customerId;
+      
+      if (customerData?.lipaLaterId) {
+        syncCustomerId = customerData.lipaLaterId;
+        console.log('✅ Using lipaLaterId for sync:', syncCustomerId);
+      } else {
+        console.warn('⚠️ lipaLaterId not available, using generated customerId');
+        console.warn('⚠️ Payment sync may fail if Lipa Later Record not synced yet');
+      }
+
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'lipa_later_payment',
-        endpoint: `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
+        endpoint: `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${syncCustomerId}`,
         data: {
           ...paymentRecord,
           rider_id: effectiveRiderId,
-          customer_id: customerId,
+          customer_id: syncCustomerId,
         },
         timestamp: new Date(),
       });
@@ -249,7 +261,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
         try {
           console.log('📡 Attempting to sync payment to API...');
           const response = await api.post(
-            `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${customerId}`,
+            `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${syncCustomerId}`,
             paymentRecord
           );
 
@@ -287,7 +299,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
 
       // Wait then navigate back
       setTimeout(() => {
-        navigation.navigate('LipaLaterCustomers', { 
+        navigation.navigate('LipaLaterCustomersScreen', { 
           refreshed: true,
           fullySettled: isFullySettled,
           customerId: customerId,
