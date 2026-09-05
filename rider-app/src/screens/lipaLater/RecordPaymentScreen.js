@@ -10,6 +10,7 @@
 // ✅ FEATURE: Offline mode with sync queue integration
 // ✅ FIXED: Payment Type radio buttons now appear side by side
 // ✅ FIXED: Cancel button uses correct translation key 'common.cancel'
+// ✅ CRITICAL FIX: Use lipaLaterId for payment sync instead of generated customerId
 
 import React, { useState, useEffect, useRef } from 'react';
 import { 
@@ -228,8 +229,10 @@ export default function RecordPaymentScreen({ route, navigation }) {
         throw new Error('Missing required parameters: rider_id or customer_id');
       }
 
+      // ============================================================================
       // ✅ CRITICAL FIX: Try to use lipaLaterId (real UUID) instead of customerId (generated ID)
       // This is the key fix - the backend expects the actual lipa_later_id, not the generated customerId
+      // ============================================================================
       let syncCustomerId = customerId;
       
       if (customerData?.lipaLaterId) {

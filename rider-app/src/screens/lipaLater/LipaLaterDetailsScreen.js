@@ -212,6 +212,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
             console.log('✅ Captured lipa_later_id from API:', lipaLaterId);
             
             // ✅ UPDATE customer record with the REAL lipa_later_id
+            // ✅ IMPORTANT: Pass 0 as amount to avoid doubling (amount already added on first call)
             await getOrCreateCustomer(
               effectiveRiderId,
               {
@@ -223,7 +224,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
                 tripDate: new Date().toISOString().split('T')[0],
                 createdAt: new Date().toISOString(),
               },
-              parseFloat(formData.amount)
+              0  // ✅ CRITICAL: Pass 0 to avoid doubling the amount!
             );
             console.log('✅ Updated customer record with lipaLaterId');
             

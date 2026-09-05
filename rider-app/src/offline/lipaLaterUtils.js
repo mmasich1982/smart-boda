@@ -359,11 +359,23 @@ export async function getOrCreateCustomer(riderId, customerData, amount) {
     const existing = customers.find(c => c.customerId === customerData.customerId);
 
     if (existing) {
-      // Update pending trip count
-      existing.pendingTrips = (existing.pendingTrips || 0) + 1;
-      // ✅ FIXED: Accumulate originalAmount from all trips for this customer
-      existing.originalAmount = (existing.originalAmount || 0) + amount;
-      existing.totalOutstanding = (existing.totalOutstanding || 0) + amount;
+      // ✅ CRITICAL FIX: Only add amount if this is NOT just updating lipaLaterId
+      // If lipaLaterId is provided and amount is 0 or not provided, don't add to originalAmount
+      if (amount && amount > 0 && !customerData.lipaLaterId) {
+        // This is a new transaction - add the amount
+        existing.pendingTrips = (existing.pendingTrips || 0) + 1;
+        existing.originalAmount = (existing.originalAmount || 0) + amount;
+        existing.totalOutstanding = (existing.totalOutstanding || 0) + amount;
+      } else if (customerData.lipaLaterId) {
+        // This is just updating with lipaLaterId - don't add amount
+        console.log('✅ Updating existing customer with lipaLaterId (no amount change)');
+      }
+      
+      // Update lipaLaterId if provided
+      if (customerData.lipaLaterId) {
+        existing.lipaLaterId = customerData.lipaLaterId;
+      }
+      
       // Update due date if the new transaction has a different due date
       if (customerData.dueDate && customerData.dueDate > (existing.dueDate || '')) {
         existing.dueDate = customerData.dueDate;
@@ -376,6 +388,7 @@ export async function getOrCreateCustomer(riderId, customerData, amount) {
     // Create new customer record
     const newCustomer = {
       customerId: customerData.customerId,
+      lipaLaterId: customerData.lipaLaterId || null,
       customerName: customerData.customerName,
       customerPhone: customerData.customerPhone,
       customerMobile: customerData.customerPhone, // Alias for compatibility
