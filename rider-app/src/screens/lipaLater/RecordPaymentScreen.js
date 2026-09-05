@@ -79,36 +79,77 @@ export default function RecordPaymentScreen({ route, navigation }) {
     }
   }, [remaining]);
 
-  // ✅ UPDATE DAILY TRADE SUMMARY
+  // ✅ UPDATE DAILY TRADE SUMMARY - Creates if doesn't exist
   const updateDailyTradeSummary = async (amount) => {
     try {
-      const key = `daily_trade_summary_${new Date().toISOString().split('T')[0]}`;
-      const summary = await indexedDbAdapter.kvGet(key);
+      const today = new Date().toISOString().split('T')[0];
+      const key = `daily_trade_summary_${today}`;
+      
+      let summary;
+      try {
+        summary = await indexedDbAdapter.kvGet(key);
+      } catch (err) {
+        summary = null;
+      }
+      
       if (summary) {
         const parsed = typeof summary === 'string' ? JSON.parse(summary) : summary;
         parsed.totalCollected = (parsed.totalCollected || 0) + amount;
+        parsed.lastUpdated = new Date().toISOString();
         await indexedDbAdapter.kvSet(key, parsed);
-        console.log('✅ Updated Daily Trade Summary with payment:', amount);
+        console.log('✅ Updated Daily Trade Summary with payment:', amount, 'Total:', parsed.totalCollected);
+      } else {
+        // ✅ CREATE new Daily Trade Summary if it doesn't exist
+        const newSummary = {
+          date: today,
+          totalCollected: amount,
+          totalTrips: 0,
+          totalEarnings: amount,
+          createdAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+        };
+        await indexedDbAdapter.kvSet(key, newSummary);
+        console.log('✅ Created new Daily Trade Summary with payment:', amount);
       }
     } catch (err) {
-      console.warn('⚠️ Failed to update Daily Trade Summary:', err);
+      console.error('❌ Failed to update Daily Trade Summary:', err);
     }
   };
 
-  // ✅ UPDATE HERO FARE CARD
+  // ✅ UPDATE HERO FARE CARD - Creates if doesn't exist
   const updateHeroFareCard = async (amount) => {
     try {
       const key = `hero_fare_card_${effectiveRiderId}`;
-      const card = await indexedDbAdapter.kvGet(key);
+      
+      let card;
+      try {
+        card = await indexedDbAdapter.kvGet(key);
+      } catch (err) {
+        card = null;
+      }
+      
       if (card) {
         const parsed = typeof card === 'string' ? JSON.parse(card) : card;
         parsed.totalEarnings = (parsed.totalEarnings || 0) + amount;
         parsed.lastUpdated = new Date().toISOString();
         await indexedDbAdapter.kvSet(key, parsed);
-        console.log('✅ Updated Hero Fare Card with payment:', amount);
+        console.log('✅ Updated Hero Fare Card with payment:', amount, 'Total Earnings:', parsed.totalEarnings);
+      } else {
+        // ✅ CREATE new Hero Fare Card if it doesn't exist
+        const newCard = {
+          riderId: effectiveRiderId,
+          totalEarnings: amount,
+          totalTrips: 0,
+          totalTime: 0,
+          averageRating: 5.0,
+          createdAt: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+        };
+        await indexedDbAdapter.kvSet(key, newCard);
+        console.log('✅ Created new Hero Fare Card with payment:', amount);
       }
     } catch (err) {
-      console.warn('⚠️ Failed to update Hero Fare Card:', err);
+      console.error('❌ Failed to update Hero Fare Card:', err);
     }
   };
 
