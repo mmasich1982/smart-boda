@@ -324,6 +324,11 @@ export default function RecordPaymentScreen({ route, navigation }) {
       };
       
       await createLipaLaterPaymentTrip(customerId, amount, isFullySettled);
+      
+      // ✅ UPDATE ALL THREE DATA STORES
+      await updateDailyTradeSummary(amount);
+      await updateHeroFareCard(amount);
+      await updateFinancialHistory(amount, customerId);
 
       console.log('💾 Recorded payment locally:', { 
         recordId, 
