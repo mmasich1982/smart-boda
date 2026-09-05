@@ -353,6 +353,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
     // Pass customerId as string, ensure customerData has all required fields
     const customerDataToPass = {
       customerId: String(customerId),
+      lipaLaterId: customer.lipaLaterId || null,
       customerName: customer.customerName || '',
       customerPhone: customer.customerPhone || customer.customerMobile || '',
       originalAmount: customer.originalAmount || 0,
