@@ -22,7 +22,7 @@
 # ============================================================================
 
 from datetime import datetime, date, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path
 from pydantic import BaseModel, Field, ConfigDict, validator
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
@@ -841,7 +841,7 @@ def record_payment_by_query_alias(
 
 @router.get("/ageing-report/{rider_id}", response_model=AgeingReportResponse)
 def get_ageing_report(
-    rider_id: str = Query(..., description="Rider ID (UUID)"),
+    rider_id: str = Path(..., description="Rider ID (UUID)"),
     db: Session = Depends(get_db)
 ):
     """
@@ -922,7 +922,7 @@ def get_ageing_report(
 
 @router.get("/statistics/{rider_id}", response_model=dict)
 def get_lipa_later_statistics(
-    rider_id: str = Query(..., description="Rider ID (UUID)"),
+    rider_id: str = Path(..., description="Rider ID (UUID)"),
     db: Session = Depends(get_db)
 ):
     """
