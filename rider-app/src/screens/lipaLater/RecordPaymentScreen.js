@@ -153,25 +153,42 @@ export default function RecordPaymentScreen({ route, navigation }) {
     }
   };
 
-  // ✅ UPDATE FINANCIAL HISTORY
+  // ✅ UPDATE FINANCIAL HISTORY - Creates if doesn't exist
   const updateFinancialHistory = async (amount, customerId) => {
     try {
       const key = `financial_history_${effectiveRiderId}`;
-      const history = await indexedDbAdapter.kvGet(key);
+      
+      let history;
+      try {
+        history = await indexedDbAdapter.kvGet(key);
+      } catch (err) {
+        history = null;
+      }
+      
+      const newEntry = {
+        id: `lipa_payment_${customerId}_${Date.now()}`,
+        type: 'lipa_later_payment',
+        description: `Lipa Later Payment Received`,
+        amount: amount,
+        customerId: customerId,
+        date: new Date().toISOString(),
+        status: 'completed',
+        paymentMethod: 'Lipa Later',
+      };
+      
       if (history) {
         const parsed = Array.isArray(history) ? history : typeof history === 'string' ? JSON.parse(history) : [];
-        parsed.unshift({
-          type: 'lipa_later_payment',
-          amount: amount,
-          customerId: customerId,
-          date: new Date().toISOString(),
-          status: 'completed'
-        });
+        parsed.unshift(newEntry);
         await indexedDbAdapter.kvSet(key, parsed);
-        console.log('✅ Updated Financial History with payment:', amount);
+        console.log('✅ Updated Financial History with payment:', amount, 'Total entries:', parsed.length);
+      } else {
+        // ✅ CREATE new Financial History if it doesn't exist
+        const newHistory = [newEntry];
+        await indexedDbAdapter.kvSet(key, newHistory);
+        console.log('✅ Created new Financial History with payment:', amount);
       }
     } catch (err) {
-      console.warn('⚠️ Failed to update Financial History:', err);
+      console.error('❌ Failed to update Financial History:', err);
     }
   };
 
@@ -253,10 +270,60 @@ export default function RecordPaymentScreen({ route, navigation }) {
         isFullySettled
       );
 
-      // ✅ UPDATE ALL THREE DATA STORES
-      await updateDailyTradeSummary(amount);
-      await updateHeroFareCard(amount);
-      await updateFinancialHistory(amount, customerId);
+      // ✅ CREATE TRIP ENTRY IN TRIP HISTORY FOR LIPA LATER PAYMENT
+      // This is crucial so HomeScreen and DailyTradeSummaryScreen can see the payment
+      const createLipaLaterPaymentTrip = async (customerId, amount, isFullySettled) => {
+        try {
+          const cacheKey = `trip_history_${effectiveRiderId}`;
+          
+          let trips = [];
+          try {
+            const cached = await indexedDbAdapter.kvGet(cacheKey);
+            if (cached) {
+              trips = typeof cached === 'string' ? JSON.parse(cached) : cached;
+              if (!Array.isArray(trips)) trips = [];
+            }
+          } catch (err) {
+            trips = [];
+          }
+          
+          // ✅ Create payment trip entry
+          const paymentTrip = {
+            id: `lipa_payment_${customerId}_${now}`,
+            tripId: `lipa_payment_${customerId}_${now}`,
+            rider_id: effectiveRiderId,
+            amount: amount,
+            paymentMethod: 'LipaLater',
+            method: 'LipaLater',
+            status: 'active',
+            syncStatus: 'synced',
+            ts: now,
+            timestamp: now,
+            date: new Date().toISOString().split('T')[0],
+            created_at: new Date().toISOString(),
+            lipaLater: {
+              customerId: customerId,
+              settled: isFullySettled,
+              paymentDate: new Date().toISOString(),
+              paymentType: paymentType,
+              notes: notes.trim(),
+            }
+          };
+          
+          // Add to beginning of trips array
+          trips.unshift(paymentTrip);
+          
+          // Save back to cache
+          await indexedDbAdapter.kvSet(cacheKey, trips);
+          console.log('✅ Added Lipa Later payment to trip_history:', { tripId: paymentTrip.id, amount });
+          return true;
+        } catch (err) {
+          console.error('❌ Failed to create payment trip in history:', err);
+          return false;
+        }
+      };
+      
+      await createLipaLaterPaymentTrip(customerId, amount, isFullySettled);
 
       console.log('💾 Recorded payment locally:', { 
         recordId, 
