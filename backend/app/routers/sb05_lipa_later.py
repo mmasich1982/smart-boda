@@ -125,16 +125,26 @@ def get_remaining_balance(lipa_later_record: LipaLaterRecord, db: Session) -> fl
 
 
 def update_lipa_later_status(record: LipaLaterRecord, db: Session) -> str:
-    """Update and return the current status of a Lipa Later record"""
+    """
+    Update and return the current status of a Lipa Later record.
+    
+    ✅ FIXED: Only returns "paid" or "pending" (removed invalid "partial" status)
+    LipaLaterRecord model only supports two statuses:
+    - "paid": remaining balance <= 0 (fully paid)
+    - "pending": remaining balance > 0 (full or partial payment still outstanding)
+    """
     remaining = get_remaining_balance(record, db)
     
     if remaining <= 0:
+        # Fully paid
         record.status = "paid"
         record.paid_at = datetime.now(timezone.utc)
+        logger.info(f"[LIPA_LATER] Record {record.id} → PAID (remaining: {remaining})")
         return "paid"
-    elif remaining < float(record.amount):
-        return "partial"
     else:
+        # Pending (could be full or partial, doesn't matter - still waiting for payment)
+        record.status = "pending"
+        logger.info(f"[LIPA_LATER] Record {record.id} → PENDING (remaining: {remaining})")
         return "pending"
 
 
@@ -425,8 +435,8 @@ def record_payment_for_record(
 
 @router.post("/record-payment", response_model=dict)
 def record_payment(
-    rider_id: str = Query(..., description="Rider ID"),
-    customer_id: str = Query(..., description="Customer ID"),
+    rider_id: str = Query(..., description="Rider ID (UUID)"),
+    customer_id: str = Query(..., description="Lipa Later Record ID (UUID from /record-trip, NOT generated customer ID or phone number)"),
     payload: LipaLaterPaymentQueryRequest = Body(..., description="Payment details"),
     db: Session = Depends(get_db)
 ):
@@ -435,7 +445,15 @@ def record_payment(
     
     Record a payment via POST with query parameters.
     
-    Endpoint: POST /lipa-later/record-payment?rider_id={rider_id}&customer_id={customer_id}
+    Endpoint: POST /lipa-later/record-payment?rider_id={rider_id}&customer_id={lipa_later_id}
+    
+    ⭐ CRITICAL: The customer_id MUST be the lipa_later_id UUID returned from /record-trip!
+    Do NOT send:
+    - Generated customer ID (e.g., "cust_0766554433_1788557784739") ❌
+    - Phone number (e.g., "0711223344") ❌
+    
+    DO send:
+    - Lipa Later Record ID (UUID from /record-trip response) ✅
     
     Request body:
     {
@@ -453,17 +471,25 @@ def record_payment(
         if not payload:
             raise HTTPException(400, "Request body is required")
         
-        # Find the Lipa Later record
+        # ✅ FIXED: Find the Lipa Later record by its UUID (lipa_later_id), not customer_mobile
+        # PROBLEM: customer_id from frontend is a generated ID (e.g., "cust_0766554433_1788557784739")
+        #          but customer_mobile is the actual phone (e.g., "0711223344")
+        #          These will NEVER match!
+        # SOLUTION: Match UUID to UUID - customer_id parameter should be the lipa_later_id
+        #           returned from /record-trip endpoint
         record = db.query(LipaLaterRecord).filter(
             and_(
                 LipaLaterRecord.rider_id == rider_id,
-                LipaLaterRecord.customer_mobile == customer_id
+                LipaLaterRecord.id == customer_id  # ✅ FIXED: Match UUID to UUID
             )
         ).first()
         
         if not record:
-            logger.warning(f"[LIPA_LATER] No record found for customer {customer_id}")
-            raise HTTPException(404, f"No Lipa Later record found for customer {customer_id}")
+            logger.warning(f"[LIPA_LATER] Record NOT found: ID={customer_id}, Rider={rider_id}")
+            logger.warning(f"[LIPA_LATER] TIP: customer_id should be lipa_later_id from /record-trip")
+            raise HTTPException(404, 
+                f"No Lipa Later record found for ID: {customer_id}. " +
+                f"Ensure customer_id is the lipa_later_id UUID from /record-trip endpoint.")
         
         remaining_before = get_remaining_balance(record, db)
         if payload.amount > remaining_before:
@@ -506,8 +532,8 @@ def record_payment(
 
 @router.post("/record-payment-query", response_model=dict)
 def record_payment_by_query_alias(
-    rider_id: str = Query(..., description="Rider ID"),
-    customer_id: str = Query(..., description="Customer ID"),
+    rider_id: str = Query(..., description="Rider ID (UUID)"),
+    customer_id: str = Query(..., description="Lipa Later Record ID (UUID from /record-trip, NOT generated customer ID or phone number)"),
     payload: LipaLaterPaymentQueryRequest = Body(..., description="Payment details"),
     db: Session = Depends(get_db)
 ):
@@ -516,7 +542,15 @@ def record_payment_by_query_alias(
     
     This endpoint is an alias for /record-payment (same functionality).
     
-    Endpoint: POST /lipa-later/record-payment-query?rider_id={rider_id}&customer_id={customer_id}
+    Endpoint: POST /lipa-later/record-payment-query?rider_id={rider_id}&customer_id={lipa_later_id}
+    
+    ⭐ CRITICAL: The customer_id MUST be the lipa_later_id UUID returned from /record-trip!
+    Do NOT send:
+    - Generated customer ID (e.g., "cust_0766554433_1788557784739") ❌
+    - Phone number (e.g., "0711223344") ❌
+    
+    DO send:
+    - Lipa Later Record ID (UUID from /record-trip response) ✅
     
     Use /lipa-later/record-payment instead (preferred).
     """
@@ -526,16 +560,25 @@ def record_payment_by_query_alias(
         if not payload:
             raise HTTPException(400, "Request body is required")
         
-        # Find the Lipa Later record
+        # ✅ FIXED: Find the Lipa Later record by its UUID (lipa_later_id), not customer_mobile
+        # PROBLEM: customer_id from frontend is a generated ID (e.g., "cust_0766554433_1788557784739")
+        #          but customer_mobile is the actual phone (e.g., "0711223344")
+        #          These will NEVER match!
+        # SOLUTION: Match UUID to UUID - customer_id parameter should be the lipa_later_id
+        #           returned from /record-trip endpoint
         record = db.query(LipaLaterRecord).filter(
             and_(
                 LipaLaterRecord.rider_id == rider_id,
-                LipaLaterRecord.customer_mobile == customer_id
+                LipaLaterRecord.id == customer_id  # ✅ FIXED: Match UUID to UUID
             )
         ).first()
         
         if not record:
-            raise HTTPException(404, f"Lipa Later record not found for customer {customer_id}")
+            logger.warning(f"[LIPA_LATER] Record NOT found: ID={customer_id}, Rider={rider_id}")
+            logger.warning(f"[LIPA_LATER] TIP: customer_id should be lipa_later_id from /record-trip")
+            raise HTTPException(404, 
+                f"Lipa Later record not found for ID: {customer_id}. " +
+                f"Ensure customer_id is the lipa_later_id UUID from /record-trip endpoint.")
         
         remaining_before = get_remaining_balance(record, db)
         if payload.amount > remaining_before:
