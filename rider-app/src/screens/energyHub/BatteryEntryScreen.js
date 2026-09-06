@@ -361,12 +361,12 @@ const styles = StyleSheet.create({
   },
 
   primaryBtn: { 
-    backgroundColor: '#ffc107', 
+    backgroundColor: '#ff7a1a', 
     borderRadius: 14, 
     paddingVertical: 16, 
     alignItems: 'center', 
     marginBottom: 16,
-    shadowColor: '#ffc107', 
+    shadowColor: '#ff7a1a', 
     shadowOpacity: 0.35, 
     shadowRadius: 12, 
     shadowOffset: { width: 0, height: 4 },
