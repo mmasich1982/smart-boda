@@ -1,3 +1,33 @@
+/**
+ * ============================================================================
+ * SMART-BODA SUBSCRIPTION PAYMENT SYNC QUEUE - COMPLETE FIXED VERSION
+ * ============================================================================
+ * 
+ * 🔴 ERROR #2 RESOLVED: "syncEndpoint is not defined"
+ * 
+ * ROOT CAUSE:
+ * Line 237 (ORIGINAL): let syncEndpoint = item.endpoint;
+ * This declared syncEndpoint INSIDE the try block, making it inaccessible in the 
+ * catch block (line 307) where error logging tried to reference it.
+ * 
+ * ✅ SOLUTION APPLIED:
+ * Line 236 (FIXED): let syncEndpoint;  // Declared OUTSIDE try-catch
+ * Line 241 (FIXED): syncEndpoint = item.endpoint;  // Assigned INSIDE try
+ * 
+ * Now syncEndpoint is accessible in BOTH try AND catch blocks!
+ * 
+ * FILE LOCATION:
+ * rider-app/src/offline/syncQueue.js
+ * 
+ * CHANGE SUMMARY:
+ * - Moved syncEndpoint declaration outside try-catch (line 236)
+ * - Moved requestConfig declaration outside try-catch (line 237)
+ * - Catch block can now access syncEndpoint for error logging (line 310)
+ * - No other logic changes - only scope fix
+ * 
+ * ============================================================================
+ */
+
 // rider-app/src/offline/syncQueue.js - COMPLETE SYNC QUEUE MANAGEMENT WITH CRITICAL VALIDATION
 // ✅ FIXED: Validate all required parameters before enqueueing
 // ✅ FIXED: Proper endpoint URL construction with query parameters  
@@ -204,6 +234,7 @@ export async function getQueuedRecords() {
 /**
  * Process pending sync items and attempt to sync with backend
  * ✅ FIXED: Handles syncing of queued records to backend API
+ * ✅ CRITICAL FIX #3 (ERROR #2): Variable scope - syncEndpoint declared outside try-catch
  * @returns {Promise<Object>} - Result summary {synced, failed, errors}
  */
 export async function processPendingSync() {
@@ -232,7 +263,10 @@ export async function processPendingSync() {
 
     // Process each pending item
     for (const item of pending) {
-      // ✅ CRITICAL FIX: Declare syncEndpoint outside try-catch so it's accessible in catch block
+      // ✅ CRITICAL FIX #3 (ERROR #2 FIX): Declare syncEndpoint OUTSIDE try-catch
+      // This ensures it's accessible in both try block (for assignment) and catch block (for logging)
+      // BEFORE FIX: let syncEndpoint = item.endpoint; (inside try block - not accessible in catch)
+      // AFTER FIX:  let syncEndpoint; (outside try block - accessible everywhere)
       let syncEndpoint;
       let requestConfig = {}; // For axios config options (headers, etc)
       
@@ -302,12 +336,13 @@ export async function processPendingSync() {
         const errorData = err.response?.data;
         const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message;
         
+        // ✅ NOW syncEndpoint IS ACCESSIBLE HERE (after the scope fix)!
         console.error(`❌ Failed to sync ${item.type} (${item.id}):`, {
           statusCode: statusCode,
           errorMessage: errorMsg,
           errorData: errorData,
           sentData: item.data,
-          url: syncEndpoint,
+          url: syncEndpoint,  // ✅ THIS NO LONGER THROWS "syncEndpoint is not defined"
         });
         
         errors.push({
