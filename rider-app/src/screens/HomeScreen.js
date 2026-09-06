@@ -49,9 +49,9 @@ function LoadingSkeleton() {
       <View style={styles.topBar}>
         <View style={styles.brand}>
           <View style={styles.logo}>
-            <Text style={styles.logoText}>🚕</Text>
+            <Text style={styles.logoText}>🏍️</Text>
           </View>
-          <Text style={styles.brandName}>Smart Cabz</Text>
+          <Text style={styles.brandName}>Smart Boda</Text>
         </View>
       </View>
       <View style={styles.screenBody}>
@@ -518,7 +518,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </View>
             <View style={[styles.kvRow, styles.kvRowBold]}>
               <Text style={styles.kvLabelBold}>Amount To Unlock</Text>
-              <Text style={styles.kvValueBold}>KSh 500</Text>
+              <Text style={styles.kvValueBold}>KSh 125</Text>
             </View>
           </View>
 
@@ -556,9 +556,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
         <View style={styles.topBar}>
           <View style={styles.brand}>
             <View style={styles.logo}>
-              <Text style={styles.logoText}>🚕</Text>
+              <Text style={styles.logoText}>🏍️</Text>
             </View>
-            <Text style={styles.brandName}>Smart Cabz</Text>
+            <Text style={styles.brandName}>Smart Boda</Text>
           </View>
           <TouchableOpacity
             style={styles.notifBell}
@@ -726,7 +726,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 8,
-    backgroundColor: '#feeae3',
+    backgroundColor: '#ff7a1a',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -816,11 +816,11 @@ const styles = StyleSheet.create({
   },
   viewBreakdownLink: {
     fontSize: 12,
-    color: '#ffb300',
+    color: '#ff7a1a',
     fontWeight: '700',
   },
   yesterdayAmount: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '700',
     color: '#1a1c20',
   },
@@ -1064,14 +1064,14 @@ const styles = StyleSheet.create({
     color: '#e0453f',
   },
   buttonPrimary: {
-    backgroundColor: '#ffc107',
+    backgroundColor: '#ff7a1a',
     borderRadius: 14,
     paddingVertical: 15,
     paddingHorizontal: 16,
     marginHorizontal: 14,
     marginBottom: 8,
     alignItems: 'center',
-    shadowColor: '#ffc107',
+    shadowColor: '#ff7a1a',
     shadowOpacity: 0.3,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
