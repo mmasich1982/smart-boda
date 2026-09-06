@@ -232,10 +232,13 @@ export async function processPendingSync() {
 
     // Process each pending item
     for (const item of pending) {
+      // ✅ CRITICAL FIX: Declare syncEndpoint outside try-catch so it's accessible in catch block
+      let syncEndpoint;
+      let requestConfig = {}; // For axios config options (headers, etc)
+      
       try {
         // ✅ FIXED: Special endpoint routing for different sync types
-        let syncEndpoint = item.endpoint;
-        let requestConfig = {}; // For axios config options (headers, etc)
+        syncEndpoint = item.endpoint;
         
         // ✅ CRITICAL FIX #1: Bike profile submissions use POST /onboarding/bike-profile?rider_id={riderId}
         if (item.type === 'bike_profile') {
