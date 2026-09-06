@@ -1,6 +1,6 @@
 // rider-app/src/screens/subscription/SubscriptionScreen.js
 // ✅ REFACTORED: IndexedDB-FIRST + subscriptionUtils alignment
-// ✅ BUSINESS LOGIC: Free Trial, Renewal, Prepay, Payment History
+// ✅ BUSINESS LOGIC: 2-Hour Trial, 4 Subscription Plans (125/250/375/500), Renewal, Prepay, Payment History
 // ✅ UI/UX: Matches index.html design system (hero-band, cards, banners)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
 // ✅ FIXED: HeroBand component replaces custom black card hero section

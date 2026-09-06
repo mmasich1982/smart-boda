@@ -1,6 +1,6 @@
 // rider-app/src/screens/subscription/FrequencySelectScreen.js
 // ✅ REFACTORED: IndexedDB-FIRST + subscriptionUtils alignment
-// ✅ BUSINESS LOGIC: Frequency selection (Bi-Weekly 500, Monthly 1000)
+// ✅ BUSINESS LOGIC: 4 Subscription Plans (125/250/375/500) + 2-Hour Trial Selection
 // ✅ UI/UX: Matches index.html design system (tiles, cards, buttons)
 // ✅ OFFLINE-FIRST: All data persisted via IndexedDB adapter
 // ✅ UPDATED: Uses HeroBand component for consistent header design
@@ -149,28 +149,39 @@ const FrequencySelectScreen = () => {
   // ========================================================================
   const renderFrequencyTile = (frequency) => {
     const isSelected = selectedFrequency === frequency.key;
+    const isFreeTrial = frequency.isFreeTrial;
 
     return (
       <TouchableOpacity
         key={frequency.key}
         style={[
           styles.tile,
-          isSelected && styles.tileSelected
+          isSelected && styles.tileSelected,
+          isFreeTrial && styles.tileFreeTrial
         ]}
         onPress={() => setSelectedFrequency(frequency.key)}
         activeOpacity={0.7}
       >
         <Text style={styles.tileEmoji}>{frequency.emoji}</Text>
         <Text style={styles.tileLabel}>{frequency.label}</Text>
-        <Text style={styles.tilePriceAmount}>
-          KSh {frequency.amount.toLocaleString()}
-        </Text>
-        <Text style={styles.tilePricePeriod}>
-          every {frequency.days} day{frequency.days > 1 ? 's' : ''}
-        </Text>
-        <Text style={styles.tilePricePerDay}>
-          ~ KSh {Math.round(frequency.amount / frequency.days)}/day
-        </Text>
+        {isFreeTrial ? (
+          <>
+            <Text style={styles.tilePriceAmount}>FREE</Text>
+            <Text style={styles.tilePricePeriod}>2 hours to try</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.tilePriceAmount}>
+              KSh {frequency.amount.toLocaleString()}
+            </Text>
+            <Text style={styles.tilePricePeriod}>
+              every {frequency.days} day{frequency.days > 1 ? 's' : ''}
+            </Text>
+            <Text style={styles.tilePricePerDay}>
+              ~ KSh {Math.round(frequency.amount / frequency.days)}/day
+            </Text>
+          </>
+        )}
       </TouchableOpacity>
     );
   };
@@ -190,6 +201,15 @@ const FrequencySelectScreen = () => {
   // MAIN UI
   // ========================================================================
   const frequencies = [
+    {
+      key: 'trial',
+      label: '⏱️ 2-Hour Trial',
+      emoji: '⏱️',
+      days: 0.0833,  // 2 hours
+      amount: 0,     // Free
+      hours: 2,
+      isFreeTrial: true,
+    },
     {
       key: 'weekly',
       label: '📆 Weekly',
@@ -236,8 +256,9 @@ const FrequencySelectScreen = () => {
 
       {/* INFO TEXT */}
       <View style={styles.hintCard}>
-        <Text style={styles.hintTitle}>Daily Rate Breakdown</Text>
+        <Text style={styles.hintTitle}>Subscription Options</Text>
         <Text style={styles.hintText}>
+          2-Hour Trial: FREE{'\n'}
           Weekly: KSh {Math.round(SUBSCRIPTION_PLANS.weekly.amount / SUBSCRIPTION_PLANS.weekly.days)}/day{'\n'}
           2-Weeks: KSh {Math.round(SUBSCRIPTION_PLANS.two_weeks.amount / SUBSCRIPTION_PLANS.two_weeks.days)}/day{'\n'}
           3-Weeks: KSh {Math.round(SUBSCRIPTION_PLANS.three_weeks.amount / SUBSCRIPTION_PLANS.three_weeks.days)}/day{'\n'}
@@ -321,6 +342,15 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
     elevation: 3,
+  },
+  tileFreeTrial: {
+    borderColor: '#4caf50',
+    backgroundColor: '#f1f8e9',
+    shadowColor: '#4caf50',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
   },
   tileEmoji: {
     fontSize: 22,
