@@ -182,58 +182,6 @@ const ConfirmSubscriptionScreen = () => {
         console.log('🔓 Account unlocked after payment');
       }
 
-      // ✅ CRITICAL FIX: Add subscription payment to trip_history for dashboard visibility
-      // Similar to Lipa Later payments, subscription payments need to appear in:
-      // - Hero Fare Card, Daily Trade Summary, Financial Performance, etc.
-      try {
-        const cacheKey = `trip_history_${localRiderId}`;
-        let trips = [];
-        try {
-          const cached = await indexedDbAdapter.kvGet(cacheKey);
-          if (cached) {
-            trips = typeof cached === 'string' ? JSON.parse(cached) : cached;
-            if (!Array.isArray(trips)) trips = [];
-          }
-        } catch (err) {
-          console.warn('⚠️ Failed to load trip_history:', err);
-        }
-
-        // ✅ Create subscription payment entry
-        const subscriptionPaymentTrip = {
-          id: `sub_payment_${localRiderId}_${currentTimestampMs}`,
-          tripId: `sub_payment_${localRiderId}_${currentTimestampMs}`,
-          rider_id: localRiderId,
-          amount: plan.amount,
-          paymentMethod: 'Subscription',
-          method: 'Subscription',
-          status: 'active',
-          syncStatus: 'synced',
-          ts: currentTimestampMs,
-          timestamp: currentTimestampMs,
-          date: currentTimestamp.split('T')[0],
-          created_at: currentTimestamp,
-          subscription: {
-            plan: selectedFrequency,
-            mpesaCode: validatedCode,
-            paymentType: 'subscription_payment',
-            paymentDate: currentTimestampMs,
-          }
-        };
-
-        // Add to beginning of trips array
-        trips.unshift(subscriptionPaymentTrip);
-
-        // Save back to cache
-        await indexedDbAdapter.kvSet(cacheKey, trips);
-        console.log('✅ Added subscription payment to trip_history:', {
-          tripId: subscriptionPaymentTrip.id,
-          amount: plan.amount,
-          plan: selectedFrequency
-        });
-      } catch (err) {
-        console.error('❌ Failed to add subscription payment to trip_history:', err);
-      }
-
       // ✅ SURGICAL FIX: Endpoint WITHOUT rider_id - processPendingSync adds it
       // The data sent must match what subscriptions.js POST /subscriptions/payment expects
       // Let processPendingSync handle adding rider_id to prevent duplicate parameters
