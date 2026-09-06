@@ -20,7 +20,7 @@ import HeroFareCard from '../components/HeroFareCard';
 // ✅ NEW IMPORT: Subscription Banners
 import SubscriptionBanners from '../components/SubscriptionBanners';
 // ✅ CRITICAL: Account lock enforcement
-import { checkAndEnforceLock } from '../offline/subscriptionUtils';
+import { checkAndEnforceLock, ensureFreeTrial } from '../offline/subscriptionUtils';
 
 const ENERGY_TILE_BY_FUEL = {
   petrol: { emoji: '⛽', label: 'home.tile_fuel_motorcycle', route: 'FuelHub' },
@@ -191,6 +191,17 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           console.log('[HomeScreen] 🔒 MAIN GATE: Checking account lock status...');
           setLockCheckInProgress(true);
           
+          // ✅ CRITICAL: Initialize free trial for newly onboarded riders BEFORE checking lock
+          // This ensures new riders get their 2-hour trial before any lock enforcement
+          console.log('[HomeScreen] ✨ Ensuring free trial initialized for rider...');
+          const trialState = await ensureFreeTrial(riderId);
+          console.log('[HomeScreen] ✅ Trial status after initialization:', {
+            trialStarted: trialState?.trialStarted,
+            trialEndDate: trialState?.trialEndDate,
+            hoursLeft: trialState?.trialStarted ? 'calculating...' : 'N/A',
+          });
+          
+          // ✅ NOW check lock status - trial will prevent lock if active
           const lockStatus = await checkAndEnforceLock(riderId);
 
           if (lockStatus.isLocked) {
