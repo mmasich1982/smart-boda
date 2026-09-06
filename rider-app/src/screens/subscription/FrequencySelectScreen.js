@@ -202,15 +202,6 @@ const FrequencySelectScreen = () => {
   // ========================================================================
   const frequencies = [
     {
-      key: 'trial',
-      label: '⏱️ 2-Hour Trial',
-      emoji: '⏱️',
-      days: 0.0833,  // 2 hours
-      amount: 0,     // Free
-      hours: 2,
-      isFreeTrial: true,
-    },
-    {
       key: 'weekly',
       label: '📆 Weekly',
       emoji: '📆',
@@ -258,11 +249,11 @@ const FrequencySelectScreen = () => {
       <View style={styles.hintCard}>
         <Text style={styles.hintTitle}>Subscription Options</Text>
         <Text style={styles.hintText}>
-          2-Hour Trial: FREE{'\n'}
           Weekly: KSh {Math.round(SUBSCRIPTION_PLANS.weekly.amount / SUBSCRIPTION_PLANS.weekly.days)}/day{'\n'}
           2-Weeks: KSh {Math.round(SUBSCRIPTION_PLANS.two_weeks.amount / SUBSCRIPTION_PLANS.two_weeks.days)}/day{'\n'}
           3-Weeks: KSh {Math.round(SUBSCRIPTION_PLANS.three_weeks.amount / SUBSCRIPTION_PLANS.three_weeks.days)}/day{'\n'}
-          Monthly: KSh {Math.round(SUBSCRIPTION_PLANS.monthly.amount / SUBSCRIPTION_PLANS.monthly.days)}/day
+          Monthly: KSh {Math.round(SUBSCRIPTION_PLANS.monthly.amount / SUBSCRIPTION_PLANS.monthly.days)}/day{'\n\n'}
+          💡 <Text style={{fontWeight: '600'}}>You already have a 2-hour free trial!</Text>
         </Text>
       </View>
 
