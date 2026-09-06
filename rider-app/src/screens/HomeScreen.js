@@ -670,6 +670,16 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.tileLabel}>{t('home.tile_my_subscription')}</Text>
             </TouchableOpacity>
           </View>
+		  
+		  {/* Row 3: Lipa Later*/}
+		  <View style={styles.tileRow}>
+            <TouchableOpacity
+              style={styles.homeTile}
+              onPress={() => navigation.navigate('PaymentSummary')}
+            >
+              <Text style={styles.tileEmoji}>🧾</Text>
+              <Text style={styles.tileLabel}>{t('home.tile_lipa_later_report')}</Text>
+            </TouchableOpacity>
 
           {/* Account Card */}
           <View style={styles.cardContainer}>
