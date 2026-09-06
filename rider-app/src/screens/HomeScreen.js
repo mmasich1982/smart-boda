@@ -675,7 +675,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
 		  <View style={styles.tileRow}>
             <TouchableOpacity
               style={styles.homeTile}
-              onPress={() => navigation.navigate('PaymentSummary')}
+              onPress={() => navigation.navigate('PaymentSummaryScreen')}
             >
               <Text style={styles.tileEmoji}>🧾</Text>
               <Text style={styles.tileLabel}>{t('home.tile_lipa_later_report')}</Text>
