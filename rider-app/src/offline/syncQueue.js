@@ -126,6 +126,7 @@ export async function enqueue(type, data) {
   try {
     // ✅ CRITICAL: Normalize data structure based on type
     let normalizedData = data || {};
+    let endpoint = '/api/sync'; // Default fallback
     
     // ✅ Bike profile: Match BikeProfileRequest schema exactly
     // Backend schema requires: device_id, number_plate, fuel_type_code
@@ -148,19 +149,41 @@ export async function enqueue(type, data) {
         // Note: submitted_at is NOT in BikeProfileRequest schema, backend doesn't expect it
       };
       
+      // ✅ CRITICAL FIX #1: Use correct endpoint directly
+      // Backend endpoint: POST /onboarding/bike-profile?rider_id={riderId}
+      endpoint = '/onboarding/bike-profile';
+      
       console.log('✅ [enqueue] Bike profile normalized:', {
         device_id: normalizedData.device_id ? '***' : 'MISSING',
         number_plate: normalizedData.number_plate,
         fuel_type_code: normalizedData.fuel_type_code,
+        endpoint: endpoint,
       });
+    } 
+    else if (type === 'subscription_payment') {
+      // ✅ CRITICAL FIX #2: Use correct endpoint for subscription payment
+      // Backend endpoint: POST /subscriptions/payment?rider_id={riderId}
+      endpoint = '/subscriptions/payment';
+      
+      console.log('✅ [enqueue] Subscription payment queued:', {
+        amount: data?.amount,
+        currency: data?.currency,
+        mpesa_code: data?.mpesa_code,
+        endpoint: endpoint,
+      });
+    }
+    else {
+      // Fallback for other types
+      endpoint = `/api/sync/${type}`;
     }
     
     const record = {
       id: `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       type,
-      endpoint: `/api/sync/${type}`,
+      endpoint: endpoint,  // ✅ FIXED: Now has correct endpoint from the start
       data: normalizedData,
       timestamp: new Date(),
+      riderId: data?.rider_id, // Store rider_id for later use in processPendingSync
     };
     return await addToSyncQueue(record);
   } catch (err) {
@@ -214,12 +237,13 @@ export async function processPendingSync() {
         let syncEndpoint = item.endpoint;
         let requestConfig = {}; // For axios config options (headers, etc)
         
-        // ✅ CRITICAL FIX #1: Bike profile submissions use POST /onboarding/bike-profile (with prefix + rider_id)
+        // ✅ CRITICAL FIX #1: Bike profile submissions use POST /onboarding/bike-profile?rider_id={riderId}
         if (item.type === 'bike_profile') {
           if (!currentRiderId) {
             throw new Error('Cannot sync bike_profile: rider_id not found in local context');
           }
-          syncEndpoint = `/onboarding/bike-profile?rider_id=${currentRiderId}`;
+          // Endpoint is already '/onboarding/bike-profile' from enqueue(), just add rider_id
+          syncEndpoint = `${item.endpoint}?rider_id=${currentRiderId}`;
           console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
           console.log(`   Payload: ${JSON.stringify(item.data, null, 2)}`);
           console.log(`   Expected Schema: BikeProfileRequest { device_id, number_plate, fuel_type_code }`);
@@ -230,6 +254,7 @@ export async function processPendingSync() {
           if (!riderId) {
             throw new Error(`Missing rider_id for subscription_payment sync - cannot construct endpoint`);
           }
+          // Endpoint is already '/subscriptions/payment' from enqueue(), just add rider_id
           syncEndpoint = `${item.endpoint}?rider_id=${riderId}`;
           
           // ✅ CRITICAL: Add required headers for subscription payment sync
@@ -242,6 +267,7 @@ export async function processPendingSync() {
           
           console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
           console.log(`   Headers: X-Sync-ID=${item.id}, X-Client-Timestamp=${requestConfig.headers['X-Client-Timestamp']}`);
+          console.log(`   Payload: ${JSON.stringify(item.data, null, 2)}`);
         }
         else {
           // Construct the full endpoint with query parameters if needed for other types
