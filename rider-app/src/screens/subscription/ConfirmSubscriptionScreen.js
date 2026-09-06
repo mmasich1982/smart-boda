@@ -140,13 +140,13 @@ const ConfirmSubscriptionScreen = () => {
       const currentTimestamp = new Date().toISOString();
       const currentTimestampMs = Date.now();
 
-      // ✅ FIXED: Payment record structure aligned with backend expectations
+      // ✅ FIXED: Payment record structure with correct status
       const paymentRecord = {
         id: paymentId,
         type: 'subscription',
         amount: plan.amount,
         currency: 'KES',
-        status: 'pending_verification',
+        status: 'completed',  // ✅ FIXED: Changed from 'pending_verification' to 'completed'
         channel: 'Manual (Lipa na M-Pesa / Pochi / Send Money)',
         mpesa_code: validatedCode,
         plan: selectedFrequency,
@@ -182,9 +182,57 @@ const ConfirmSubscriptionScreen = () => {
         console.log('🔓 Account unlocked after payment');
       }
 
-      // ✅ FIXED: Subscription payments NO LONGER added to trip_history
-      // Subscription payments are ONLY recorded in the payments table via payment sync
-      // This prevents mixing subscription transactions with actual trip records
+      // ✅ CRITICAL FIX: Add subscription payment to trip_history for dashboard visibility
+      // Similar to Lipa Later payments, subscription payments need to appear in:
+      // - Hero Fare Card, Daily Trade Summary, Financial Performance, etc.
+      try {
+        const cacheKey = `trip_history_${localRiderId}`;
+        let trips = [];
+        try {
+          const cached = await indexedDbAdapter.kvGet(cacheKey);
+          if (cached) {
+            trips = typeof cached === 'string' ? JSON.parse(cached) : cached;
+            if (!Array.isArray(trips)) trips = [];
+          }
+        } catch (err) {
+          console.warn('⚠️ Failed to load trip_history:', err);
+        }
+
+        // ✅ Create subscription payment entry
+        const subscriptionPaymentTrip = {
+          id: `sub_payment_${localRiderId}_${currentTimestampMs}`,
+          tripId: `sub_payment_${localRiderId}_${currentTimestampMs}`,
+          rider_id: localRiderId,
+          amount: plan.amount,
+          paymentMethod: 'Subscription',
+          method: 'Subscription',
+          status: 'active',
+          syncStatus: 'synced',
+          ts: currentTimestampMs,
+          timestamp: currentTimestampMs,
+          date: currentTimestamp.split('T')[0],
+          created_at: currentTimestamp,
+          subscription: {
+            plan: selectedFrequency,
+            mpesaCode: validatedCode,
+            paymentType: 'subscription_payment',
+            paymentDate: currentTimestampMs,
+          }
+        };
+
+        // Add to beginning of trips array
+        trips.unshift(subscriptionPaymentTrip);
+
+        // Save back to cache
+        await indexedDbAdapter.kvSet(cacheKey, trips);
+        console.log('✅ Added subscription payment to trip_history:', {
+          tripId: subscriptionPaymentTrip.id,
+          amount: plan.amount,
+          plan: selectedFrequency
+        });
+      } catch (err) {
+        console.error('❌ Failed to add subscription payment to trip_history:', err);
+      }
 
       // ✅ SURGICAL FIX: Endpoint WITHOUT rider_id - processPendingSync adds it
       // The data sent must match what subscriptions.js POST /subscriptions/payment expects
@@ -317,12 +365,12 @@ const ConfirmSubscriptionScreen = () => {
       <View style={styles.mpesaCard}>
         <Text style={styles.mpesaCardTitle}>📲 Payment Instructions</Text>
         <Text style={styles.mpesaCardText}>
-          Please use "Pochi La Biashara" to the Safaricom number below.
+          Please use "Send Money" to the Safaricom number below.
         </Text>
 
         <View style={styles.paymentNumberBox}>
           <View>
-            <Text style={styles.paymentNumberLabel}>Pochi La Biashara Number</Text>
+            <Text style={styles.paymentNumberLabel}>Business / Paybill Number</Text>
             <Text style={styles.paymentNumber}>0757 334 481</Text>
           </View>
           <TouchableOpacity
