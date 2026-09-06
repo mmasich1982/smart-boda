@@ -182,7 +182,7 @@ export async function enqueue(type, data) {
       type,
       endpoint: endpoint,  // ✅ FIXED: Now has correct endpoint from the start
       data: normalizedData,
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(), // Store as ISO string for consistent handling
       riderId: data?.rider_id, // Store rider_id for later use in processPendingSync
     };
     return await addToSyncQueue(record);
@@ -244,6 +244,12 @@ export async function processPendingSync() {
           }
           // Endpoint is already '/onboarding/bike-profile' from enqueue(), just add rider_id
           syncEndpoint = `${item.endpoint}?rider_id=${currentRiderId}`;
+          
+          // Ensure content-type header is set for bike profile
+          requestConfig.headers = {
+            'Content-Type': 'application/json',
+          };
+          
           console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
           console.log(`   Payload: ${JSON.stringify(item.data, null, 2)}`);
           console.log(`   Expected Schema: BikeProfileRequest { device_id, number_plate, fuel_type_code }`);
@@ -267,7 +273,7 @@ export async function processPendingSync() {
           
           console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
           console.log(`   Headers: X-Sync-ID=${item.id}, X-Client-Timestamp=${requestConfig.headers['X-Client-Timestamp']}`);
-          console.log(`   Payload: ${JSON.stringify(item.data, null, 2)}`);
+          console.log(`   Payload:`, item.data);
         }
         else {
           // Construct the full endpoint with query parameters if needed for other types
