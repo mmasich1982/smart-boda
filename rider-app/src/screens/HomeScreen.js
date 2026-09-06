@@ -680,6 +680,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.tileEmoji}>🧾</Text>
               <Text style={styles.tileLabel}>{t('home.tile_lipa_later_report')}</Text>
             </TouchableOpacity>
+          </View>
 
           {/* Account Card */}
           <View style={styles.cardContainer}>
