@@ -116,17 +116,50 @@ function validateRecordType(type, data, endpoint) {
 /**
  * Simplified enqueue function for basic sync operations
  * ✅ FIXED: Provides a simple API for common use cases
+ * ✅ FIXED: Ensures data structure matches backend schema expectations
+ * ✅ FIXED: Includes required device_id for bike profiles
  * @param {string} type - Type of sync operation (e.g., 'bike_profile', 'lipa_later_payment')
  * @param {Object} data - Data payload to sync
  * @returns {Promise<boolean>} - True if successfully added to queue
  */
 export async function enqueue(type, data) {
   try {
+    // ✅ CRITICAL: Normalize data structure based on type
+    let normalizedData = data || {};
+    
+    // ✅ Bike profile: Match BikeProfileRequest schema exactly
+    // Backend schema requires: device_id, number_plate, fuel_type_code
+    if (type === 'bike_profile') {
+      // Get device_id from local context or generate one
+      let deviceId = null;
+      try {
+        const { getLocalDeviceId } = await import('./db');
+        deviceId = await getLocalDeviceId();
+      } catch (err) {
+        console.warn('⚠️ Could not load deviceId, using fallback');
+        // Fallback: generate or use stored value
+        deviceId = data?.device_id || `device_${Date.now()}`;
+      }
+      
+      normalizedData = {
+        device_id: deviceId,  // ✅ REQUIRED: Backend BikeProfileRequest needs this
+        number_plate: data?.number_plate?.toUpperCase(),
+        fuel_type_code: data?.fuel_type_code,
+        // Note: submitted_at is NOT in BikeProfileRequest schema, backend doesn't expect it
+      };
+      
+      console.log('✅ [enqueue] Bike profile normalized:', {
+        device_id: normalizedData.device_id ? '***' : 'MISSING',
+        number_plate: normalizedData.number_plate,
+        fuel_type_code: normalizedData.fuel_type_code,
+      });
+    }
+    
     const record = {
       id: `${type}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       type,
       endpoint: `/api/sync/${type}`,
-      data: data || {},
+      data: normalizedData,
       timestamp: new Date(),
     };
     return await addToSyncQueue(record);
@@ -187,7 +220,9 @@ export async function processPendingSync() {
             throw new Error('Cannot sync bike_profile: rider_id not found in local context');
           }
           syncEndpoint = `/onboarding/bike-profile?rider_id=${currentRiderId}`;
-          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint} (with /onboarding prefix and rider_id)`);
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
+          console.log(`   Payload: ${JSON.stringify(item.data, null, 2)}`);
+          console.log(`   Expected Schema: BikeProfileRequest { device_id, number_plate, fuel_type_code }`);
         } 
         // ✅ CRITICAL FIX #2: Subscription payment requires rider_id query parameter + special headers
         else if (item.type === 'subscription_payment') {
@@ -226,16 +261,30 @@ export async function processPendingSync() {
         console.log(`✅ Synced ${item.type} (${item.id})`);
       } catch (err) {
         failed++;
-        const errorMsg = err.response?.data?.message || err.message;
+        
+        // ✅ IMPROVED ERROR LOGGING: Show full error details including status code and response
+        const statusCode = err.response?.status;
+        const errorData = err.response?.data;
+        const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message;
+        
+        console.error(`❌ Failed to sync ${item.type} (${item.id}):`, {
+          statusCode: statusCode,
+          errorMessage: errorMsg,
+          errorData: errorData,
+          sentData: item.data,
+          url: syncEndpoint,
+        });
+        
         errors.push({
           id: item.id,
           type: item.type,
-          error: errorMsg
+          statusCode: statusCode,
+          error: errorMsg,
+          fullError: errorData
         });
         
         // Mark as failed with error message
         await markAsFailed(item.id, errorMsg);
-        console.error(`❌ Failed to sync ${item.type} (${item.id}):`, errorMsg);
       }
     }
 
@@ -279,6 +328,29 @@ export async function addToSyncQueue(record) {
 
     if (!record.data || typeof record.data !== 'object') {
       throw new Error('Missing required field: record.data (must be an object)');
+    }
+
+    // ✅ VALIDATE BIKE PROFILE SPECIFIC PARAMETERS
+    // Backend BikeProfileRequest schema requires: device_id, number_plate, fuel_type_code
+    if (record.type === 'bike_profile') {
+      if (!record.data.device_id || !record.data.device_id.toString().trim()) {
+        throw new Error('Bike profile: Missing device_id (REQUIRED by backend BikeProfileRequest schema)');
+      }
+
+      if (!record.data.number_plate || !record.data.number_plate.toString().trim()) {
+        throw new Error('Bike profile: Missing number_plate');
+      }
+
+      if (!record.data.fuel_type_code || !record.data.fuel_type_code.toString().trim()) {
+        throw new Error('Bike profile: Missing fuel_type_code');
+      }
+
+      console.log('✅ Bike profile validated for queue:', {
+        id: record.id,
+        device_id: record.data.device_id ? '✓' : '✗ MISSING',
+        number_plate: record.data.number_plate,
+        fuel_type_code: record.data.fuel_type_code
+      });
     }
 
     // ✅ VALIDATE SUBSCRIPTION PAYMENT SPECIFIC PARAMETERS

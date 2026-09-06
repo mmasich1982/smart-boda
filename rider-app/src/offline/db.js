@@ -49,6 +49,35 @@ export async function getLocalRiderId() {
   }
 }
 
+// ✅ NEW: Device ID functions for bike profile syncing
+// Backend BikeProfileRequest schema requires device_id field
+export async function getLocalDeviceId() {
+  try {
+    let deviceId = await indexedDbAdapter.kvGet('device_id');
+    
+    // If no device_id exists, generate one
+    if (!deviceId) {
+      deviceId = generateDeviceId();
+      await indexedDbAdapter.kvSet('device_id', deviceId);
+      console.log('✅ Generated new device_id:', deviceId);
+    } else {
+      console.log('✅ getLocalDeviceId:', deviceId);
+    }
+    
+    return deviceId;
+  } catch (err) {
+    console.error('❌ getLocalDeviceId error:', err);
+    // Fallback: generate device ID if retrieval fails
+    return generateDeviceId();
+  }
+}
+
+function generateDeviceId() {
+  // Generate a unique device ID combining timestamp and random string
+  // Format: device_<timestamp>_<random>
+  return `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
 export async function saveLocalRiderId(riderId) {
   try {
     if (!riderId) {
