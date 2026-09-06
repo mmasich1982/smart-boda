@@ -1,10 +1,9 @@
 // rider-app/src/components/HeroFareCard.js
-// ✅ RESTORED FOR INDEXEDDB MIGRATION
-// CRITICAL FIX: Re-added missing HeroFareCard component
-// - Displays today's total income across all payment methods
-// - Click to view daily summary
-// - Plus button to create new trip
-// - Dark gradient styling per design specifications
+// FIXED: Corrected hero fare styling to match cleaned.html specifications
+// - Dark gradient background instead of orange
+// - Proper text styling and spacing
+// - Correct button styling with fullwidth plus character
+// - Made amount clickable for daily summary
 
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
@@ -59,20 +58,20 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   newTripBtn: {
-    backgroundColor: '#ffc107',
+    backgroundColor: '#ff7a1a',
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 14,
     width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#ffc107',
+    shadowColor: '#ff7a1a',
     shadowOpacity: 0.6,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 8 },
   },
   newTripBtnText: {
-    color: '#1a1c20',
+    color: '#fff',
     fontWeight: '700',
     fontSize: 15.5,
   },
