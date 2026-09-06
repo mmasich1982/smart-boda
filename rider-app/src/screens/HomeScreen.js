@@ -33,7 +33,7 @@ const HOME_TILES = [
   { emoji: '🎯', label: 'home.tile_revenue_targets', route: 'RevenueTargets' },
   { emoji: '📋', label: 'home.tile_license_insurance', route: 'ComplianceDashboard' },
   { emoji: '🐖', label: 'home.tile_savings', route: 'SavingsHub' },
-  { emoji: '🧾', label: 'home.tile_lipa_later_report', route: 'PaymentSummary' },
+  { emoji: '🧾', label: 'home.tile_lipa_later_report', route: 'LipaLaterCustomersScreen' },
   { emoji: '🏡', label: 'home.tile_send_money_home', route: 'SendMoneyHome' },
   { emoji: '🏆', label: 'home.tile_my_goals', route: 'Goals' },
   { emoji: '💡', label: 'home.tile_suggestions_feedback', route: 'SuggestionsFeedback' },
@@ -671,11 +671,11 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </TouchableOpacity>
           </View>
 		  
-		  {/* Row 3: Lipa Later*/}
-		  <View style={styles.tileRow}>
+          {/* Row 3: Lipa Later*/}
+          <View style={styles.tileRow}>
             <TouchableOpacity
               style={styles.homeTile}
-              onPress={() => navigation.navigate('PaymentSummary')}
+              onPress={() => navigation.navigate('LipaLaterCustomersScreen')}
             >
               <Text style={styles.tileEmoji}>🧾</Text>
               <Text style={styles.tileLabel}>{t('home.tile_lipa_later_report')}</Text>
