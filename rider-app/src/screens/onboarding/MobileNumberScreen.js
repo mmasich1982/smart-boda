@@ -47,11 +47,7 @@ export default function MobileNumberScreen({ navigation }) {
       <Text style={styles.title}>{t('number.title') || 'One Last Step'}</Text>
       <Text style={styles.sub}>{t('number.subtitle') || 'Enter your mobile number to continue.'}</Text>
       
-      {/* Bonus banner */}
-      <View style={styles.bonusBanner}>
-        <Text style={styles.bonusText}>{t('number.bonus_banner') || '🎁 Unlock 2 free hours of Smart Boda Access — clear, simple insights into your earnings and expenses from your very first trip.'}</Text>
-      </View>
-      
+    
       <FormField 
         label={t('number.label') || 'Mobile Number'}
         value={number} 

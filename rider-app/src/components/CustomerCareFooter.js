@@ -6,7 +6,7 @@ export default function CustomerCareFooter() {
   return (
     <Text style={styles.text}>
       Need help? Call or WhatsApp us anytime:{'\n'}
-      📞 +254 757 334481   ·   📞 +254 101 605262
+      📞 +254 101 605262
     </Text>
   );
 }
