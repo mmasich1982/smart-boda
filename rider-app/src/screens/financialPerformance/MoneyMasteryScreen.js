@@ -91,7 +91,11 @@ async function calculateTripIncomeForPeriod(riderId, period) {
         const method = trip.paymentMethod || trip.method;
         
         if (method === 'LipaLater') {
-          if (trip.lipaLater?.settled) {
+          // ✅ FIXED: Include BOTH full and partial Lipa Later payments in income calculation
+          // Full payment: trip.lipaLater.settled = true (customer fully paid)
+          // Partial payment: trip.lipaLater.settled = false (customer partially paid)
+          // Both are actual money received by the rider, so both should count toward income
+          if (trip.lipaLater) {
             const paymentTs = trip.lipaLater.paymentDate || 0;
             if (paymentTs >= startMs && paymentTs <= endMs) {
               tripIncome += trip.amount || 0;

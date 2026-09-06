@@ -33,7 +33,7 @@ const HOME_TILES = [
   { emoji: '🎯', label: 'home.tile_revenue_targets', route: 'RevenueTargets' },
   { emoji: '📋', label: 'home.tile_license_insurance', route: 'ComplianceDashboard' },
   { emoji: '🐖', label: 'home.tile_savings', route: 'SavingsHub' },
-  { emoji: '🧾', label: 'home.tile_lipa_later_report', route: 'LipaLaterCustomersScreen' },
+  { emoji: '🧾', label: 'home.tile_lipa_later_report', route: 'PaymentSummary' },
   { emoji: '🏡', label: 'home.tile_send_money_home', route: 'SendMoneyHome' },
   { emoji: '🏆', label: 'home.tile_my_goals', route: 'Goals' },
   { emoji: '💡', label: 'home.tile_suggestions_feedback', route: 'SuggestionsFeedback' },
@@ -271,11 +271,14 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       todaysActiveTrips.forEach(trip => {
         const method = trip.paymentMethod || trip.method;
         if (method === 'LipaLater') {
-          // Only count if settled today
-          if (trip.lipaLater?.settled) {
+          // ✅ FIXED: Count BOTH full and partial Lipa Later payments (both are money received)
+          // Full payment: trip.lipaLater.settled = true
+          // Partial payment: trip.lipaLater.settled = false (but still money received)
+          if (trip.lipaLater) {
             const paymentDate = trip.lipaLater.paymentDate
               ? new Date(trip.lipaLater.paymentDate).toDateString()
               : null;
+            // Count if payment was made today (regardless of whether full or partial)
             if (paymentDate === today) {
               total += trip.amount || 0;
             }
@@ -328,8 +331,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       yesterdaysActiveTrips.forEach(trip => {
         const method = trip.paymentMethod || trip.method;
         if (method === 'LipaLater') {
-          // Only count if settled
-          if (trip.lipaLater?.settled) {
+          // ✅ FIXED: Count BOTH full and partial Lipa Later payments (both are money received)
+          // Include all Lipa Later payments, whether fully settled or partially paid
+          if (trip.lipaLater) {
             total += trip.amount || 0;
           }
         } else {
@@ -671,11 +675,11 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </TouchableOpacity>
           </View>
 		  
-          {/* Row 3: Lipa Later*/}
-          <View style={styles.tileRow}>
+		  {/* Row 3: Lipa Later*/}
+		  <View style={styles.tileRow}>
             <TouchableOpacity
               style={styles.homeTile}
-              onPress={() => navigation.navigate('LipaLaterCustomersScreen')}
+              onPress={() => navigation.navigate('PaymentSummary')}
             >
               <Text style={styles.tileEmoji}>🧾</Text>
               <Text style={styles.tileLabel}>{t('home.tile_lipa_later_report')}</Text>

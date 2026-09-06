@@ -132,20 +132,20 @@ export default function DailyTradeSummaryScreen({ navigation, route }) {
         }
 
         if (method === 'LipaLater') {
-          // Check Lipa Later payment status
+          // ✅ FIXED: Include BOTH full and partial Lipa Later payments in earnings calculation
+          // Full payment: trip.lipaLater.settled = true (customer fully paid)
+          // Partial payment: trip.lipaLater.settled = false (customer partially paid)
+          // Both are actual money received by the rider, so both should count toward earnings
           if (trip.lipaLater) {
             const paymentDate = trip.lipaLater.paymentDate 
               ? new Date(trip.lipaLater.paymentDate).toDateString()
               : null;
             
-            if (paymentDate === today && trip.lipaLater.settled) {
-              // Payment received today
+            if (paymentDate === today) {
+              // Payment (full or partial) received today - count toward earnings
               byMethod[method] += amount;
               total += amount;
-              settled.push(trip);
-            } else if (!trip.lipaLater.settled) {
-              // Pending payment
-              pending.push(trip);
+              settled.push(trip);  // Both full and partial payments are recorded/settled
             }
           } else {
             // No Lipa Later data yet - treat as pending
