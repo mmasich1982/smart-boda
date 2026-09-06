@@ -351,6 +351,17 @@ export async function ensureFreeTrial(riderId) {
     
     // ✅ If trial not started, initialize it now
     if (!state.trialStarted) {
+      // ✅ CRITICAL FIX: Check if rider has EVER had a paid subscription
+      // If they have, they are NOT eligible for free trial
+      const subscriptionHistory = await getSubscriptionHistory(riderId);
+      const hasPaidSubscription = subscriptionHistory && subscriptionHistory.length > 0;
+      
+      if (hasPaidSubscription) {
+        console.log('🚫 [ensureFreeTrial] Rider has paid subscription history - NOT eligible for free trial');
+        console.log('   Previous subscriptions:', subscriptionHistory.length);
+        return state; // Return current state without creating trial
+      }
+      
       console.log('✨ [ensureFreeTrial] New rider detected - initializing free trial');
       
       const now = Date.now();

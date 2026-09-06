@@ -168,15 +168,23 @@ export async function processPendingSync() {
     // Process each pending item
     for (const item of pending) {
       try {
-        // Construct the full endpoint with query parameters if needed
-        const endpoint = item.endpoint.includes('?') 
-          ? item.endpoint 
-          : item.endpoint + (item.data?.rider_id ? `?rider_id=${item.data.rider_id}` : '');
-
-        console.log(`📤 Syncing ${item.type} (${item.id}) to ${endpoint}`);
+        // ✅ FIXED: Special endpoint routing for different sync types
+        let syncEndpoint = item.endpoint;
+        
+        // Bike profile submissions use POST /bike-profile (not /api/sync/bike_profile)
+        if (item.type === 'bike_profile') {
+          syncEndpoint = '/bike-profile';
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint} (corrected endpoint)`);
+        } else {
+          // Construct the full endpoint with query parameters if needed for other types
+          syncEndpoint = item.endpoint.includes('?') 
+            ? item.endpoint 
+            : item.endpoint + (item.data?.rider_id ? `?rider_id=${item.data.rider_id}` : '');
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
+        }
 
         // Attempt to POST the item to the backend
-        const response = await api.post(item.endpoint, item.data);
+        const response = await api.post(syncEndpoint, item.data);
 
         // Mark as synced
         await markAsSynced(item.id);

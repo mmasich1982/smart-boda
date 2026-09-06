@@ -137,8 +137,8 @@ export default function SubscriptionBanners({ navigation }) {
             
             if (isTrialActive) {
               console.log('✨ [SubscriptionBanners] >>> SHOWING TRIAL BANNER');
-              const daysLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60 * 24));
-              console.log(`   Trial has ${daysLeft} day(s) remaining`);
+              const hoursLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60));
+              console.log(`   Trial has ${hoursLeft} hour(s) remaining`);
               setBannerType('trial');
             } else {
               console.log('⏰ [SubscriptionBanners] Trial also expired, no banner');
@@ -157,8 +157,8 @@ export default function SubscriptionBanners({ navigation }) {
         
         if (isTrialActive) {
           console.log('✨ [SubscriptionBanners] >>> SHOWING TRIAL BANNER (no paid subscription)');
-          const daysLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60 * 24));
-          console.log(`   Trial has ${daysLeft} day(s) remaining`);
+          const hoursLeft = Math.ceil((trialEndMs - Date.now()) / (1000 * 60 * 60));
+          console.log(`   Trial has ${hoursLeft} hour(s) remaining`);
           setBannerType('trial');
         } else {
           console.log('⏰ [SubscriptionBanners] Trial expired, no banner');
