@@ -165,17 +165,50 @@ export async function processPendingSync() {
     let failed = 0;
     const errors = [];
 
+    // ✅ CRITICAL: Get current rider ID for bike_profile syncs
+    let currentRiderId = null;
+    try {
+      const { getLocalRiderId } = await import('./db');
+      currentRiderId = await getLocalRiderId();
+    } catch (err) {
+      console.warn('⚠️ Could not load currentRiderId for bike_profile sync:', err.message);
+    }
+
     // Process each pending item
     for (const item of pending) {
       try {
         // ✅ FIXED: Special endpoint routing for different sync types
         let syncEndpoint = item.endpoint;
+        let requestConfig = {}; // For axios config options (headers, etc)
         
-        // Bike profile submissions use POST /bike-profile (not /api/sync/bike_profile)
+        // ✅ CRITICAL FIX #1: Bike profile submissions use POST /onboarding/bike-profile (with prefix + rider_id)
         if (item.type === 'bike_profile') {
-          syncEndpoint = '/bike-profile';
-          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint} (corrected endpoint)`);
-        } else {
+          if (!currentRiderId) {
+            throw new Error('Cannot sync bike_profile: rider_id not found in local context');
+          }
+          syncEndpoint = `/onboarding/bike-profile?rider_id=${currentRiderId}`;
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint} (with /onboarding prefix and rider_id)`);
+        } 
+        // ✅ CRITICAL FIX #2: Subscription payment requires rider_id query parameter + special headers
+        else if (item.type === 'subscription_payment') {
+          const riderId = item.riderId || item.data?.rider_id;
+          if (!riderId) {
+            throw new Error(`Missing rider_id for subscription_payment sync - cannot construct endpoint`);
+          }
+          syncEndpoint = `${item.endpoint}?rider_id=${riderId}`;
+          
+          // ✅ CRITICAL: Add required headers for subscription payment sync
+          // Backend subscriptions_payment.py expects these headers for idempotency and tracking
+          requestConfig.headers = {
+            'X-Sync-ID': item.id, // Unique sync ID for idempotency
+            'X-Client-Timestamp': item.timestamp || new Date().toISOString(), // When payment was created
+            'Content-Type': 'application/json',
+          };
+          
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
+          console.log(`   Headers: X-Sync-ID=${item.id}, X-Client-Timestamp=${requestConfig.headers['X-Client-Timestamp']}`);
+        }
+        else {
           // Construct the full endpoint with query parameters if needed for other types
           syncEndpoint = item.endpoint.includes('?') 
             ? item.endpoint 
@@ -184,7 +217,8 @@ export async function processPendingSync() {
         }
 
         // Attempt to POST the item to the backend
-        const response = await api.post(syncEndpoint, item.data);
+        // ✅ FIXED: Pass requestConfig to include custom headers when needed
+        const response = await api.post(syncEndpoint, item.data, requestConfig);
 
         // Mark as synced
         await markAsSynced(item.id);
@@ -245,6 +279,35 @@ export async function addToSyncQueue(record) {
 
     if (!record.data || typeof record.data !== 'object') {
       throw new Error('Missing required field: record.data (must be an object)');
+    }
+
+    // ✅ VALIDATE SUBSCRIPTION PAYMENT SPECIFIC PARAMETERS
+    if (record.type === 'subscription_payment') {
+      const riderId = record.riderId || record.data?.rider_id;
+      
+      if (!riderId || !riderId.toString().trim()) {
+        throw new Error('Subscription payment: Missing riderId - cannot construct endpoint');
+      }
+
+      if (typeof record.data.amount !== 'number' || record.data.amount < 0) {
+        throw new Error('Subscription payment: Invalid amount (must be non-negative number)');
+      }
+
+      if (!record.data.plan) {
+        throw new Error('Subscription payment: Missing plan in payload');
+      }
+
+      // Ensure record has riderId for processPendingSync
+      if (!record.riderId) {
+        record.riderId = riderId;
+      }
+
+      console.log('✅ Subscription payment validated:', {
+        id: record.id,
+        riderId: record.riderId,
+        amount: record.data.amount,
+        plan: record.data.plan
+      });
     }
 
     // ✅ VALIDATE LIPA LATER PAYMENT SPECIFIC PARAMETERS
