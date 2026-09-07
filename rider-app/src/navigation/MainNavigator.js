@@ -83,6 +83,7 @@ import PaymentSummaryScreen from '../screens/lipaLater/PaymentSummaryScreen';
 import ConfirmPinDetailedStatementScreen from '../screens/financialHistory/ConfirmPinDetailedStatementScreen';
 import DetailedStatementConfirmationScreen from '../screens/financialHistory/DetailedStatementConfirmationScreen';
 import DetailedStatementEmailScreen from '../screens/financialHistory/DetailedStatementEmailScreen';
+import DetailedStatementPreviewScreen from '../screens/financialHistory/DetailedStatementPreviewScreen';
 import FinancialHistoryScreen from '../screens/financialHistory/FinancialHistoryScreen';
 import GenerateStatementScreen from '../screens/financialHistory/GenerateStatementScreen';
 import StatementPreviewScreen from '../screens/financialHistory/StatementPreviewScreen';
@@ -436,6 +437,15 @@ export const MainNavigator = () => {
       />
 
       <Stack.Screen
+        name="DetailedStatementPreview"
+        component={DetailedStatementPreviewScreen}
+        options={{
+          headerShown: false,
+          animationEnabled: true,
+        }}
+      />
+
+      <Stack.Screen
         name="TransactionList"
         component={TransactionListScreen}
         options={{
@@ -445,6 +455,12 @@ export const MainNavigator = () => {
       />
 
       {/* ===== SUPPORTING SCREENS ===== */}
+      {/* ✅ DetailedStatementPreviewScreen: Primary detailed statement view (RA-18-C) */}
+      {/* Directly accessible from StatementPreview via "Require Detailed Statement" button */}
+      {/* Features: Income/Expense breakdown by month & category, pagination, offline-first */}
+      
+      {/* ⚠️ ConfirmPinDetailedStatementScreen: Optional PIN verification (not currently used) */}
+      {/* Navigation flow: StatementPreview → DetailedStatementPreview (direct, no PIN required) */}
     </Stack.Navigator>
   );
 };

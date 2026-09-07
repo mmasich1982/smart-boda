@@ -4,7 +4,7 @@
 // ✅ UNIFIED ARCHITECTURE: Removed statementsRepository dependencies
 // ✅ INSTANT UPDATES: Statements generated from cached financial data
 // ✅ RETENTION POLICY: 6-month rolling window enforced
-// ✅ UI/UX: 100% preserved from original
+// ✅ UI/UX: 100% aligned with HTML prototype (RA-18-A/B)
 
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Picker, ActivityIndicator } from 'react-native';
@@ -12,6 +12,7 @@ import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import BackLink from '../../components/BackLink';
 import PrimaryButton from '../../components/PrimaryButton';
+import InfoBanner from '../../components/InfoBanner';
 import {
   getFinancialSummaryForRange,
   saveStatement,
@@ -20,12 +21,10 @@ import { addToSyncQueue } from '../../offline/syncQueue';
 import api from '../../api/client';
 
 const STATEMENT_PURPOSES = [
-  { code: 'bank_loan', label: 'Bank Loan Application' },
-  { code: 'sme_loan', label: 'SME Loan' },
-  { code: 'supplier_credit', label: 'Supplier Credit' },
-  { code: 'personal_record', label: 'Personal Record' },
-  { code: 'tax', label: 'Tax Documentation' },
-  { code: 'other', label: 'Other' },
+  'Loan Application',
+  'SACCO Good Standing',
+  'Insurance Application',
+  'General/Personal Use',
 ];
 
 export default function GenerateStatementScreen({ navigation, route }) {
@@ -89,11 +88,6 @@ export default function GenerateStatementScreen({ navigation, route }) {
   };
 
   const handleGenerateStatement = async () => {
-    if (!purpose) {
-      showToast('Please select a statement purpose', 'error');
-      return;
-    }
-
     if (!summary) {
       showToast('Financial summary not available', 'error');
       return;
@@ -104,7 +98,7 @@ export default function GenerateStatementScreen({ navigation, route }) {
 
       // ✅ Create statement record
       const statementData = {
-        purpose,
+        purpose: purpose || null, // Optional field
         period_start: new Date(rangeStart).toISOString(),
         period_end: new Date(rangeEnd).toISOString(),
         selected_period: selectedPeriod,
@@ -160,71 +154,55 @@ export default function GenerateStatementScreen({ navigation, route }) {
     return (
       <ScrollView style={styles.container}>
         <BackLink label="← Back" onPress={() => navigation.goBack()} />
-        <Text style={styles.screenTitle}>Generate Statement</Text>
+        <Text style={styles.screenTitle}>Generate a Statement</Text>
         <ActivityIndicator size="large" color="#ff7a1a" style={{ marginTop: 40 }} />
       </ScrollView>
     );
   }
 
+  const periodDisplay = `${new Date(rangeStart).toLocaleDateString()} — ${new Date(rangeEnd).toLocaleDateString()}`;
+
   return (
     <ScrollView style={styles.container}>
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
-      <Text style={styles.screenTitle}>Generate Statement</Text>
-
-      {/* Summary Preview */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Financial Summary</Text>
-        <View style={styles.summaryItem}>
-          <Text style={styles.label}>Period</Text>
-          <Text style={styles.value}>{selectedPeriod}</Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <Text style={styles.label}>Income</Text>
-          <Text style={[styles.value, styles.positive]}>+KSh {(summary.income || 0).toLocaleString()}</Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <Text style={styles.label}>Expenses</Text>
-          <Text style={[styles.value, styles.negative]}>-KSh {(summary.totalExpense || 0).toLocaleString()}</Text>
-        </View>
-        <View style={[styles.summaryItem, styles.netProfitItem]}>
-          <Text style={styles.label}>Net Profit</Text>
-          <Text
-            style={[
-              styles.value,
-              styles.valueBold,
-              (summary.netProfit || 0) < 0 ? styles.negative : styles.positive,
-            ]}
-          >
-            KSh {(summary.netProfit || 0).toLocaleString()}
-          </Text>
-        </View>
-      </View>
+      <Text style={styles.screenTitle}>Generate a Statement</Text>
+      
+      {/* Period Display */}
+      <Text style={styles.hint}>Period: {periodDisplay}</Text>
 
       {/* Purpose Selection */}
       <View style={styles.field}>
         <Text style={styles.fieldLabel}>
-          Statement Purpose <Text style={styles.required}>*</Text>
+          Statement Purpose <Text style={styles.optionalLabel}>(optional)</Text>
         </Text>
-        <View style={styles.pickerContainer}>
+        <View style={styles.selectContainer}>
           <Picker
             selectedValue={purpose}
             onValueChange={setPurpose}
-            style={styles.picker}
+            style={styles.select}
             enabled={!generating}
           >
-            <Picker.Item label="Select purpose..." value="" />
-            {STATEMENT_PURPOSES.map((p) => (
-              <Picker.Item key={p.code} label={p.label} value={p.code} />
+            <Picker.Item label="Select..." value="" />
+            {STATEMENT_PURPOSES.map((p, idx) => (
+              <Picker.Item key={idx} label={p} value={p} />
             ))}
           </Picker>
         </View>
+      </View>
+
+      {/* Info Banner */}
+      <View style={styles.infoBanner}>
+        <Text style={styles.infoBannerEmoji}>✅</Text>
+        <Text style={styles.infoBannerText}>
+          Income / Expense / Net Profit is always included — the statement's foundation.
+        </Text>
       </View>
 
       {/* Generate Button */}
       <PrimaryButton
         label="Generate Statement →"
         onPress={handleGenerateStatement}
-        disabled={generating || !purpose}
+        disabled={generating}
         loading={generating}
         style={styles.generateButton}
       />
@@ -242,55 +220,18 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#1a1c20',
-    marginBottom: 16,
+    marginBottom: 4,
   },
-  card: {
-    backgroundColor: '#fff',
-    borderWidth: 1.5,
-    borderColor: '#e7e4db',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-  },
-  cardTitle: {
-    fontSize: 13.5,
-    fontWeight: '700',
-    color: '#1a1c20',
-    marginBottom: 12,
-  },
-  summaryItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e7e4db',
-  },
-  netProfitItem: {
-    borderBottomWidth: 0,
-    borderTopWidth: 1.5,
-    borderTopColor: '#e7e4db',
-    marginTop: 4,
-    paddingTop: 12,
-  },
-  label: {
-    fontSize: 12.5,
+  screenSub: {
+    fontSize: 12,
     color: '#5b606c',
-    fontWeight: '600',
+    marginBottom: 12,
+    fontFamily: 'JetBrains Mono',
   },
-  value: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: '#1a1c20',
-  },
-  valueBold: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  positive: {
-    color: '#2e7d32',
-  },
-  negative: {
-    color: '#c62828',
+  hint: {
+    fontSize: 13,
+    color: '#5b606c',
+    marginBottom: 16,
   },
   field: {
     marginBottom: 16,
@@ -303,19 +244,42 @@ const styles = StyleSheet.create({
     color: '#5b606c',
     marginBottom: 8,
   },
-  required: {
-    color: '#e5650a',
+  optionalLabel: {
+    fontWeight: '500',
+    textTransform: 'none',
+    color: '#5b606c',
   },
-  pickerContainer: {
+  selectContainer: {
     borderWidth: 1.5,
     borderColor: '#e7e4db',
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#fff',
   },
-  picker: {
+  select: {
     height: 50,
     color: '#1a1c20',
+  },
+  infoBanner: {
+    backgroundColor: '#e6f5ef',
+    borderLeftWidth: 4,
+    borderLeftColor: '#1e9e6f',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  infoBannerEmoji: {
+    fontSize: 16,
+    marginTop: 2,
+  },
+  infoBannerText: {
+    fontSize: 12.5,
+    color: '#1a1c20',
+    lineHeight: 20,
+    flex: 1,
   },
   generateButton: {
     marginBottom: 10,
