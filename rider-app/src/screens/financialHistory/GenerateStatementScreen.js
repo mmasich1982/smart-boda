@@ -12,7 +12,6 @@ import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import BackLink from '../../components/BackLink';
 import PrimaryButton from '../../components/PrimaryButton';
-import InfoBanner from '../../components/InfoBanner';
 import {
   getFinancialSummaryForRange,
   saveStatement,
