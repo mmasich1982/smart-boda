@@ -533,10 +533,48 @@ export async function getTransactionList(riderId, rangeStart, rangeEnd) {
   }
 }
 
+/**
+ * Get single statement by ID
+ * Retrieves a previously generated statement from IndexedDB
+ */
+export async function getStatement(riderId, statementId) {
+  try {
+    if (!statementId) {
+      console.error('❌ Missing statementId');
+      return null;
+    }
+
+    console.log(`📋 Loading statement ${statementId} for rider ${riderId}`);
+
+    // ✅ Load from IndexedDB using statement ID
+    const cached = await indexedDbAdapter.kvGet(`statement_${statementId}`);
+
+    if (cached) {
+      const statement = typeof cached === 'string' ? JSON.parse(cached) : cached;
+      
+      console.log('✅ Statement loaded:', {
+        id: statement.id,
+        purpose: statement.purpose,
+        period: `${statement.period_start} - ${statement.period_end}`,
+        income: statement.financial_summary?.income,
+      });
+
+      return statement;
+    }
+
+    console.warn('⚠️ Statement not found:', statementId);
+    return null;
+  } catch (err) {
+    console.error('❌ Error loading statement:', err);
+    return null;
+  }
+}
+
 export default {
   getFinancialSummaryForRange,
   getEarliestTransactionDate,
   saveStatement,
   getStatementHistory,
   getTransactionList,
+  getStatement,
 };
