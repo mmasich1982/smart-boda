@@ -166,7 +166,8 @@ export default function GenerateStatementScreen({ navigation, route }) {
     <ScrollView style={styles.container}>
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
       <Text style={styles.screenTitle}>Generate a Statement</Text>
-      
+      <Text style={styles.screenSub}>RA-18-A/B · from your own Financial History only</Text>
+
       {/* Period Display */}
       <Text style={styles.hint}>Period: {periodDisplay}</Text>
 
@@ -203,8 +204,6 @@ export default function GenerateStatementScreen({ navigation, route }) {
         label="Generate Statement →"
         onPress={handleGenerateStatement}
         disabled={generating}
-        loading={generating}
-        style={styles.generateButton}
       />
     </ScrollView>
   );
@@ -280,8 +279,5 @@ const styles = StyleSheet.create({
     color: '#1a1c20',
     lineHeight: 20,
     flex: 1,
-  },
-  generateButton: {
-    marginBottom: 10,
   },
 });

@@ -20,8 +20,8 @@ import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import BackLink from '../../components/BackLink';
 import PrimaryButton from '../../components/PrimaryButton';
-import SecondaryButton from '../../components/SecondaryButton';
-import { getStatement, updateStatement } from '../../offline/financialHistoryUtils';
+import GhostButton from '../../components/GhostButton';
+import { getStatement } from '../../offline/financialHistoryUtils';
 import { addToSyncQueue } from '../../offline/syncQueue';
 import api from '../../api/client';
 
@@ -203,16 +203,13 @@ export default function StatementPreviewScreen({ navigation, route }) {
         label="⬇️ Download →"
         onPress={handleDownloadPdf}
         disabled={downloading}
-        loading={downloading}
-        style={styles.downloadButton}
       />
 
       {/* Require Detailed Statement Button */}
-      <SecondaryButton
+      <GhostButton
         label="📑 Require Detailed Statement →"
         onPress={handleRequireDetailedStatement}
         disabled={downloading}
-        style={styles.detailedButton}
       />
 
       {/* Trace Tag Note */}
@@ -291,12 +288,6 @@ const styles = StyleSheet.create({
   kvValueBold: {
     fontSize: 13,
     fontWeight: '700',
-  },
-  downloadButton: {
-    marginBottom: 8,
-  },
-  detailedButton: {
-    marginBottom: 8,
   },
   traceNote: {
     fontSize: 11.5,

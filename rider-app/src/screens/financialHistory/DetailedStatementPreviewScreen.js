@@ -291,8 +291,6 @@ export default function DetailedStatementPreviewScreen({ navigation, route }) {
           label="⬇️ Download Detailed PDF"
           onPress={handleDownloadPdf}
           disabled={downloading}
-          loading={downloading}
-          style={styles.downloadButtonSticky}
         />
       </View>
 
@@ -501,9 +499,6 @@ const styles = StyleSheet.create({
   },
   stickyHeader: {
     marginBottom: 12,
-  },
-  downloadButtonSticky: {
-    backgroundColor: '#ff7a1a',
   },
   screenTitle: {
     fontSize: 24,
