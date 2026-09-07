@@ -95,9 +95,23 @@ export default function GenerateStatementScreen({ navigation, route }) {
     try {
       setGenerating(true);
 
-      // ✅ Create statement record
+      // ✅ Format dates as YYYY-MM-DD for backend API (StatementRequest expects date, not ISO string)
+      const periodStartDate = new Date(rangeStart);
+      const periodEndDate = new Date(rangeEnd);
+      
+      const periodStartFormatted = periodStartDate.toISOString().split('T')[0];
+      const periodEndFormatted = periodEndDate.toISOString().split('T')[0];
+
+      // ✅ Create statement payload matching backend StatementRequest schema
+      const apiPayload = {
+        period_start: periodStartFormatted,
+        period_end: periodEndFormatted,
+        purpose_code: purpose || null, // Optional field
+      };
+
+      // ✅ Save to IndexedDB FIRST (offline-first architecture)
       const statementData = {
-        purpose: purpose || null, // Optional field
+        purpose: purpose || null,
         period_start: new Date(rangeStart).toISOString(),
         period_end: new Date(rangeEnd).toISOString(),
         selected_period: selectedPeriod,
@@ -105,7 +119,6 @@ export default function GenerateStatementScreen({ navigation, route }) {
         riderId,
       };
 
-      // ✅ Save to IndexedDB
       const savedStatement = await saveStatement(riderId, statementData);
 
       if (!savedStatement) {
@@ -113,28 +126,67 @@ export default function GenerateStatementScreen({ navigation, route }) {
         return;
       }
 
-      console.log('✅ Statement generated:', savedStatement.id);
+      console.log('✅ Statement generated locally:', savedStatement.id);
+      console.log('📊 Statement data:', {
+        income: summary.income,
+        expense: summary.totalExpense,
+        profit: summary.netProfit,
+      });
 
-      // ✅ Queue for sync
+      // ✅ Queue for sync with correct endpoint
       await addToSyncQueue({
         id: savedStatement.id,
         type: 'statement',
-        endpoint: `/financial/statements?rider_id=${riderId}`,
-        data: statementData,
+        endpoint: `/compliance/statements?rider_id=${riderId}`,
+        data: apiPayload,
         timestamp: new Date(),
       });
 
-      // Try immediate sync if online
+      // ✅ Try API sync to /compliance/statements (non-blocking, graceful failure)
+      let apiSyncSucceeded = false;
       try {
-        await api.post(`/financial/statements?rider_id=${riderId}`, statementData);
-        console.log('✅ Statement synced to API');
+        const isOnline = navigator?.onLine ?? true;
+        const response = await api.post(
+          `/compliance/statements?rider_id=${riderId}&online=${isOnline}`,
+          apiPayload
+        );
+
+        if (response && (response.id || response.verification_reference)) {
+          console.log('✅ Statement synced to API');
+          console.log('📋 Verification reference:', response.verification_reference);
+          apiSyncSucceeded = true;
+          
+          // Update local statement with verification reference
+          if (response.verification_reference) {
+            savedStatement.verification_ref = response.verification_reference;
+          }
+        }
       } catch (apiErr) {
-        console.warn('⚠️ API sync failed (will retry):', apiErr.message);
+        const status = apiErr.response?.status;
+        const message = apiErr.message || 'Unknown error';
+
+        // Handle different error types
+        if (status === 405) {
+          console.warn('⚠️ API endpoint configuration issue (405 Method Not Allowed)');
+          console.warn('   Trying endpoint: /compliance/statements (POST)');
+          console.warn('   Statement saved offline and queued for sync');
+        } else if (status === 404) {
+          console.warn('⚠️ Endpoint not found - check API configuration');
+        } else if (status === 401 || status === 403) {
+          console.warn('⚠️ Authentication error - check credentials');
+        } else if (apiErr.code === 'ECONNABORTED' || !navigator.onLine) {
+          console.warn('⚠️ Network error - statement queued for retry when online');
+        } else {
+          console.warn('⚠️ API sync failed:', message);
+        }
+
+        // Statement is already saved offline, so don't block navigation
+        apiSyncSucceeded = false;
       }
 
       showToast('Statement generated successfully', 'success');
 
-      // Navigate to preview
+      // Navigate to preview (whether API sync succeeded or not)
       setTimeout(() => {
         navigation.navigate('StatementPreview', {
           statementId: savedStatement.id,
@@ -165,7 +217,7 @@ export default function GenerateStatementScreen({ navigation, route }) {
     <ScrollView style={styles.container}>
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
       <Text style={styles.screenTitle}>Generate a Statement</Text>
-      <Text style={styles.screenSub}>RA-18-A/B · from your own Financial History only</Text>
+      <Text style={styles.screenSub}>Generated from your Financial History</Text>
 
       {/* Period Display */}
       <Text style={styles.hint}>Period: {periodDisplay}</Text>

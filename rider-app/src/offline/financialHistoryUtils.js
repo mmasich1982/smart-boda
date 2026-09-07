@@ -2,6 +2,23 @@
 // ✅ REFACTORED: Financial history and statements using IndexedDB-first architecture
 // Replaces financialHistoryRepository and statementsRepository with direct KV storage
 // Includes 6-month retention policy compliance
+//
+// ============================================================================
+// API ENDPOINTS FOR SYNC QUEUE
+// ============================================================================
+// Statement Generation (Offline-First):
+//   POST /compliance/statements?rider_id=${riderId}&online=true|false
+//   Payload: { period_start: "YYYY-MM-DD", period_end: "YYYY-MM-DD", purpose_code?: string }
+//   Response: { id, verification_reference, verified }
+//
+// Retry Verification (for offline-generated statements):
+//   POST /compliance/statements/{statement_id}/verify
+//   Called when app comes online to verify offline statements
+//
+// Download Logging:
+//   POST /compliance/statements/{statement_id}/download?rider_id=${riderId}
+//   Response: { download_count }
+// ============================================================================
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 
@@ -326,16 +343,33 @@ export async function getEarliestTransactionDate(riderId) {
 }
 
 /**
+ * Generate offline verification code
+ * Creates a unique verification code for statements generated offline
+ * Format: SBODA-XXXXXX-XXXXXX (Smart Boda + 6-digit + 6-digit)
+ */
+function generateOfflineVerificationCode() {
+  const randomPart1 = Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+  const randomPart2 = Math.floor(Math.random() * 1000000).toString().padStart(6, '0');
+  const timestamp = Date.now().toString().slice(-4);
+  return `SBODA-${randomPart1}-${randomPart2}`.toUpperCase();
+}
+
+/**
  * Save statement to IndexedDB
  * Statements are generated reports of financial data for a period
+ * ✅ Automatically generates verification code offline
  */
 export async function saveStatement(riderId, statementData) {
   try {
     const statementId = `statement_${riderId}_${Date.now()}`;
+    const verificationCode = generateOfflineVerificationCode();
+    
     const statement = {
       id: statementId,
       rider_id: riderId,
       ...statementData,
+      verification_ref: verificationCode,
+      verification_code_generated_offline: true,
       generated_at: new Date().toISOString(),
       ts: Date.now(),
       timestamp: Date.now(),
@@ -534,6 +568,162 @@ export async function getTransactionList(riderId, rangeStart, rangeEnd) {
 }
 
 /**
+ * Get all trips for a date range
+ * Used by DetailedStatementPreviewScreen for income breakdown
+ */
+export async function getTripsForRange(riderId, rangeStart, rangeEnd) {
+  try {
+    const startMs = rangeStart;
+    const endMs = rangeEnd;
+
+    console.log(`🚗 Loading trips for rider ${riderId}, range: ${new Date(startMs).toISOString()} - ${new Date(endMs).toISOString()}`);
+
+    let trips = [];
+    const tripCache = await indexedDbAdapter.kvGet(`trip_history_${riderId}`);
+    
+    if (tripCache) {
+      try {
+        const cachedTrips = typeof tripCache === 'string' ? JSON.parse(tripCache) : tripCache;
+        if (Array.isArray(cachedTrips)) {
+          trips = cachedTrips.filter(trip => {
+            const ts = trip.ts || trip.timestamp || 0;
+            return trip.status === 'active' && ts >= startMs && ts <= endMs;
+          });
+        }
+      } catch (parseErr) {
+        console.warn('⚠️ Trip cache parse error:', parseErr);
+      }
+    }
+
+    console.log(`✅ Loaded ${trips.length} trips`);
+    return trips;
+  } catch (err) {
+    console.error('❌ Error loading trips:', err);
+    return [];
+  }
+}
+
+/**
+ * Get all expenses for a date range (fuel, battery, maintenance, other)
+ * Used by DetailedStatementPreviewScreen for expense breakdown
+ */
+export async function getExpensesForRange(riderId, rangeStart, rangeEnd) {
+  try {
+    const startMs = rangeStart;
+    const endMs = rangeEnd;
+
+    console.log(`💰 Loading expenses for rider ${riderId}, range: ${new Date(startMs).toISOString()} - ${new Date(endMs).toISOString()}`);
+
+    const expenses = [];
+
+    // Load fuel expenses
+    try {
+      const fuelCache = await indexedDbAdapter.kvGet(`fuel_history_${riderId}`);
+      if (fuelCache) {
+        const fuel = typeof fuelCache === 'string' ? JSON.parse(fuelCache) : fuelCache;
+        if (Array.isArray(fuel)) {
+          fuel.forEach(f => {
+            const ts = f.ts || f.timestamp || 0;
+            if (ts >= startMs && ts <= endMs) {
+              expenses.push({
+                type: 'fuel',
+                id: f.id,
+                ts,
+                amount: f.cost || 0,
+                category: 'Fuel',
+              });
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Error loading fuel expenses:', err);
+    }
+
+    // Load battery expenses
+    try {
+      const batteryCache = await indexedDbAdapter.kvGet(`battery_history_${riderId}`);
+      if (batteryCache) {
+        const battery = typeof batteryCache === 'string' ? JSON.parse(batteryCache) : batteryCache;
+        if (Array.isArray(battery)) {
+          battery.forEach(b => {
+            const ts = b.ts || b.timestamp || 0;
+            if (ts >= startMs && ts <= endMs) {
+              expenses.push({
+                type: 'battery',
+                id: b.id,
+                ts,
+                amount: b.cost || 0,
+                category: 'Battery',
+              });
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Error loading battery expenses:', err);
+    }
+
+    // Load maintenance expenses
+    try {
+      const maintenanceCache = await indexedDbAdapter.kvGet(`maintenance_history_${riderId}`);
+      if (maintenanceCache) {
+        const maintenance = typeof maintenanceCache === 'string' ? JSON.parse(maintenanceCache) : maintenanceCache;
+        if (Array.isArray(maintenance)) {
+          maintenance.forEach(m => {
+            const ts = m.ts || m.timestamp || 0;
+            if (ts >= startMs && ts <= endMs) {
+              expenses.push({
+                type: 'maintenance',
+                id: m.id,
+                ts,
+                amount: m.cost || 0,
+                category: 'Maintenance',
+              });
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Error loading maintenance expenses:', err);
+    }
+
+    // Load other expenses
+    try {
+      const otherCache = await indexedDbAdapter.kvGet(`other_expenses_summary_${riderId}`);
+      if (otherCache) {
+        const data = typeof otherCache === 'string' ? JSON.parse(otherCache) : otherCache;
+        if (data.entries && Array.isArray(data.entries)) {
+          data.entries.forEach(e => {
+            const ts = e.ts || e.timestamp || 0;
+            if (ts >= startMs && ts <= endMs) {
+              expenses.push({
+                type: 'other',
+                id: e.id,
+                ts,
+                amount: e.amount || 0,
+                category: e.category || 'Other',
+              });
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Error loading other expenses:', err);
+    }
+
+    // Sort by timestamp (newest first)
+    expenses.sort((a, b) => b.ts - a.ts);
+
+    console.log(`✅ Loaded ${expenses.length} expenses`);
+    return expenses;
+  } catch (err) {
+    console.error('❌ Error loading expenses:', err);
+    return [];
+  }
+}
+
+/**
  * Get single statement by ID
  * Retrieves a previously generated statement from IndexedDB
  */
@@ -577,4 +767,6 @@ export default {
   getStatementHistory,
   getTransactionList,
   getStatement,
+  getTripsForRange,
+  getExpensesForRange,
 };

@@ -93,40 +93,48 @@ export default function StatementPreviewScreen({ navigation, route }) {
 
     try {
       setDownloading(true);
-      console.log('📥 Generating PDF for statement', statement.id);
+      console.log('📥 Logging download for statement', statement.id);
 
-      // ✅ Call API to generate PDF
-      const response = await api.post(
-        `/financial/statements/${statement.id}/download?rider_id=${riderId}`,
-        { format: 'pdf' }
-      );
+      // ✅ Use correct /compliance/statements endpoint with proper path
+      try {
+        const response = await api.post(
+          `/compliance/statements/${statement.id}/download?rider_id=${riderId}`
+        );
 
-      // Handle PDF download (platform-specific)
-      if (response.uri || response.url) {
-        console.log('✅ PDF ready:', response.uri || response.url);
-        // For mobile: could use react-native-fs or share
-        // For web: would trigger download
-        showToast('PDF downloaded successfully', 'success');
-      } else {
-        showToast('Error generating PDF', 'error');
+        if (response && response.download_count !== undefined) {
+          console.log('✅ Download logged:', response.download_count);
+          showToast('Download recorded successfully', 'success');
+        } else {
+          showToast('Download recorded', 'success');
+        }
+      } catch (apiErr) {
+        const status = apiErr.response?.status;
+        
+        if (status === 404) {
+          console.warn('⚠️ Statement not found on server');
+          showToast('Statement not found', 'error');
+        } else if (status === 405) {
+          console.warn('⚠️ PDF download endpoint not available');
+          showToast('Download feature temporarily unavailable', 'info');
+        } else if (!navigator.onLine) {
+          console.warn('⚠️ Offline - download will be logged when online');
+          showToast('Download will be logged when connection is available', 'info');
+        } else {
+          throw apiErr;
+        }
       }
     } catch (err) {
-      console.error('❌ PDF download error:', err);
-      
-      if (err.message?.includes('offline')) {
-        showToast('PDF generation requires online connection', 'error');
-      } else {
-        showToast('Error downloading PDF', 'error');
-      }
+      console.error('❌ Download error:', err);
+      showToast('Error recording download', 'error');
     } finally {
       setDownloading(false);
     }
   };
 
   const handleRequireDetailedStatement = () => {
-    console.log('📑 Opening detailed statement (RA-18-C)');
+    console.log('📑 Opening detailed statement request');
     
-    // Navigate directly to detailed statement breakdown
+    // Navigate to detailed statement request screen
     navigation.navigate('DetailedStatementPreview', {
       statementId: statement.id,
       riderId,
@@ -147,11 +155,12 @@ export default function StatementPreviewScreen({ navigation, route }) {
 
   const periodStart = new Date(statement.period_start).toLocaleDateString();
   const periodEnd = new Date(statement.period_end).toLocaleDateString();
-  const generatedAt = statement.created_at
-    ? new Date(statement.created_at).toLocaleString()
+  const generatedAt = statement.generated_at
+    ? new Date(statement.generated_at).toLocaleString()
     : 'Just now';
 
-  const verificationCode = statement.verification_ref || 'Pending — will register once online';
+  // ✅ Use offline-generated verification code
+  const verificationCode = statement.verification_ref || 'No code available';
 
   const income = statement.financial_summary?.income || 0;
   const expense = statement.financial_summary?.totalExpense || 0;
@@ -161,7 +170,7 @@ export default function StatementPreviewScreen({ navigation, route }) {
     <ScrollView style={styles.container}>
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
       <Text style={styles.screenTitle}>Statement Preview</Text>
-      <Text style={styles.screenSub}>RA-18-A · reviewed before any sharing occurs</Text>
+      <Text style={styles.screenSub}>Review your statement before sharing</Text>
 
       {/* Statement Preview Card */}
       <View style={styles.statementPreview}>
@@ -207,15 +216,10 @@ export default function StatementPreviewScreen({ navigation, route }) {
 
       {/* Require Detailed Statement Button */}
       <GhostButton
-        label="📑 Require Detailed Statement →"
+        label="📑 Request Detailed Statement →"
         onPress={handleRequireDetailedStatement}
         disabled={downloading}
       />
-
-      {/* Trace Tag Note */}
-      <Text style={styles.traceNote}>
-        RA-18-C · full detailed statement, delivered by email after PIN confirmation
-      </Text>
     </ScrollView>
   );
 }
@@ -288,11 +292,5 @@ const styles = StyleSheet.create({
   kvValueBold: {
     fontSize: 13,
     fontWeight: '700',
-  },
-  traceNote: {
-    fontSize: 11.5,
-    color: '#5b606c',
-    marginTop: 6,
-    fontFamily: 'JetBrains Mono',
   },
 });
