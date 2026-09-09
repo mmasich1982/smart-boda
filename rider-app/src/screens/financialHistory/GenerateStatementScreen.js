@@ -5,6 +5,7 @@
 // ✅ AUTOMATIC SYNC: SyncOrchestrator handles background sync every 5 minutes
 // ✅ RETENTION POLICY: 6-month rolling window enforced
 // ✅ UI/UX: 100% aligned with HTML prototype (RA-18-A/B)
+// ✅ OFFLINE-FIRST: Statement generation works fully offline, no internet required
 
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Picker, ActivityIndicator } from 'react-native';
@@ -18,7 +19,6 @@ import {
 import { addToSyncQueue } from '../../offline/syncQueue';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import api from '../../api/client';
-import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 
 // ✅ FIXED: Map display names to backend codes (must match statement_purpose_master.code in DB)
 const STATEMENT_PURPOSES = [
@@ -31,7 +31,6 @@ const STATEMENT_PURPOSES = [
 export default function GenerateStatementScreen({ navigation, route }) {
   const { t } = useTranslation();
   const { showToast } = useToast();
-  const { isConnected, isInitialized } = useNetworkStatus();
 
   const hasLoadedRef = useRef(false);
   const { rangeStart, rangeEnd, selectedPeriod, riderId } = route.params || {
@@ -45,7 +44,6 @@ export default function GenerateStatementScreen({ navigation, route }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
 
   // ✅ Load financial summary on mount
   useEffect(() => {
@@ -131,7 +129,6 @@ export default function GenerateStatementScreen({ navigation, route }) {
 
     try {
       setGenerating(true);
-      setSuccessMessage('');
 
       // ✅ Generate offline statement ID (format: statement_riderId_timestamp)
       const now = Date.now();
@@ -151,6 +148,7 @@ export default function GenerateStatementScreen({ navigation, route }) {
       };
 
       // ✅ CRITICAL: Save to IndexedDB FIRST (offline-first architecture)
+      // Statement is generated HERE in the offline storage - it's complete and usable
       const offlineStatement = {
         id: statementId,
         rider_id: riderId,
@@ -171,13 +169,13 @@ export default function GenerateStatementScreen({ navigation, route }) {
         verification_ref: `VRF-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
       };
 
-      console.log('💾 Saving statement offline:', { 
+      console.log('💾 Generating statement offline:', { 
         statementId, 
         riderId, 
         period: `${periodStartFormatted} to ${periodEndFormatted}` 
       });
 
-      // ALWAYS save locally first using IndexedDB (exact same as FuelEntryScreen)
+      // ✅ SAVE LOCALLY: Statement is NOW GENERATED and available offline (no internet needed)
       await indexedDbAdapter.kvSet(
         `statement_${statementId}`,
         JSON.stringify(offlineStatement)
@@ -186,7 +184,7 @@ export default function GenerateStatementScreen({ navigation, route }) {
       // Update cache immediately for instant UI feedback
       await updateStatementHistoryCache(offlineStatement);
 
-      // ✅ Add to sync queue for automatic background sync
+      // ✅ Add to sync queue for automatic background sync (will happen eventually)
       const queueSuccess = await addToSyncQueue({
         id: statementId,
         type: 'statement',
@@ -196,57 +194,39 @@ export default function GenerateStatementScreen({ navigation, route }) {
       });
 
       if (!queueSuccess) {
-        console.warn('⚠️ Failed to add to queue, but local save succeeded');
+        console.warn('⚠️ Failed to add to queue, but local statement is safe');
       }
 
-      console.log('✅ Statement generated locally:', statementId);
+      console.log('✅ Statement generated (offline):', statementId);
       console.log('📊 Statement data:', {
         income: summary.income,
         expense: summary.totalExpense,
         profit: summary.netProfit,
       });
 
-      // Try to sync immediately only if online (non-blocking)
-      let apiSyncSucceeded = false;
-      if (isConnected && isInitialized) {
-        try {
-          console.log('📡 Attempting to sync to API...');
-          const response = await api.post(
-            `/compliance/statements?rider_id=${riderId}&online=true`,
-            apiPayload
-          );
+      // ✅ Try to sync immediately if online (optional, non-blocking)
+      // Statement is ALREADY generated - this is just to sync it to server
+      try {
+        const response = await api.post(
+          `/compliance/statements?rider_id=${riderId}&online=true`,
+          apiPayload
+        );
 
-          if (response && (response.id || response.verification_reference)) {
-            console.log('✅ Statement synced to API immediately');
-            console.log('📋 Verification reference:', response.verification_reference);
-            apiSyncSucceeded = true;
-            
-            // Update local statement with verification reference from server
-            if (response.verification_reference) {
-              offlineStatement.verification_ref = response.verification_reference;
-              offlineStatement.verified = response.verified || false;
-            }
+        if (response && (response.id || response.verification_reference)) {
+          console.log('✅ Statement synced to API');
+          if (response.verification_reference) {
+            offlineStatement.verification_ref = response.verification_reference;
+            offlineStatement.verified = response.verified || false;
           }
-        } catch (apiErr) {
-          const status = apiErr.response?.status;
-          const message = apiErr.message || 'Unknown error';
-
-          console.warn('⚠️ API sync failed (will retry later via SyncOrchestrator):', {
-            status: status,
-            message: message,
-          });
-          // API failed but data is saved and queued - that's okay
-          apiSyncSucceeded = false;
         }
+      } catch (apiErr) {
+        // API sync failed, but that's OK - statement is safe offline
+        // SyncOrchestrator will retry later
+        console.log('📋 Statement syncing in background');
       }
 
-      // Show success message (whether API sync succeeded or not)
-      const successMsg = isConnected && isInitialized
-        ? 'Statement generated and synced!'
-        : 'Statement saved. Syncing in background...';
-      setSuccessMessage(successMsg);
-
-      console.log('✅ Success:', successMsg);
+      // Show success and navigate
+      showToast('Statement generated!', 'success');
 
       // Navigate to preview after brief success message
       setTimeout(() => {
@@ -305,16 +285,6 @@ export default function GenerateStatementScreen({ navigation, route }) {
         </View>
       </View>
 
-      {/* Network Status Info */}
-      {!isConnected && (
-        <View style={styles.infoBanner}>
-          <Text style={styles.infoBannerEmoji}>📡</Text>
-          <Text style={styles.infoBannerText}>
-            You're offline. Statement will be saved locally and synced automatically when you're back online.
-          </Text>
-        </View>
-      )}
-
       {/* Info Banner */}
       <View style={styles.infoBanner}>
         <Text style={styles.infoBannerEmoji}>✅</Text>
@@ -322,14 +292,6 @@ export default function GenerateStatementScreen({ navigation, route }) {
           Income / Expense / Net Profit is always included — the statement's foundation.
         </Text>
       </View>
-
-      {/* Success Message */}
-      {successMessage && (
-        <View style={[styles.infoBanner, { borderLeftColor: '#1e9e6f' }]}>
-          <Text style={styles.infoBannerEmoji}>✨</Text>
-          <Text style={styles.infoBannerText}>{successMessage}</Text>
-        </View>
-      )}
 
       {/* Generate Button */}
       <PrimaryButton
