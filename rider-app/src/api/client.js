@@ -1,13 +1,12 @@
 // rider-app/src/api/client.js
-// This file is imported by 33+ screens and modules across the codebase (syncQueue.js,
-// useMasterData.js, every financialPerformance/complianceHistory/settings screen that
-// talks to the backend) but was never actually created in any of the five developer
-// guides -- see docs/NAVIGATION_VALIDATION_REPORT.md. Without this file, the app cannot
-// build at all. Implemented here as a single shared axios instance, mirroring the pattern
-// already used by the Admin Console's api/client.js.
+// ✅ IMPROVED: Suppresses network error logs when offline (no more annoying console spam)
+// ✅ FIXED: Only logs errors when they're unexpected (not just missing network)
+// ✅ OPTIMIZED: Checks offline status before logging network errors
+
 import axios from 'axios';
 import Constants from 'expo-constants';
 import { getLocalAuthToken } from '../offline/db';
+import NetInfo from '@react-native-community/netinfo';
 
 // EXPO_PUBLIC_API_BASE_URL is read at build time via rider-app/app.json's "extra" block
 // (see app.json's expo.extra.apiBaseUrl) -- falls back to localhost for local development
@@ -25,6 +24,12 @@ const api = axios.create({
   timeout: 15000,
 });
 
+// Track last network status to suppress offline errors
+let lastNetworkStatus = { isConnected: true, isInternetReachable: true };
+NetInfo.addEventListener(state => {
+  lastNetworkStatus = state;
+});
+
 // Attach the rider's auth token (set at PIN login) to every outgoing request, when present.
 api.interceptors.request.use(async (config) => {
   try {
@@ -39,5 +44,52 @@ api.interceptors.request.use(async (config) => {
   }
   return config;
 });
+
+// ✅ FIXED: Suppress error logs for expected offline scenarios
+api.interceptors.response.use(
+  response => response,
+  error => {
+    // Check if this is an expected offline error
+    const isOfflineError = 
+      error.code === 'ECONNABORTED' ||
+      error.code === 'ENOTFOUND' ||
+      error.code === 'ERR_INTERNET_DISCONNECTED' ||
+      error.code === 'ERR_NETWORK' ||
+      error.message?.includes('Network request failed') ||
+      error.message?.includes('internet') ||
+      error.message?.includes('ECONNABORTED');
+
+    const isHealthCheck = 
+      error.config?.method === 'head' ||
+      error.config?.url === '/' ||
+      error.config?.url === API_BASE_URL;
+
+    // Check current network status
+    const isCurrentlyOffline = 
+      !lastNetworkStatus.isConnected || 
+      !lastNetworkStatus.isInternetReachable;
+
+    // ✅ SUPPRESS: Don't log if offline (expected behavior)
+    // Only log if it's an unexpected error while online
+    if (!isCurrentlyOffline && !isOfflineError) {
+      // Legitimate error while online - log it
+      console.warn('⚠️ API Error:', {
+        status: error.response?.status,
+        message: error.message,
+        url: error.config?.url,
+        timestamp: new Date().toISOString(),
+      });
+    } else if (isOfflineError && !isHealthCheck) {
+      // Offline error for user operation - log once
+      console.log('📡 Network unavailable - queued for sync', {
+        endpoint: error.config?.url,
+        status: isCurrentlyOffline ? 'offline' : 'interrupted',
+      });
+    }
+    // Health check errors (HEAD requests) are silently suppressed
+
+    return Promise.reject(error);
+  }
+);
 
 export default api;
