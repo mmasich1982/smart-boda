@@ -568,6 +568,7 @@ export default {
   "success_statementRequested": "✅ Statement Requested",
   "success_subscriptionConfirmed": "✅ Subscription Confirmed",
   "success_subscriptionSaving": "✅ Subscription Saving",
+  "success_tripSaving": "✅ Trip Saving",
   "swap": "Swap",
   "sync.error_hint": "Sync encountered an issue. Offline mode is active.",
   "synced": "Synced",

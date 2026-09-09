@@ -611,6 +611,7 @@ export default {
   "success_paymentSaving": "Malipo yalihifadhiwa. Inasawazisha...",
   "success_paymentRecorded": "Malipo yamerekodiwwa kwa mafanikio!",
   "success_paymentRecordedFull": "Malipo yamerekodiwwa! Akaunti iliyokamatia.",
+  "success_tripSaving": "Safari Inahifadhiwa",
   
   // ✅ Payment Screen Labels
   "recordPaymentButton": "Rekodi Malipo →",

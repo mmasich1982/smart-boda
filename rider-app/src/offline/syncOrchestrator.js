@@ -5,21 +5,22 @@ rider-app/src/offline/syncOrchestrator.js
  * ============================================================================
  * 
  * 🎯 PURPOSE:
- * Manages automatic sync checking at configurable intervals (default: 5 minutes)
+ * Manages automatic sync checking at configurable intervals (default: 1 minute)
  * Coordinates with existing SyncQueue to process pending items when:
  * - User comes online (network connectivity restored)
- * - Periodic interval expires (5 minutes)
+ * - Periodic interval expires (1 minute)
  * 
  * ✅ KEY FEATURES:
  * - Non-blocking: Runs in background without interrupting user
- * - Configurable interval: Default 5 minutes, fully configurable
+ * - Configurable interval: Default 1 minute, fully configurable
  * - Network aware: Only syncs when online, retries when offline
  * - Exponential backoff: Respects existing queue retry logic
  * - Memory efficient: Tracks last sync time, not data copies
  * - Offline-first compatible: Works seamlessly with IndexedDB-first architecture
+ * - East African Time: All timestamps use EAT for consistency
  * 
  * 📋 CONFIGURATION:
- * By default, sync is checked every 5 minutes.
+ * By default, sync is checked every 1 minute.
  * To customize: Call setSyncCheckInterval(milliseconds) before starting
  * 
  * 🚀 STARTUP:
@@ -32,7 +33,7 @@ import { processPendingSync } from './syncQueue';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
 // Configuration constants
-let SYNC_CHECK_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds
+let SYNC_CHECK_INTERVAL = 1 * 60 * 1000; // 1 minute in milliseconds (changed from 5 minutes)
 let syncTimerRef = null;
 let lastSyncAttemptTime = 0;
 let isOrchestratorActive = false;
@@ -116,7 +117,7 @@ export async function performSyncCheck() {
 
 /**
  * Start the periodic sync checker
- * Runs sync checks every SYNC_CHECK_INTERVAL milliseconds
+ * Runs sync checks every SYNC_CHECK_INTERVAL milliseconds (1 minute by default)
  * 
  * Safe to call multiple times (will not create duplicate timers)
  * Use stopSyncOrchestrator() to stop the periodic checks
@@ -186,10 +187,11 @@ export async function forceSyncNow() {
  * 
  * Features:
  * - Auto-sync when coming back online
- * - Periodic checks every 5 minutes
+ * - Periodic checks every 1 minute
  * - Graceful handling of offline periods
+ * - East African Time (EAT) for all timestamps
  * 
- * @param {number} customIntervalMs - Optional custom interval (defaults to 5 min)
+ * @param {number} customIntervalMs - Optional custom interval (defaults to 1 min)
  * @example
  * // In App.js useEffect:
  * useEffect(() => {

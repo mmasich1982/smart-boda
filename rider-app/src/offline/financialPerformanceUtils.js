@@ -682,9 +682,11 @@ export async function invalidateFinancialCaches(riderId) {
 
     for (const key of cacheKeys) {
       try {
-        await indexedDbAdapter.deleteRow('kvStore', key);
+        // ✅ FIXED: Use kvDelete for key-value store operations, not deleteRow (which is for table operations)
+        await indexedDbAdapter.kvDelete(key);
       } catch (err) {
-        console.warn(`⚠️ Failed to clear cache key: ${key}`);
+        console.warn(`⚠️ Failed to clear cache key: ${key} - ${err.message}`);
+        // Continue even if one key fails to delete
       }
     }
 
@@ -723,9 +725,11 @@ export async function clearFinancialCacheForRider(riderId) {
 
     for (const key of cacheKeys) {
       try {
-        await indexedDbAdapter.deleteRow('kvStore', key);
+        // ✅ FIXED: Use kvDelete for key-value store operations, not deleteRow (which is for table operations)
+        await indexedDbAdapter.kvDelete(key);
       } catch (err) {
-        console.warn(`⚠️ Failed to clear: ${key}`);
+        console.warn(`⚠️ Failed to clear: ${key} - ${err.message}`);
+        // Continue even if one key fails to delete
       }
     }
 

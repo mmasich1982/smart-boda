@@ -60,6 +60,31 @@ const HISTORY_RETENTION_DAYS = 30;
 const BATCH_SIZE_LIMIT = 100; // Max items per batch
 
 // ============================================================================
+// EAST AFRICAN TIME UTILITY
+// ============================================================================
+// All timestamps should use EAT (UTC+3) for consistency across the application
+
+/**
+ * Get current time in East African Time (UTC+3)
+ * @returns {Date} Current time in EAT
+ */
+function getEastAfricanTime() {
+  const now = new Date();
+  // EAT is UTC+3, so we need to get the UTC time and add 3 hours
+  const eatTime = new Date(now.toLocaleString('en-US', { timeZone: 'Africa/Nairobi' }));
+  return eatTime;
+}
+
+/**
+ * Get current ISO string in East African Time
+ * @returns {string} ISO string representation of current time in EAT
+ */
+function getEastAfricanTimeISO() {
+  const eatTime = getEastAfricanTime();
+  return eatTime.toISOString();
+}
+
+// ============================================================================
 // SYNC PRIORITY LEVELS (Higher number = Higher priority)
 // ============================================================================
 
@@ -212,7 +237,7 @@ export async function enqueue(type, data) {
       type,
       endpoint: endpoint,  // ✅ FIXED: Now has correct endpoint from the start
       data: normalizedData,
-      timestamp: new Date().toISOString(), // Store as ISO string for consistent handling
+      timestamp: getEastAfricanTimeISO(), // ✅ Store as ISO string in East African Time (EAT)
       riderId: data?.rider_id, // Store rider_id for later use in processPendingSync
     };
     return await addToSyncQueue(record);
@@ -480,7 +505,7 @@ export async function addToSyncQueue(record) {
 
     // ✅ VALIDATE OTHER COMMON PARAMETERS
     if (!record.timestamp) {
-      record.timestamp = new Date();
+      record.timestamp = getEastAfricanTimeISO(); // ✅ Use East African Time (EAT)
     }
 
     // Add initial sync state
@@ -604,7 +629,7 @@ export async function markAsSynced(recordId) {
     }
 
     queue[index].status = 'synced';
-    queue[index].syncedAt = new Date().toISOString();
+    queue[index].syncedAt = getEastAfricanTimeISO(); // ✅ Use East African Time (EAT)
     queue[index].retryCount = 0;
     queue[index].lastError = null;
 
@@ -642,7 +667,7 @@ export async function markAsFailed(recordId, errorMessage) {
     if (item.retryCount < MAX_RETRIES) {
       const backoffMs = INITIAL_BACKOFF_MS * Math.pow(2, item.retryCount - 1);
       const nextRetry = new Date(Date.now() + backoffMs);
-      item.nextRetryTime = nextRetry.toISOString();
+      item.nextRetryTime = nextRetry.toISOString(); // Backoff is relative, so this is fine
       item.status = 'pending_retry';
       console.log(
         `⚠️ Marked as failed (retry ${item.retryCount}/${MAX_RETRIES}): ${recordId}`
@@ -1059,7 +1084,7 @@ export async function getQueueDiagnostics() {
     }
 
     return {
-      timestamp: new Date().toISOString(),
+      timestamp: getEastAfricanTimeISO(), // ✅ Use East African Time (EAT)
       queue: {
         ...stats,
         queueSize: queue.length,

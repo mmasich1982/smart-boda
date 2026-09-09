@@ -377,7 +377,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
 
   const handleViewAgeingReport = useCallback(() => {
     clearCriticalError();
-    navigation.navigate('LipaLaterAgeing');
+    navigation.navigate('LipaLaterAgeingScreen');
   }, [navigation, clearCriticalError]);
 
   if (!effectiveRiderId || !isInitialized) {

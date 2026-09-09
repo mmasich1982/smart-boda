@@ -3,7 +3,7 @@
 // ✅ SEAMLESS OFFLINE: Loads from IndexedDB first, then API
 // ✅ DOWNLOAD LOGGING: Works with both UUIDs and custom statement IDs
 // ✅ PDF EXPORT: In-app export with verification code
-// ✅ DETAILED STATEMENT: Optional email-based detailed report after PIN confirmation
+//
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -246,15 +246,7 @@ export default function StatementPreviewScreen({ navigation, route }) {
         <Text style={styles.hint}>Verification Code: {verificationCode}</Text>
       </View>
 
-      {/* Network Status Info */}
-      {!isConnected && (
-        <View style={styles.infoBanner}>
-          <Text style={styles.infoBannerEmoji}>📡</Text>
-          <Text style={styles.infoBannerText}>
-            Offline. Statement saved locally. Download will be synced when online.
-          </Text>
-        </View>
-      )}
+      {/* Network Status Info - REMOVED: Not necessary to display to user */}
 
       {/* Download Button */}
       <PrimaryButton
