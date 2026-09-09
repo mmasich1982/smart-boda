@@ -76,15 +76,12 @@ api.interceptors.response.use(
       !lastNetworkStatus.isInternetReachable;
 
     // ✅ CRITICAL: Suppress ALL logs for:
-    // 1. Health checks/connectivity verifications (HEAD requests)
+    // 1. Health checks/connectivity verifications (HEAD requests) - COMPLETELY SILENT
     // 2. Expected offline errors when already known to be offline
     if (isHealthCheck) {
-      // ✅ Silently suppress - this is expected when offline or checking connectivity
-      console.debug('🔍 Connectivity check:', {
-        status: isCurrentlyOffline ? 'offline' : 'online',
-        method: error.config?.method,
-        url: error.config?.url,
-      });
+      // ✅ COMPLETELY SILENT - Health checks are expected to fail when offline
+      // No logging at all - this prevents the continuous HEAD request errors
+      // that pollute the console
     } else if (isCurrentlyOffline && isOfflineError) {
       // ✅ Already offline - suppress verbose logging
       // Just track that operation failed and will retry

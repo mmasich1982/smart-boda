@@ -564,15 +564,6 @@ export default function RecordPaymentScreen({ route, navigation }) {
         />
       </View>
 
-      {/* Offline Status */}
-      {!isConnected && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineText}>
-            📱 Offline Mode: Payment will sync when connection is restored.
-          </Text>
-        </View>
-      )}
-
       {/* Record Payment Button */}
       <TouchableOpacity
         style={[
@@ -827,4 +818,4 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   }
-});
+});a
