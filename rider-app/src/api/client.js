@@ -46,6 +46,7 @@ api.interceptors.request.use(async (config) => {
 });
 
 // ✅ FIXED: Suppress error logs for expected offline scenarios
+// ✅ IMPROVED: Better detection of health checks and connectivity verifications
 api.interceptors.response.use(
   response => response,
   error => {
@@ -57,36 +58,55 @@ api.interceptors.response.use(
       error.code === 'ERR_NETWORK' ||
       error.message?.includes('Network request failed') ||
       error.message?.includes('internet') ||
-      error.message?.includes('ECONNABORTED');
+      error.message?.includes('ECONNABORTED') ||
+      error.message?.includes('timeout');
 
+    // Detect health checks and connectivity verifications
     const isHealthCheck = 
       error.config?.method === 'head' ||
+      error.config?.method === 'HEAD' ||
       error.config?.url === '/' ||
-      error.config?.url === API_BASE_URL;
+      error.config?.url === API_BASE_URL ||
+      error.config?.url?.endsWith('/health') ||
+      error.config?.url?.endsWith('/ping');
 
     // Check current network status
     const isCurrentlyOffline = 
       !lastNetworkStatus.isConnected || 
       !lastNetworkStatus.isInternetReachable;
 
-    // ✅ SUPPRESS: Don't log if offline (expected behavior)
-    // Only log if it's an unexpected error while online
-    if (!isCurrentlyOffline && !isOfflineError) {
-      // Legitimate error while online - log it
+    // ✅ CRITICAL: Suppress ALL logs for:
+    // 1. Health checks/connectivity verifications (HEAD requests)
+    // 2. Expected offline errors when already known to be offline
+    if (isHealthCheck) {
+      // ✅ Silently suppress - this is expected when offline or checking connectivity
+      console.debug('🔍 Connectivity check:', {
+        status: isCurrentlyOffline ? 'offline' : 'online',
+        method: error.config?.method,
+        url: error.config?.url,
+      });
+    } else if (isCurrentlyOffline && isOfflineError) {
+      // ✅ Already offline - suppress verbose logging
+      // Just track that operation failed and will retry
+      console.debug('📡 Offline - queued for sync:', {
+        endpoint: error.config?.url,
+        method: error.config?.method,
+      });
+    } else if (!isCurrentlyOffline && !isOfflineError) {
+      // ✅ Legitimate error while online - log it for debugging
       console.warn('⚠️ API Error:', {
         status: error.response?.status,
         message: error.message,
         url: error.config?.url,
+        method: error.config?.method,
         timestamp: new Date().toISOString(),
       });
-    } else if (isOfflineError && !isHealthCheck) {
-      // Offline error for user operation - log once
-      console.log('📡 Network unavailable - queued for sync', {
+    } else {
+      // ✅ Offline error detected but NetInfo hasn't updated yet
+      console.debug('🔄 Network interrupted - will retry on reconnect:', {
         endpoint: error.config?.url,
-        status: isCurrentlyOffline ? 'offline' : 'interrupted',
       });
     }
-    // Health check errors (HEAD requests) are silently suppressed
 
     return Promise.reject(error);
   }

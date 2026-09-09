@@ -120,6 +120,24 @@ export default function StatementPreviewScreen({ navigation, route }) {
       setDownloading(true);
       console.log('📥 Logging download for statement', statement.id);
 
+      // ✅ CRITICAL: Check if offline first - queue immediately without trying API
+      if (!isConnected) {
+        console.warn('⚠️ OFFLINE: Queueing download for sync when online');
+        await addToSyncQueue({
+          id: `download_${statement.id}_${Date.now()}`,
+          type: 'statement_download',
+          endpoint: `/compliance/statements/${statement.id}/download?rider_id=${riderId}`,
+          data: { 
+            statement_id: statement.id, 
+            rider_id: riderId,
+            timestamp: new Date().toISOString()
+          },
+          timestamp: new Date().toISOString(),
+        });
+        showToast('📥 Download queued - will sync when online', 'info');
+        return;
+      }
+
       // ✅ FIXED: Log download endpoint now accepts both UUID and custom ID formats
       try {
         const response = await api.post(
@@ -128,41 +146,63 @@ export default function StatementPreviewScreen({ navigation, route }) {
 
         if (response && response.download_count !== undefined) {
           console.log('✅ Download logged:', response.download_count);
-          showToast('Download recorded successfully', 'success');
+          showToast('✅ Download recorded successfully', 'success');
         } else {
-          showToast('Download recorded', 'success');
+          showToast('✅ Download recorded', 'success');
         }
       } catch (apiErr) {
         const status = apiErr.response?.status;
         
-        if (status === 404) {
+        // ✅ CRITICAL: Detect network errors vs API errors
+        const isNetworkError = 
+          !status || 
+          apiErr.code === 'ECONNABORTED' ||
+          apiErr.code === 'ENOTFOUND' ||
+          apiErr.code === 'ERR_INTERNET_DISCONNECTED' ||
+          apiErr.code === 'ERR_NETWORK' ||
+          apiErr.message?.includes('Network') ||
+          apiErr.message?.includes('timeout');
+        
+        if (isNetworkError) {
+          // ✅ Network error - queue for later sync
+          console.warn('⚠️ Network error - queueing download for retry');
+          await addToSyncQueue({
+            id: `download_${statement.id}_${Date.now()}`,
+            type: 'statement_download',
+            endpoint: `/compliance/statements/${statement.id}/download?rider_id=${riderId}`,
+            data: { 
+              statement_id: statement.id, 
+              rider_id: riderId,
+              timestamp: new Date().toISOString()
+            },
+            timestamp: new Date().toISOString(),
+          });
+          showToast('📥 Download queued for retry when connection restored', 'info');
+        } else if (status === 404) {
           console.warn('⚠️ Statement not found on server (offline-only statement)');
           // This is OK - offline-generated statements may not be synced yet
-          showToast('Download recorded (offline statement)', 'success');
+          showToast('✅ Download recorded (offline statement)', 'success');
         } else if (status === 400) {
           console.warn('⚠️ Bad request - likely ID format issue');
           // Try to queue this for later sync
           await addToSyncQueue({
-            id: `download_${statement.id}`,
+            id: `download_${statement.id}_${Date.now()}`,
             type: 'statement_download',
             endpoint: `/compliance/statements/${statement.id}/download?rider_id=${riderId}`,
             data: { statement_id: statement.id, rider_id: riderId },
-            timestamp: new Date(),
+            timestamp: new Date().toISOString(),
           });
-          showToast('Download queued for sync', 'info');
+          showToast('📥 Download queued for sync', 'info');
         } else if (status === 405) {
           console.warn('⚠️ Download endpoint not available');
-          showToast('Download feature temporarily unavailable', 'info');
-        } else if (!isConnected) {
-          console.warn('⚠️ Offline - download will be logged when online');
-          showToast('Download will be logged when connection is available', 'info');
+          showToast('⚠️ Download feature temporarily unavailable', 'info');
         } else {
           throw apiErr;
         }
       }
     } catch (err) {
       console.error('❌ Download error:', err);
-      showToast('Error recording download', 'error');
+      showToast('❌ Error recording download', 'error');
     } finally {
       setDownloading(false);
     }

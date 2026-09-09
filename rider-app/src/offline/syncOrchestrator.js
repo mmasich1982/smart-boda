@@ -31,12 +31,15 @@ rider-app/src/offline/syncOrchestrator.js
 
 import { processPendingSync } from './syncQueue';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
+import NetInfo from '@react-native-community/netinfo';
 
 // Configuration constants
 let SYNC_CHECK_INTERVAL = 1 * 60 * 1000; // 1 minute in milliseconds (changed from 5 minutes)
 let syncTimerRef = null;
 let lastSyncAttemptTime = 0;
 let isOrchestratorActive = false;
+let networkStateUnsubscribe = null;
+let lastNetworkState = { isConnected: false, isInternetReachable: false };
 
 /**
  * Set the sync check interval (in milliseconds)
@@ -118,6 +121,7 @@ export async function performSyncCheck() {
 /**
  * Start the periodic sync checker
  * Runs sync checks every SYNC_CHECK_INTERVAL milliseconds (1 minute by default)
+ * ✅ CRITICAL: Also listens for network changes and syncs immediately when coming back online
  * 
  * Safe to call multiple times (will not create duplicate timers)
  * Use stopSyncOrchestrator() to stop the periodic checks
@@ -130,12 +134,29 @@ export function startPeriodicSyncCheck() {
 
   console.log(`✅ Starting periodic sync checks (interval: ${SYNC_CHECK_INTERVAL / 1000}s)`);
   
+  // ✅ CRITICAL: Listen for network state changes
+  // When coming back online, sync immediately without waiting for periodic check
+  networkStateUnsubscribe = NetInfo.addEventListener(state => {
+    const isNowOnline = state.isConnected && state.isInternetReachable;
+    const wasOffline = !lastNetworkState.isConnected || !lastNetworkState.isInternetReachable;
+    
+    lastNetworkState = state;
+    
+    // ✅ CRITICAL: Detected reconnection - trigger sync immediately
+    if (isNowOnline && wasOffline) {
+      console.log('🌐 Network restored! Triggering immediate sync...');
+      performSyncCheck().catch(err => {
+        console.error('❌ Sync on reconnect error:', err);
+      });
+    }
+  });
+  
   // Perform first check immediately
   performSyncCheck().catch(err => {
     console.error('❌ Initial sync check error:', err);
   });
   
-  // Then set up periodic checks
+  // Then set up periodic checks as fallback
   syncTimerRef = setInterval(() => {
     performSyncCheck().catch(err => {
       console.error('❌ Periodic sync check error:', err);
@@ -154,8 +175,15 @@ export function stopSyncOrchestrator() {
   if (syncTimerRef !== null) {
     clearInterval(syncTimerRef);
     syncTimerRef = null;
-    console.log('⏹️  Sync orchestrator stopped');
   }
+  
+  // ✅ Clean up network listener
+  if (networkStateUnsubscribe) {
+    networkStateUnsubscribe();
+    networkStateUnsubscribe = null;
+  }
+  
+  console.log('⏹️  Sync orchestrator stopped');
 }
 
 /**
