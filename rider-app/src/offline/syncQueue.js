@@ -688,23 +688,302 @@ export async function markAsFailed(recordId, errorMessage) {
 }
 
 /**
- * Remove an item from the sync queue
- * ✅ FIXED: Safe removal with validation
+ * ============================================================================
+ * QUEUE PROTECTION & SAFETY MECHANISMS
+ * ============================================================================
+ */
+
+/**
+ * Archive completed items (synced or failed) to prevent queue bloat
+ * ✅ SAFETY: Only archives items older than 24 hours
+ * ✅ SAFETY: Keeps archive for recovery if needed
+ * ✅ SAFETY: Never removes items in pending_retry status
+ * @returns {Promise<Object>} - Archived items count
+ */
+export async function archiveCompletedItems() {
+  try {
+    const queue = await loadSyncQueue();
+    const now = Date.now();
+    const ARCHIVE_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+    
+    const itemsToArchive = [];
+    const itemsToKeep = [];
+    
+    queue.forEach(item => {
+      const itemAge = now - new Date(item.syncedAt || item.timestamp).getTime();
+      
+      // ✅ SAFETY: Never archive pending_retry items - they need another chance
+      if (item.status === 'pending_retry') {
+        itemsToKeep.push(item);
+        return;
+      }
+      
+      // ✅ SAFETY: Archive only old completed items
+      if ((item.status === 'synced' || item.status === 'failed') && itemAge > ARCHIVE_AGE_MS) {
+        itemsToArchive.push(item);
+      } else {
+        itemsToKeep.push(item);
+      }
+    });
+    
+    if (itemsToArchive.length > 0) {
+      // Save archived items to history for recovery
+      let history = await loadSyncHistory(1000);
+      const archivedItems = itemsToArchive.map(item => ({
+        ...item,
+        archivedAt: getEastAfricanTimeISO()
+      }));
+      history.unshift(...archivedItems);
+      
+      // Keep history under control (last 30 days)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - HISTORY_RETENTION_DAYS);
+      history = history.filter(h => 
+        new Date(h.syncedAt || h.timestamp) > thirtyDaysAgo
+      );
+      
+      await indexedDbAdapter.kvSet(SYNC_HISTORY_KEY, history);
+      await saveSyncQueue(itemsToKeep);
+      
+      console.log(`✅ Archived ${itemsToArchive.length} completed items (age > 24h)`);
+    }
+    
+    return {
+      archived: itemsToArchive.length,
+      kept: itemsToKeep.length,
+      totalRemoved: itemsToArchive.length
+    };
+  } catch (err) {
+    console.error('❌ Error archiving completed items:', err);
+    return { archived: 0, kept: 0, totalRemoved: 0 };
+  }
+}
+
+/**
+ * Verify queue integrity and detect lost items
+ * ✅ SAFETY: Ensures critical items are not accidentally removed
+ * ✅ SAFETY: Detects inconsistencies and logs them
+ * @returns {Promise<Object>} - Integrity check results
+ */
+export async function verifyQueueIntegrity() {
+  try {
+    const queue = await loadSyncQueue();
+    const now = Date.now();
+    
+    const integrity = {
+      totalItems: queue.length,
+      validItems: 0,
+      itemsWithoutId: 0,
+      itemsWithoutType: 0,
+      itemsWithoutEndpoint: 0,
+      itemsInvalidStatus: 0,
+      oldPendingItems: 0,
+      issues: []
+    };
+    
+    // Valid statuses
+    const validStatuses = ['pending', 'pending_retry', 'synced', 'failed'];
+    
+    queue.forEach(item => {
+      let itemValid = true;
+      
+      // Check required fields
+      if (!item.id) {
+        integrity.itemsWithoutId++;
+        itemValid = false;
+        integrity.issues.push(`Item missing ID: ${JSON.stringify(item)}`);
+      }
+      
+      if (!item.type) {
+        integrity.itemsWithoutType++;
+        itemValid = false;
+        integrity.issues.push(`Item missing type: ${item.id}`);
+      }
+      
+      if (!item.endpoint) {
+        integrity.itemsWithoutEndpoint++;
+        itemValid = false;
+        integrity.issues.push(`Item missing endpoint: ${item.id}`);
+      }
+      
+      if (!validStatuses.includes(item.status)) {
+        integrity.itemsInvalidStatus++;
+        itemValid = false;
+        integrity.issues.push(`Item has invalid status '${item.status}': ${item.id}`);
+      }
+      
+      // Check for stale pending items (stuck for > 7 days)
+      if (item.status === 'pending') {
+        const itemAge = now - new Date(item.timestamp).getTime();
+        if (itemAge > 7 * 24 * 60 * 60 * 1000) {
+          integrity.oldPendingItems++;
+          integrity.issues.push(`Stale pending item (7+ days): ${item.id}`);
+        }
+      }
+      
+      if (itemValid) {
+        integrity.validItems++;
+      }
+    });
+    
+    if (integrity.issues.length > 0) {
+      console.warn('⚠️ Queue integrity issues detected:');
+      integrity.issues.forEach(issue => console.warn(`   - ${issue}`));
+    } else {
+      console.log('✅ Queue integrity verified - all items valid');
+    }
+    
+    return integrity;
+  } catch (err) {
+    console.error('❌ Error verifying queue integrity:', err);
+    return { error: err.message };
+  }
+}
+
+/**
+ * Restore items from sync history if accidentally removed
+ * ✅ SAFETY: Only restores items that are not already in queue
+ * @param {number} hoursBack - Restore items from last N hours (default: 24)
+ * @returns {Promise<Object>} - Restored items count
+ */
+export async function restoreFromHistory(hoursBack = 24) {
+  try {
+    const queue = await loadSyncQueue();
+    const history = await loadSyncHistory(1000);
+    const now = Date.now();
+    const cutoffTime = now - (hoursBack * 60 * 60 * 1000);
+    
+    let restored = 0;
+    const queueIds = new Set(queue.map(q => q.id));
+    
+    for (const historyItem of history) {
+      const itemTime = new Date(historyItem.syncedAt || historyItem.timestamp).getTime();
+      
+      // Restore if within time window and not in current queue
+      if (itemTime > cutoffTime && !queueIds.has(historyItem.id)) {
+        // Reset to pending for retry
+        historyItem.status = 'pending_retry';
+        historyItem.retryCount = 0;
+        historyItem.nextRetryTime = null;
+        historyItem.restoredAt = getEastAfricanTimeISO();
+        
+        queue.push(historyItem);
+        restored++;
+      }
+    }
+    
+    if (restored > 0) {
+      await saveSyncQueue(queue);
+      console.log(`✅ Restored ${restored} items from history`);
+    } else {
+      console.log('ℹ️ No items to restore from history');
+    }
+    
+    return { restored, totalInHistory: history.length };
+  } catch (err) {
+    console.error('❌ Error restoring from history:', err);
+    return { restored: 0, error: err.message };
+  }
+}
+
+/**
+ * Create a backup of current queue state
+ * ✅ SAFETY: For disaster recovery
+ * @returns {Promise<string>} - Backup key in storage
+ */
+export async function createQueueBackup() {
+  try {
+    const queue = await loadSyncQueue();
+    const backupKey = `sync_queue_backup_${Date.now()}`;
+    
+    await indexedDbAdapter.kvSet(backupKey, {
+      queue,
+      timestamp: getEastAfricanTimeISO(),
+      itemCount: queue.length
+    });
+    
+    console.log(`✅ Created queue backup: ${backupKey}`);
+    return backupKey;
+  } catch (err) {
+    console.error('❌ Error creating backup:', err);
+    return null;
+  }
+}
+
+/**
+ * Restore from a specific backup
+ * ✅ SAFETY: For disaster recovery
+ * @param {string} backupKey - Backup key to restore from
+ * @returns {Promise<boolean>} - Success status
+ */
+export async function restoreFromBackup(backupKey) {
+  try {
+    const backup = await indexedDbAdapter.kvGet(backupKey);
+    
+    if (!backup || !backup.queue) {
+      throw new Error(`Backup ${backupKey} not found or invalid`);
+    }
+    
+    await saveSyncQueue(backup.queue);
+    console.log(`✅ Restored queue from backup ${backupKey} (${backup.itemCount} items)`);
+    return true;
+  } catch (err) {
+    console.error('❌ Error restoring from backup:', err);
+    return false;
+  }
+}
+
+/**
+ * Remove an item from the sync queue (WITH PROTECTION CHECKS)
+ * ✅ SAFETY: Validates before removal
+ * ✅ SAFETY: Backs up to history first
+ * ✅ SAFETY: Logs all removals
  * @param {string} recordId - Record ID to remove
  * @returns {Promise<boolean>} - Success status
  */
 export async function removeFromQueue(recordId) {
   try {
     const queue = await loadSyncQueue();
-    const filtered = queue.filter(q => q.id !== recordId);
+    const index = queue.findIndex(q => q.id === recordId);
 
-    if (filtered.length === queue.length) {
+    if (index === -1) {
       console.warn('⚠️ Record not found in queue:', recordId);
       return false;
     }
 
+    const itemToRemove = queue[index];
+    
+    // ✅ SAFETY CHECK #1: Warn if removing pending_retry (should retry, not remove)
+    if (itemToRemove.status === 'pending_retry') {
+      console.warn(`⚠️ WARNING: Attempting to remove pending_retry item: ${recordId}`);
+      console.warn(`   This item should be retried, not removed. Use markAsFailed() instead.`);
+    }
+    
+    // ✅ SAFETY CHECK #2: Back up to history before removal
+    const history = await loadSyncHistory(1000);
+    history.unshift({
+      ...itemToRemove,
+      removedAt: getEastAfricanTimeISO(),
+      removalReason: 'Manual removal from queue'
+    });
+    
+    // Keep history under control
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - HISTORY_RETENTION_DAYS);
+    const filteredHistory = history.filter(h => 
+      new Date(h.syncedAt || h.timestamp) > thirtyDaysAgo
+    );
+    
+    await indexedDbAdapter.kvSet(SYNC_HISTORY_KEY, filteredHistory);
+    
+    // Remove from queue
+    const filtered = queue.filter(q => q.id !== recordId);
     await saveSyncQueue(filtered);
+    
     console.log(`✅ Removed from queue: ${recordId}`);
+    console.log(`   Type: ${itemToRemove.type}, Status: ${itemToRemove.status}`);
+    console.log(`   ℹ️ Backed up to sync history for recovery if needed`);
+    
     return true;
   } catch (err) {
     console.error('❌ Error removing from queue:', err);
@@ -1207,6 +1486,12 @@ export default {
   getQueueDiagnostics,
   checkQueueHealth,
   validateRecordType,
+  // ✅ NEW SAFETY FUNCTIONS
+  archiveCompletedItems,
+  verifyQueueIntegrity,
+  restoreFromHistory,
+  createQueueBackup,
+  restoreFromBackup,
   PRIORITY_LEVELS,
   RECORD_TYPE_VALIDATORS,
 };
