@@ -2,6 +2,7 @@
 // ✅ FIXED VERSION: Comprehensive error handling and fallback rendering
 // ✅ IMPROVED: Better error reporting and logging
 // ✅ FIXED: Ensures OnboardingNavigator always renders
+// ✅ ENHANCED: Added SyncOrchestrator for automatic 5-minute sync checking (non-blocking)
 
 import React, { useEffect, useState } from 'react';
 import { View, ActivityIndicator, Text, StyleSheet } from 'react-native';
@@ -93,6 +94,28 @@ try {
 } catch (err) {
   console.error('[App] ⚠️ Sync import failed:', err.message);
   startSyncMonitor = async () => console.log('[App] Sync monitor unavailable');
+}
+
+// ✅ SAFE: Import SyncOrchestrator with fallback (non-critical, new feature)
+let initializeSyncOrchestrator, shutdownSyncOrchestrator;
+try {
+  const syncOrchestratorModule = require('./src/offline/syncOrchestrator');
+  initializeSyncOrchestrator = syncOrchestratorModule.initializeSyncOrchestrator;
+  shutdownSyncOrchestrator = syncOrchestratorModule.shutdownSyncOrchestrator;
+  
+  if (!initializeSyncOrchestrator || typeof initializeSyncOrchestrator !== 'function') {
+    throw new Error('initializeSyncOrchestrator not exported or not a function');
+  }
+  if (!shutdownSyncOrchestrator || typeof shutdownSyncOrchestrator !== 'function') {
+    throw new Error('shutdownSyncOrchestrator not exported or not a function');
+  }
+  
+  console.log('[App] ✅ SyncOrchestrator imports verified');
+} catch (err) {
+  console.error('[App] ⚠️ SyncOrchestrator import failed:', err.message);
+  // Graceful fallback: non-blocking operations, app still works
+  initializeSyncOrchestrator = async () => console.log('[App] SyncOrchestrator unavailable (non-fatal)');
+  shutdownSyncOrchestrator = async () => console.log('[App] SyncOrchestrator shutdown skipped');
 }
 
 // ✅ SAFE: Import service worker (non-critical)
@@ -233,6 +256,19 @@ class AppContentErrorBoundary extends React.Component {
     });
   }
 
+  componentWillUnmount() {
+    // ✅ SHUTDOWN: Clean up SyncOrchestrator when app closes
+    try {
+      if (shutdownSyncOrchestrator && typeof shutdownSyncOrchestrator === 'function') {
+        Promise.resolve(shutdownSyncOrchestrator()).catch(err => {
+          console.warn('[AppContentErrorBoundary] SyncOrchestrator shutdown error (non-fatal):', err);
+        });
+      }
+    } catch (err) {
+      console.warn('[AppContentErrorBoundary] Failed to shutdown SyncOrchestrator:', err);
+    }
+  }
+
   render() {
     if (this.state.hasError) {
       return (
@@ -304,6 +340,17 @@ function AppContent() {
       }
     } catch (err) {
       console.warn('[AppContent] Failed to start sync monitor:', err);
+    }
+
+    // ✅ NEW: Initialize SyncOrchestrator for automatic 5-minute sync checking (non-blocking)
+    try {
+      if (initializeSyncOrchestrator && typeof initializeSyncOrchestrator === 'function') {
+        Promise.resolve(initializeSyncOrchestrator()).catch(err => {
+          console.warn('[AppContent] SyncOrchestrator initialization error (non-fatal):', err);
+        });
+      }
+    } catch (err) {
+      console.warn('[AppContent] Failed to initialize SyncOrchestrator:', err);
     }
 
     try {

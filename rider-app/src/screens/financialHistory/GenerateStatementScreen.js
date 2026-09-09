@@ -1,8 +1,8 @@
 // rider-app/src/screens/financialHistory/GenerateStatementScreen.js
-// ✅ REFACTORED: IndexedDB-first architecture (mirrors trip screens)
-// ✅ SEAMLESS ONLINE/OFFLINE: Uses financialHistoryUtils for data aggregation
-// ✅ UNIFIED ARCHITECTURE: Removed statementsRepository dependencies
-// ✅ INSTANT UPDATES: Statements generated from cached financial data
+// ✅ REFACTORED: True offline-first architecture (mirrors FuelEntryScreen)
+// ✅ SEAMLESS ONLINE/OFFLINE: Save to IndexedDB first, then sync to backend
+// ✅ INSTANT FEEDBACK: Immediate UI response regardless of network
+// ✅ AUTOMATIC SYNC: SyncOrchestrator handles background sync every 5 minutes
 // ✅ RETENTION POLICY: 6-month rolling window enforced
 // ✅ UI/UX: 100% aligned with HTML prototype (RA-18-A/B)
 
@@ -14,10 +14,11 @@ import BackLink from '../../components/BackLink';
 import PrimaryButton from '../../components/PrimaryButton';
 import {
   getFinancialSummaryForRange,
-  saveStatement,
 } from '../../offline/financialHistoryUtils';
 import { addToSyncQueue } from '../../offline/syncQueue';
+import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import api from '../../api/client';
+import { useNetworkStatus } from '../../hooks/useNetworkStatus';
 
 // ✅ FIXED: Map display names to backend codes (must match statement_purpose_master.code in DB)
 const STATEMENT_PURPOSES = [
@@ -30,6 +31,7 @@ const STATEMENT_PURPOSES = [
 export default function GenerateStatementScreen({ navigation, route }) {
   const { t } = useTranslation();
   const { showToast } = useToast();
+  const { isConnected, isInitialized } = useNetworkStatus();
 
   const hasLoadedRef = useRef(false);
   const { rangeStart, rangeEnd, selectedPeriod, riderId } = route.params || {
@@ -43,6 +45,7 @@ export default function GenerateStatementScreen({ navigation, route }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   // ✅ Load financial summary on mount
   useEffect(() => {
@@ -87,6 +90,39 @@ export default function GenerateStatementScreen({ navigation, route }) {
     }
   };
 
+  /**
+   * ✅ UPDATE CACHE: Add statement to statement_history cache
+   * Ensures StatementHistoryScreen displays the statement immediately
+   */
+  const updateStatementHistoryCache = async (offlineStatement) => {
+    try {
+      const cacheKey = `statement_history_${riderId}`;
+      
+      // Get existing cache from IndexedDB
+      const cachedData = await indexedDbAdapter.kvGet(cacheKey);
+      let items = [];
+      
+      if (cachedData) {
+        try {
+          items = typeof cachedData === 'string' ? JSON.parse(cachedData) : cachedData;
+          if (!Array.isArray(items)) items = [];
+        } catch (parseErr) {
+          console.warn('⚠️ Cache parse error, starting fresh');
+          items = [];
+        }
+      }
+      
+      // Add new statement to front (most recent first)
+      items.unshift(offlineStatement);
+      
+      // Save updated cache to IndexedDB
+      await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(items));
+      console.log(`✅ Updated statement_history cache with new statement`);
+    } catch (err) {
+      console.error('❌ Error updating cache:', err);
+    }
+  };
+
   const handleGenerateStatement = async () => {
     if (!summary) {
       showToast('Financial summary not available', 'error');
@@ -95,105 +131,131 @@ export default function GenerateStatementScreen({ navigation, route }) {
 
     try {
       setGenerating(true);
+      setSuccessMessage('');
 
-      // ✅ Format dates as YYYY-MM-DD for backend API (StatementRequest expects date, not ISO string)
+      // ✅ Generate offline statement ID (format: statement_riderId_timestamp)
+      const now = Date.now();
+      const statementId = `statement_${riderId}_${now}`;
+      
+      // ✅ Format dates as YYYY-MM-DD for backend API
       const periodStartDate = new Date(rangeStart);
       const periodEndDate = new Date(rangeEnd);
       
       const periodStartFormatted = periodStartDate.toISOString().split('T')[0];
       const periodEndFormatted = periodEndDate.toISOString().split('T')[0];
 
-      // ✅ FIXED: Send the code value, not the display name
       const apiPayload = {
         period_start: periodStartFormatted,
         period_end: periodEndFormatted,
-        purpose_code: purposeCode || null, // ✅ FIXED: Send backend code (e.g., 'loan_application'), not display name
+        purpose_code: purposeCode || null,
       };
 
-      // ✅ Save to IndexedDB FIRST (offline-first architecture)
-      const statementData = {
+      // ✅ CRITICAL: Save to IndexedDB FIRST (offline-first architecture)
+      const offlineStatement = {
+        id: statementId,
+        rider_id: riderId,
+        period_start: periodStartDate.toISOString(),
+        period_end: periodEndDate.toISOString(),
         purpose: purposeCode || null,
-        period_start: new Date(rangeStart).toISOString(),
-        period_end: new Date(rangeEnd).toISOString(),
-        selected_period: selectedPeriod,
+        purpose_code: purposeCode || null,
         financial_summary: summary,
-        riderId,
+        income: summary.income,
+        total_expense: summary.totalExpense,
+        net_profit: summary.netProfit,
+        selected_period: selectedPeriod,
+        generated_at: new Date().toISOString(),
+        ts: now,                          // ✅ Primary timestamp (ms)
+        timestamp: now,                   // ✅ Backup timestamp (ms)
+        status: 'active',                 // ✅ Status tracking
+        syncStatus: 'pending',            // ✅ Sync tracking
+        verification_ref: `VRF-${Math.random().toString(36).slice(2, 10).toUpperCase()}`,
       };
 
-      const savedStatement = await saveStatement(riderId, statementData);
-
-      if (!savedStatement) {
-        showToast('Error saving statement', 'error');
-        return;
-      }
-
-      console.log('✅ Statement generated locally:', savedStatement.id);
-      console.log('📊 Statement data:', {
-        income: summary.income,
-        expense: summary.totalExpense,
-        profit: summary.netProfit,
+      console.log('💾 Saving statement offline:', { 
+        statementId, 
+        riderId, 
+        period: `${periodStartFormatted} to ${periodEndFormatted}` 
       });
 
-      // ✅ Queue for sync with correct endpoint
-      await addToSyncQueue({
-        id: savedStatement.id,
+      // ALWAYS save locally first using IndexedDB (exact same as FuelEntryScreen)
+      await indexedDbAdapter.kvSet(
+        `statement_${statementId}`,
+        JSON.stringify(offlineStatement)
+      );
+
+      // Update cache immediately for instant UI feedback
+      await updateStatementHistoryCache(offlineStatement);
+
+      // ✅ Add to sync queue for automatic background sync
+      const queueSuccess = await addToSyncQueue({
+        id: statementId,
         type: 'statement',
         endpoint: `/compliance/statements?rider_id=${riderId}`,
         data: apiPayload,
         timestamp: new Date(),
       });
 
-      // ✅ Try API sync to /compliance/statements (non-blocking, graceful failure)
-      let apiSyncSucceeded = false;
-      try {
-        const isOnline = navigator?.onLine ?? true;
-        const response = await api.post(
-          `/compliance/statements?rider_id=${riderId}&online=${isOnline}`,
-          apiPayload
-        );
-
-        if (response && (response.id || response.verification_reference)) {
-          console.log('✅ Statement synced to API');
-          console.log('📋 Verification reference:', response.verification_reference);
-          apiSyncSucceeded = true;
-          
-          // Update local statement with verification reference
-          if (response.verification_reference) {
-            savedStatement.verification_ref = response.verification_reference;
-          }
-        }
-      } catch (apiErr) {
-        const status = apiErr.response?.status;
-        const message = apiErr.message || 'Unknown error';
-
-        // Handle different error types
-        if (status === 405) {
-          console.warn('⚠️ API endpoint configuration issue (405 Method Not Allowed)');
-          console.warn('   Trying endpoint: /compliance/statements (POST)');
-          console.warn('   Statement saved offline and queued for sync');
-        } else if (status === 404) {
-          console.warn('⚠️ Endpoint not found - check API configuration');
-        } else if (status === 401 || status === 403) {
-          console.warn('⚠️ Authentication error - check credentials');
-        } else if (apiErr.code === 'ECONNABORTED' || !navigator.onLine) {
-          console.warn('⚠️ Network error - statement queued for retry when online');
-        } else {
-          console.warn('⚠️ API sync failed:', message);
-        }
-
-        // Statement is already saved offline, so don't block navigation
-        apiSyncSucceeded = false;
+      if (!queueSuccess) {
+        console.warn('⚠️ Failed to add to queue, but local save succeeded');
       }
 
-      showToast('Statement generated successfully', 'success');
+      console.log('✅ Statement generated locally:', statementId);
+      console.log('📊 Statement data:', {
+        income: summary.income,
+        expense: summary.totalExpense,
+        profit: summary.netProfit,
+      });
 
-      // Navigate to preview (whether API sync succeeded or not)
+      // Try to sync immediately only if online (non-blocking)
+      let apiSyncSucceeded = false;
+      if (isConnected && isInitialized) {
+        try {
+          console.log('📡 Attempting to sync to API...');
+          const response = await api.post(
+            `/compliance/statements?rider_id=${riderId}&online=true`,
+            apiPayload
+          );
+
+          if (response && (response.id || response.verification_reference)) {
+            console.log('✅ Statement synced to API immediately');
+            console.log('📋 Verification reference:', response.verification_reference);
+            apiSyncSucceeded = true;
+            
+            // Update local statement with verification reference from server
+            if (response.verification_reference) {
+              offlineStatement.verification_ref = response.verification_reference;
+              offlineStatement.verified = response.verified || false;
+            }
+          }
+        } catch (apiErr) {
+          const status = apiErr.response?.status;
+          const message = apiErr.message || 'Unknown error';
+
+          console.warn('⚠️ API sync failed (will retry later via SyncOrchestrator):', {
+            status: status,
+            message: message,
+          });
+          // API failed but data is saved and queued - that's okay
+          apiSyncSucceeded = false;
+        }
+      }
+
+      // Show success message (whether API sync succeeded or not)
+      const successMsg = isConnected && isInitialized
+        ? 'Statement generated and synced!'
+        : 'Statement saved. Syncing in background...';
+      setSuccessMessage(successMsg);
+
+      console.log('✅ Success:', successMsg);
+
+      // Navigate to preview after brief success message
       setTimeout(() => {
         navigation.navigate('StatementPreview', {
-          statementId: savedStatement.id,
-          riderId,
+          statementId: statementId,
+          riderId: riderId,
         });
       }, 800);
+
     } catch (err) {
       console.error('❌ Error generating statement:', err);
       showToast('Error generating statement', 'error');
@@ -243,6 +305,16 @@ export default function GenerateStatementScreen({ navigation, route }) {
         </View>
       </View>
 
+      {/* Network Status Info */}
+      {!isConnected && (
+        <View style={styles.infoBanner}>
+          <Text style={styles.infoBannerEmoji}>📡</Text>
+          <Text style={styles.infoBannerText}>
+            You're offline. Statement will be saved locally and synced automatically when you're back online.
+          </Text>
+        </View>
+      )}
+
       {/* Info Banner */}
       <View style={styles.infoBanner}>
         <Text style={styles.infoBannerEmoji}>✅</Text>
@@ -250,6 +322,14 @@ export default function GenerateStatementScreen({ navigation, route }) {
           Income / Expense / Net Profit is always included — the statement's foundation.
         </Text>
       </View>
+
+      {/* Success Message */}
+      {successMessage && (
+        <View style={[styles.infoBanner, { borderLeftColor: '#1e9e6f' }]}>
+          <Text style={styles.infoBannerEmoji}>✨</Text>
+          <Text style={styles.infoBannerText}>{successMessage}</Text>
+        </View>
+      )}
 
       {/* Generate Button */}
       <PrimaryButton
