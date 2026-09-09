@@ -1,5 +1,5 @@
 /**
- * statementsRepository.js
+ * rider-app/src/offline/statementsRepository.js
  * 
  * Manages offline storage of generated statements with IndexedDB
  * 
