@@ -19,11 +19,12 @@ import {
 import { addToSyncQueue } from '../../offline/syncQueue';
 import api from '../../api/client';
 
+// ✅ FIXED: Map display names to backend codes (must match statement_purpose_master.code in DB)
 const STATEMENT_PURPOSES = [
-  'Loan Application',
-  'SACCO Good Standing',
-  'Insurance Application',
-  'General/Personal Use',
+  { displayName: 'Loan Application', code: 'loan_application' },
+  { displayName: 'SACCO Good Standing', code: 'sacco_good_standing' },
+  { displayName: 'Insurance Application', code: 'insurance_application' },
+  { displayName: 'General/Personal Use', code: 'general_personal_use' },
 ];
 
 export default function GenerateStatementScreen({ navigation, route }) {
@@ -38,7 +39,7 @@ export default function GenerateStatementScreen({ navigation, route }) {
     riderId: null,
   };
 
-  const [purpose, setPurpose] = useState('');
+  const [purposeCode, setPurposeCode] = useState('');
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -102,16 +103,16 @@ export default function GenerateStatementScreen({ navigation, route }) {
       const periodStartFormatted = periodStartDate.toISOString().split('T')[0];
       const periodEndFormatted = periodEndDate.toISOString().split('T')[0];
 
-      // ✅ Create statement payload matching backend StatementRequest schema
+      // ✅ FIXED: Send the code value, not the display name
       const apiPayload = {
         period_start: periodStartFormatted,
         period_end: periodEndFormatted,
-        purpose_code: purpose || null, // Optional field
+        purpose_code: purposeCode || null, // ✅ FIXED: Send backend code (e.g., 'loan_application'), not display name
       };
 
       // ✅ Save to IndexedDB FIRST (offline-first architecture)
       const statementData = {
-        purpose: purpose || null,
+        purpose: purposeCode || null,
         period_start: new Date(rangeStart).toISOString(),
         period_end: new Date(rangeEnd).toISOString(),
         selected_period: selectedPeriod,
@@ -229,14 +230,14 @@ export default function GenerateStatementScreen({ navigation, route }) {
         </Text>
         <View style={styles.selectContainer}>
           <Picker
-            selectedValue={purpose}
-            onValueChange={setPurpose}
+            selectedValue={purposeCode}
+            onValueChange={setPurposeCode}
             style={styles.select}
             enabled={!generating}
           >
             <Picker.Item label="Select..." value="" />
             {STATEMENT_PURPOSES.map((p, idx) => (
-              <Picker.Item key={idx} label={p} value={p} />
+              <Picker.Item key={idx} label={p.displayName} value={p.code} />
             ))}
           </Picker>
         </View>

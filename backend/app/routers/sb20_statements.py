@@ -7,7 +7,7 @@ from app.database import get_db
 from app.models.statement import Statement
 from app.models.statement_download import StatementDownload
 from app.models.rider import Rider
-from app.models.compliance_master_data import ComplianceRuleConfig
+from app.models.compliance_master_data import ComplianceRuleConfig, StatementPurposeMaster
 from app.schemas.compliance_history import StatementRequest
 from app.services.quick_range_service import quick_range_bounds
 from app.services.net_profit_service import net_profit_summary_for_range
@@ -80,11 +80,24 @@ def generate_statement(payload: StatementRequest, rider_id: str, online: bool, d
     BR-SB20-002: Figures come only from carried-forward Financial History range, never projected
     BR-SB20-003: Optional purpose code
     BR-SB20-004: Verification reference generated if online
+    
+    ✅ FIXED: Validate purpose_code exists in master table before insertion
     """
     # Verify rider exists
     rider = db.query(Rider).get(rider_id)
     if not rider:
         raise HTTPException(status_code=404, detail="Rider not found")
+    
+    # ✅ FIXED: Validate purpose_code if provided (must exist in statement_purpose_master)
+    if payload.purpose_code:
+        purpose_master = db.query(StatementPurposeMaster).filter_by(code=payload.purpose_code).first()
+        if not purpose_master:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid purpose_code: '{payload.purpose_code}'. Valid codes are: loan_application, sacco_good_standing, insurance_application, general_personal_use"
+            )
+        if not purpose_master.is_active:
+            raise HTTPException(status_code=400, detail=f"Purpose code '{payload.purpose_code}' is not active")
     
     # BR-SB20-002: Figures from carried-forward range only (never projected)
     figures = net_profit_summary_for_range(db, rider_id, payload.period_start, payload.period_end)
@@ -94,7 +107,7 @@ def generate_statement(payload: StatementRequest, rider_id: str, online: bool, d
         rider_id=rider_id,
         period_start=payload.period_start,
         period_end=payload.period_end,
-        purpose_code=payload.purpose_code,  # BR-SB20-003: optional
+        purpose_code=payload.purpose_code,  # BR-SB20-003: optional, already validated above
         income=figures["income"],
         total_expense=figures["total_expense"],
         net_profit=figures["net_profit"],
