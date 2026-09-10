@@ -126,7 +126,7 @@ export default function MaintenanceHubScreen({ navigation }) {
     <ScrollView style={styles.container}>
       <BackLink onPress={handleBackPress} label="← Home" />
       
-      <Text style={styles.title}>Service Car</Text>
+      <Text style={styles.title}>Service Motorcycle</Text>
 
       {/* CRITICAL ERROR ONLY - Never show status/offline info */}
       {criticalError && (

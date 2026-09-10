@@ -459,8 +459,8 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   periodTabActive: {
-    backgroundColor: '#ffc107',
-    borderColor: '#ffc107'
+    backgroundColor: '#ff7a1a',
+    borderColor: '#ff7a1a'
   },
   periodTabText: {
     fontSize: 11,
@@ -591,8 +591,8 @@ const styles = StyleSheet.create({
     alignItems: 'center'
   },
   pageBtnActive: {
-    backgroundColor: '#ffc107',
-    borderColor: '#ffc107'
+    backgroundColor: '#ff7a1a',
+    borderColor: '#ff7a1a'
   },
   pageBtnDisabled: {
     backgroundColor: '#f0ede7',
