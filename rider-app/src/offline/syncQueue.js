@@ -396,7 +396,54 @@ export async function processPendingSync() {
           console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
           console.log(`   Payload: ${JSON.stringify(item.data, null, 2)}`);
           console.log(`   Expected Schema: BikeProfileRequest { device_id, number_plate, fuel_type_code }`);
-        } 
+        }
+        // ✅ CRITICAL FIX: Lipa Later Payment - requires rider_id in query and proper payload structure
+        else if (item.type === 'lipa_later_payment') {
+          const riderId = item.data?.rider_id || item.riderId;
+          if (!riderId) {
+            throw new Error(`Missing rider_id for lipa_later_payment sync - cannot construct endpoint`);
+          }
+          
+          // ✅ FIX: Backend expects rider_id query parameter, not customer_id in path
+          syncEndpoint = `${item.endpoint}?rider_id=${riderId}`;
+          
+          // ✅ FIX: Ensure payload has correct structure for backend
+          // Backend records payment with: customer_id, amount, currency, description, etc.
+          item.data.rider_id = riderId; // Ensure rider_id is in payload
+          
+          requestConfig.headers = {
+            'Content-Type': 'application/json',
+            'X-Sync-ID': item.id,
+            'X-Client-Timestamp': item.timestamp || new Date().toISOString(),
+          };
+          
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
+          console.log(`   Payload:`, JSON.stringify(item.data, null, 2));
+          console.log(`   Expected Schema: { amount, currency, customer_id, description }`);
+        }
+        // ✅ CRITICAL FIX: Maintenance Entry - requires service_type_code and proper schema
+        else if (item.type === 'maintenance_entry') {
+          const riderId = item.data?.rider_id || item.riderId;
+          if (!riderId) {
+            throw new Error(`Missing rider_id for maintenance_entry sync - cannot construct endpoint`);
+          }
+          
+          // ✅ FIX: Ensure all required fields are present
+          if (!item.data.service_type_code) {
+            throw new Error(`Missing service_type_code for maintenance_entry - required field`);
+          }
+          
+          syncEndpoint = `${item.endpoint}?rider_id=${riderId}`;
+          item.data.rider_id = riderId;
+          
+          requestConfig.headers = {
+            'Content-Type': 'application/json',
+          };
+          
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
+          console.log(`   Payload:`, JSON.stringify(item.data, null, 2));
+          console.log(`   Required Fields: service_type_code, cost, rider_id`);
+        }
         // ✅ CRITICAL FIX #2: Subscription payment requires rider_id query parameter + special headers
         else if (item.type === 'subscription_payment') {
           const riderId = item.riderId || item.data?.rider_id;
