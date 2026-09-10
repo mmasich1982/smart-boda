@@ -242,6 +242,6 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#ffc107'
+    color: '#ff7a1a'
   }
 });
