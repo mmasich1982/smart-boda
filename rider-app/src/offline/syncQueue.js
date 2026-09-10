@@ -421,20 +421,27 @@ export async function processPendingSync() {
           console.log(`   Payload:`, JSON.stringify(item.data, null, 2));
           console.log(`   Expected Schema: { amount, currency, customer_id, description }`);
         }
-        // ✅ CRITICAL FIX: Maintenance Entry - requires service_type_code and proper schema
+        // ✅ CRITICAL FIX: Maintenance Entry - proper validation and endpoint construction
         else if (item.type === 'maintenance_entry') {
           const riderId = item.data?.rider_id || item.riderId;
           if (!riderId) {
             throw new Error(`Missing rider_id for maintenance_entry sync - cannot construct endpoint`);
           }
           
-          // ✅ FIX: Ensure all required fields are present
-          if (!item.data.service_type_code) {
-            throw new Error(`Missing service_type_code for maintenance_entry - required field`);
+          // ✅ FIXED: Validate cost instead of service_type_code (which is not sent)
+          if (!item.data.cost || item.data.cost <= 0) {
+            throw new Error(`Invalid cost for maintenance_entry - must be greater than zero`);
           }
           
-          syncEndpoint = `${item.endpoint}?rider_id=${riderId}`;
-          item.data.rider_id = riderId;
+          // ✅ FIXED: Check if endpoint already has query params to avoid duplication
+          syncEndpoint = item.endpoint.includes('?') 
+            ? item.endpoint 
+            : `${item.endpoint}?rider_id=${riderId}`;
+          
+          // Ensure rider_id is in the payload
+          if (!item.data.rider_id) {
+            item.data.rider_id = riderId;
+          }
           
           requestConfig.headers = {
             'Content-Type': 'application/json',
@@ -442,7 +449,7 @@ export async function processPendingSync() {
           
           console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
           console.log(`   Payload:`, JSON.stringify(item.data, null, 2));
-          console.log(`   Required Fields: service_type_code, cost, rider_id`);
+          console.log(`   Required Fields: cost, created_at, rider_id`);
         }
         // ✅ CRITICAL FIX #2: Subscription payment requires rider_id query parameter + special headers
         else if (item.type === 'subscription_payment') {

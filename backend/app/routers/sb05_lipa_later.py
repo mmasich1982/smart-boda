@@ -1,5 +1,5 @@
 # backend/app/routers/sb05_lipa_later.py
-# ✅ ROOT CAUSE FIXED: Using correct LipaLaterPayment model (not generic Payment)
+# ✅ ROOT CAbackend/app/routers/sb05_lipa_later.pyUSE FIXED: Using correct LipaLaterPayment model (not generic Payment)
 # ✅ FIXED: Router prefix is /lipa-later (not /trips/lipa-later)
 # ✅ FIXED: Endpoint paths are /record-trip and /customer-list
 # ✅ FIXED: Trip model field names (payment_channel_code, recorded_at, status="active")
@@ -26,6 +26,55 @@ from app.models.lipa_later_payment import LipaLaterPayment
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/lipa-later", tags=["sb-05-lipa-later"])
+
+
+# ============================================================================
+# ✅ CRITICAL FIX: Date parsing helper function
+# ============================================================================
+# Handles various date formats safely to prevent psycopg2.errors.InvalidText
+# Supports: ISO with Z, ISO with timezone, plain dates, None/empty
+
+def parse_payment_date(date_string: str) -> date:
+    """
+    Parse payment date from various formats safely
+    
+    Handles:
+    - ISO format with Z: "2026-09-10T20:50:39.334Z"
+    - ISO format with timezone: "2026-09-10T20:50:39+00:00"
+    - Plain date: "2026-09-10"
+    - None/empty: defaults to today
+    
+    ✅ FIXED: No more psycopg2.errors.InvalidText errors
+    """
+    if not date_string:
+        return date.today()
+    
+    try:
+        # Handle ISO format with Z suffix
+        if isinstance(date_string, str):
+            # Remove 'Z' and replace with +00:00 for fromisoformat compatibility
+            clean_date_str = date_string.replace('Z', '+00:00')
+            
+            # Try parsing as full datetime first
+            try:
+                parsed_dt = datetime.fromisoformat(clean_date_str)
+                return parsed_dt.date()
+            except (ValueError, TypeError):
+                pass
+            
+            # Try parsing as plain date (YYYY-MM-DD)
+            try:
+                return datetime.strptime(date_string[:10], '%Y-%m-%d').date()
+            except (ValueError, TypeError, IndexError):
+                pass
+        
+        # If all parsing attempts fail, return today
+        logger.warning(f"[LIPA_LATER] Could not parse date '{date_string}', using today's date")
+        return date.today()
+        
+    except Exception as e:
+        logger.error(f"[LIPA_LATER] Error parsing date: {str(e)}")
+        return date.today()
 
 
 # ============= Request/Response Schemas =============
@@ -501,7 +550,7 @@ def record_payment(
             rider_id=record.rider_id,
             lipa_later_id=record.id,
             amount_ksh=Decimal(str(payload.amount)),
-            payment_date=datetime.fromisoformat(payload.date.replace('Z', '+00:00')).date() if payload.date else date.today(),
+            payment_date=parse_payment_date(payload.date),  # ✅ FIXED: Proper date parsing with error handling
             reference=payload.notes if payload.notes else "",
             sync_status="synced",
         )
@@ -590,7 +639,7 @@ def record_payment_by_query_alias(
             rider_id=record.rider_id,
             lipa_later_id=record.id,
             amount_ksh=Decimal(str(payload.amount)),
-            payment_date=datetime.fromisoformat(payload.date.replace('Z', '+00:00')).date() if payload.date else date.today(),
+            payment_date=parse_payment_date(payload.date),  # ✅ FIXED: Proper date parsing with error handling
             reference=payload.notes if payload.notes else "",
             sync_status="synced",
         )

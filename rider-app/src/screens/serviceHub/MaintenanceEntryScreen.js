@@ -182,13 +182,18 @@ export default function MaintenanceEntryScreen({ navigation }) {
       // Update cache immediately for instant UI feedback
       await updateMaintenanceHistoryCache(offlineRecord);
 
-      // Add to sync queue for background sync
+      // ✅ FIXED: Pass endpoint WITHOUT rider_id - syncQueue adds it automatically
+      // This prevents double query parameter like ?rider_id=xxx?rider_id=xxx
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'maintenance_entry',
-        endpoint: `/fuel-maintenance/maintenance-entry?rider_id=${effectiveRiderId}`,
-        data: payload,
+        endpoint: '/fuel-maintenance/maintenance-entry',  // ✅ FIXED: No query param here
+        data: {
+          ...payload,
+          rider_id: effectiveRiderId,  // ✅ Include in payload instead
+        },
         timestamp: new Date(),
+        riderId: effectiveRiderId,  // ✅ Add to object so syncQueue can find it
       });
 
       if (!queueSuccess) {
