@@ -116,7 +116,7 @@ export default function MaintenanceHubScreen({ navigation }) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={handleBackPress} label="← Home" />
-        <Text style={styles.title}>Service Car</Text>
+        <Text style={styles.title}>Service Motorcycle</Text>
         <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
       </ScrollView>
     );
@@ -207,14 +207,14 @@ const styles = StyleSheet.create({
 
   // Primary action button
   primaryButton: {
-    backgroundColor: '#ffc107',
+    backgroundColor: '#ff7a1a',
     borderRadius: 14,
     paddingVertical: 16,
     paddingHorizontal: 20,
     marginHorizontal: 20,
     marginBottom: 12,
     alignItems: 'center',
-    shadowColor: '#ffc107',
+    shadowColor: '#ff7a1a',
     shadowOpacity: 0.35,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
@@ -231,7 +231,7 @@ const styles = StyleSheet.create({
   secondaryButton: {
     backgroundColor: '#fff',
     borderWidth: 1.5,
-    borderColor: '#ffc107',
+    borderColor: '#ff7a1a',
     borderRadius: 14,
     paddingVertical: 16,
     paddingHorizontal: 20,

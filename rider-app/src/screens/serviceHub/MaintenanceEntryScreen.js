@@ -153,14 +153,18 @@ export default function MaintenanceEntryScreen({ navigation }) {
       setSuccessMessage('');
 
       const now = Date.now();
+      // ✅ CRITICAL FIX: Do NOT include created_at or submitted_at in payload
+      // Backend sets these automatically - sending them causes psycopg2.errors.InvalidText
       const payload = {
         service_type_code: 'GENERAL_SERVICE',  // ✅ FIXED: Include default service type code
         cost: parseFloat(cost),
-        created_at: new Date().toISOString(),
+        // ❌ REMOVED: created_at - backend sets this automatically
+        // ❌ REMOVED: submitted_at - backend sets this automatically
       };
 
       const recordId = `maintenance_${effectiveRiderId}_${now}`;
       // ✅ CRITICAL: Include timestamp fields for MoneyMasteryScreen period filtering
+      // These are ONLY for local indexedDB, NOT sent to backend
       const offlineRecord = {
         ...payload,
         id: recordId,
@@ -187,10 +191,11 @@ export default function MaintenanceEntryScreen({ navigation }) {
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'maintenance_entry',
-        endpoint: `/fuel-maintenance/maintenance-entry?rider_id=${effectiveRiderId}`,
+        endpoint: '/fuel-maintenance/maintenance-entry', // ✅ FIXED: Clean endpoint without query params
         data: {
           ...payload,
           rider_id: effectiveRiderId,  // ✅ Include rider_id in payload for sync queue
+          // ✅ NOTE: Do NOT include created_at or submitted_at - syncQueue will remove them if present
         },
         timestamp: new Date(),
         riderId: effectiveRiderId,  // ✅ Also add as top-level property for syncQueue fallback
@@ -204,9 +209,15 @@ export default function MaintenanceEntryScreen({ navigation }) {
       if (isConnected && isInitialized) {
         try {
           console.log('📡 Attempting to sync to API...');
+          // ✅ FIXED: Use proper axios params syntax to avoid query string malformation
           const response = await api.post(
-            `/fuel-maintenance/maintenance-entry?rider_id=${effectiveRiderId}`,
-            payload
+            '/fuel-maintenance/maintenance-entry',
+            payload,
+            {
+              params: {
+                rider_id: effectiveRiderId
+              }
+            }
           );
 
           if (response.status === 200 || response.status === 201) {
