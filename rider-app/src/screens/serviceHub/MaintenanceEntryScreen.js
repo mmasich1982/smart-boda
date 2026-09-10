@@ -154,6 +154,7 @@ export default function MaintenanceEntryScreen({ navigation }) {
 
       const now = Date.now();
       const payload = {
+        service_type_code: 'GENERAL_SERVICE',  // ✅ FIXED: Include default service type code
         cost: parseFloat(cost),
         created_at: new Date().toISOString(),
       };

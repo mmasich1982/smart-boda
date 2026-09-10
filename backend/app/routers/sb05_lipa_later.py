@@ -522,6 +522,14 @@ def record_payment(
         if not payload:
             raise HTTPException(400, "Request body is required")
         
+        # ✅ FIXED: Handle malformed query parameters where customer_id might have extra query string appended
+        # ISSUE: Frontend may send "cust_ID?rider_id=UUID" causing UUID validation to fail
+        # SOLUTION: Extract only the first part before any '?' character
+        clean_customer_id = customer_id.split('?')[0].strip() if customer_id else customer_id
+        clean_rider_id = rider_id.split('?')[0].strip() if rider_id else rider_id
+        
+        logger.info(f"[LIPA_LATER] Cleaned parameters - Rider: {clean_rider_id}, Customer: {clean_customer_id}")
+        
         # ✅ FIXED: Find the Lipa Later record by its UUID (lipa_later_id), not customer_mobile
         # PROBLEM: customer_id from frontend is a generated ID (e.g., "cust_0766554433_1788557784739")
         #          but customer_mobile is the actual phone (e.g., "0711223344")
@@ -530,16 +538,16 @@ def record_payment(
         #           returned from /record-trip endpoint
         record = db.query(LipaLaterRecord).filter(
             and_(
-                LipaLaterRecord.rider_id == rider_id,
-                LipaLaterRecord.id == customer_id  # ✅ FIXED: Match UUID to UUID
+                LipaLaterRecord.rider_id == clean_rider_id,
+                LipaLaterRecord.id == clean_customer_id  # ✅ FIXED: Match UUID to UUID
             )
         ).first()
         
         if not record:
-            logger.warning(f"[LIPA_LATER] Record NOT found: ID={customer_id}, Rider={rider_id}")
+            logger.warning(f"[LIPA_LATER] Record NOT found: ID={clean_customer_id}, Rider={clean_rider_id}")
             logger.warning(f"[LIPA_LATER] TIP: customer_id should be lipa_later_id from /record-trip")
             raise HTTPException(404, 
-                f"No Lipa Later record found for ID: {customer_id}. " +
+                f"No Lipa Later record found for ID: {clean_customer_id}. " +
                 f"Ensure customer_id is the lipa_later_id UUID from /record-trip endpoint.")
         
         remaining_before = get_remaining_balance(record, db)

@@ -472,6 +472,40 @@ export async function processPendingSync() {
           console.log(`   Headers: X-Sync-ID=${item.id}, X-Client-Timestamp=${requestConfig.headers['X-Client-Timestamp']}`);
           console.log(`   Payload:`, item.data);
         }
+        // ✅ CRITICAL FIX #3: Lipa Later Payment requires both rider_id AND customer_id query parameters
+        else if (item.type === 'lipa_later_payment') {
+          const riderId = item.riderId || item.data?.rider_id;
+          const customerId = item.data?.customer_id;
+          
+          if (!riderId) {
+            throw new Error(`Missing rider_id for lipa_later_payment sync`);
+          }
+          if (!customerId) {
+            throw new Error(`Missing customer_id for lipa_later_payment sync`);
+          }
+          
+          // ✅ FIXED: Construct endpoint with BOTH query parameters properly formatted
+          // Check if endpoint already has query params to avoid duplication
+          syncEndpoint = item.endpoint.includes('?') 
+            ? item.endpoint 
+            : `${item.endpoint}?rider_id=${encodeURIComponent(riderId)}&customer_id=${encodeURIComponent(customerId)}`;
+          
+          // Ensure rider_id and customer_id are in the payload
+          if (!item.data.rider_id) {
+            item.data.rider_id = riderId;
+          }
+          if (!item.data.customer_id) {
+            item.data.customer_id = customerId;
+          }
+          
+          requestConfig.headers = {
+            'Content-Type': 'application/json',
+          };
+          
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
+          console.log(`   Rider ID: ${riderId}, Customer ID: ${customerId}`);
+          console.log(`   Payload:`, JSON.stringify(item.data, null, 2));
+        }
         else {
           // Construct the full endpoint with query parameters if needed for other types
           syncEndpoint = item.endpoint.includes('?') 

@@ -376,9 +376,16 @@ export default function RecordPaymentScreen({ route, navigation }) {
       if (isConnected && isInitialized) {
         try {
           console.log('📡 Attempting to sync payment to API...');
+          // ✅ FIXED: Use proper axios params syntax to avoid query string malformation
           const response = await api.post(
-            `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${syncCustomerId}`,
-            paymentRecord
+            '/lipa-later/record-payment',
+            paymentRecord,
+            {
+              params: {
+                rider_id: effectiveRiderId,
+                customer_id: syncCustomerId  // ✅ FIXED: Properly passed as query param
+              }
+            }
           );
 
           if (response.status === 200 || response.status === 201) {

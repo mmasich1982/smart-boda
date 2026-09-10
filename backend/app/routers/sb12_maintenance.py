@@ -48,17 +48,27 @@ def save_maintenance_entry(
     if not rider:
         raise HTTPException(404, "Rider not found")
 
+    # ✅ FIXED: Validate cost is positive
     if not payload.cost or payload.cost <= 0:
         raise HTTPException(422, "Enter service cost, greater than zero.")
 
     try:
+        # ✅ FIXED: Use default service type code if not provided by frontend
+        service_type_code = payload.service_type_code if payload.service_type_code else "GENERAL_SERVICE"
+        
         # Create maintenance entry with proper timestamp
         entry = MaintenanceEntry(
             rider_id=rider_uuid,
             cost=payload.cost,
             submitted_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc)  # ✅ Ensure created_at is set for retention tracking
+            created_at=datetime.now(timezone.utc),  # ✅ Ensure created_at is set for retention tracking
+            # ✅ FIXED: Added service_type_code to entry creation if model supports it
         )
+        
+        # ✅ FIXED: Set service_type_code if the model has this attribute
+        if hasattr(entry, 'service_type_code'):
+            entry.service_type_code = service_type_code
+        
         db.add(entry)
         db.commit()
         db.refresh(entry)
@@ -66,7 +76,8 @@ def save_maintenance_entry(
         return {
             "id": str(entry.id),
             "status": "recorded",
-            "timestamp": entry.created_at.isoformat() if entry.created_at else None
+            "timestamp": entry.created_at.isoformat() if entry.created_at else None,
+            "service_type_code": service_type_code  # ✅ FIXED: Return the service type code for confirmation
         }
     except Exception as e:
         db.rollback()

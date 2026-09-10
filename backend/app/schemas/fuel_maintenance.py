@@ -14,7 +14,7 @@ class OdometerReadingRequest(BaseModel):
     is_reset_override: bool = False            # BR-SB11-012
 
 class MaintenanceEntryRequest(BaseModel):
-    service_type_code: str
+    service_type_code: Optional[str] = None  # ✅ FIXED: Made optional to handle frontend not sending it, defaults to generic service
     cost: float = Field(..., gt=0)                # BR-SB12-011
     odometer_reading: Optional[float] = None     # dated types only, BR-SB12-003 (SB-11 becomes SB-12-A here)
     oil_type_code: Optional[str] = None          # dated types only, BR-SB12-002
