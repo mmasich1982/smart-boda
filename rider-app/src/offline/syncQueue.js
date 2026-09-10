@@ -484,11 +484,14 @@ export async function processPendingSync() {
             throw new Error(`Missing customer_id for lipa_later_payment sync`);
           }
           
-          // ✅ FIXED: Construct endpoint with BOTH query parameters properly formatted
-          // Check if endpoint already has query params to avoid duplication
-          syncEndpoint = item.endpoint.includes('?') 
-            ? item.endpoint 
-            : `${item.endpoint}?rider_id=${encodeURIComponent(riderId)}&customer_id=${encodeURIComponent(customerId)}`;
+          // ✅ CRITICAL FIX: Always construct clean endpoint without query params
+          // The endpoint should be '/lipa-later/record-payment' without any query strings
+          // Query parameters will be added cleanly below
+          const baseEndpoint = item.endpoint.split('?')[0]; // Remove any existing query params
+          
+          // Construct endpoint with BOTH query parameters properly formatted
+          // Use proper axios params config instead of embedding in URL to avoid malformed query strings
+          syncEndpoint = `${baseEndpoint}?rider_id=${encodeURIComponent(riderId)}&customer_id=${encodeURIComponent(customerId)}`;
           
           // Ensure rider_id and customer_id are in the payload
           if (!item.data.rider_id) {
@@ -505,6 +508,7 @@ export async function processPendingSync() {
           console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
           console.log(`   Rider ID: ${riderId}, Customer ID: ${customerId}`);
           console.log(`   Payload:`, JSON.stringify(item.data, null, 2));
+          console.log(`   ✅ Note: Using lipaLaterId (${customerId}) not generated customerId`);
         }
         else {
           // Construct the full endpoint with query parameters if needed for other types

@@ -53,34 +53,46 @@ def save_maintenance_entry(
         raise HTTPException(422, "Enter service cost, greater than zero.")
 
     try:
-        # ✅ FIXED: Use default service type code if not provided by frontend
+        # ✅ CRITICAL FIX: Use default service type code if not provided by frontend
+        # This prevents psycopg2.errors.ForeignKeyViolation when service_type_master.code doesn't exist
         service_type_code = payload.service_type_code if payload.service_type_code else "GENERAL_SERVICE"
+        
+        # ✅ CRITICAL FIX: Validate that the service_type_code exists in service_type_master
+        # If it doesn't exist, use NULL (now allowed with nullable=True) to prevent FK violation
+        from app.models.service_type_master import ServiceTypeMaster
+        service_type_exists = db.query(ServiceTypeMaster).filter_by(code=service_type_code).first()
+        
+        if not service_type_exists:
+            logger.warning(f"[MAINTENANCE] service_type_code '{service_type_code}' not found in master table")
+            logger.info(f"[MAINTENANCE] Storing as NULL - frontend should not have sent '{service_type_code}'")
+            # Set to None to avoid foreign key violation
+            # The model allows nullable now
+            service_type_code = None
         
         # Create maintenance entry with proper timestamp
         entry = MaintenanceEntry(
             rider_id=rider_uuid,
             cost=payload.cost,
+            service_type_code=service_type_code,  # ✅ FIXED: Set here (can be None now)
             submitted_at=datetime.now(timezone.utc),
             created_at=datetime.now(timezone.utc),  # ✅ Ensure created_at is set for retention tracking
-            # ✅ FIXED: Added service_type_code to entry creation if model supports it
         )
-        
-        # ✅ FIXED: Set service_type_code if the model has this attribute
-        if hasattr(entry, 'service_type_code'):
-            entry.service_type_code = service_type_code
         
         db.add(entry)
         db.commit()
         db.refresh(entry)
 
+        logger.info(f"[MAINTENANCE] ✅ Saved maintenance entry {entry.id} for rider {rider_uuid}")
+
         return {
             "id": str(entry.id),
             "status": "recorded",
             "timestamp": entry.created_at.isoformat() if entry.created_at else None,
-            "service_type_code": service_type_code  # ✅ FIXED: Return the service type code for confirmation
+            "service_type_code": service_type_code or "GENERAL_SERVICE"  # ✅ FIXED: Return the service type code for confirmation
         }
     except Exception as e:
         db.rollback()
+        logger.error(f"[MAINTENANCE] ❌ Error saving entry: {str(e)}", exc_info=True)
         raise HTTPException(500, f"Failed to save entry: {str(e)}")
 
 

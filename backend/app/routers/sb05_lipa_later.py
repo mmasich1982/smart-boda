@@ -529,6 +529,7 @@ def record_payment(
         clean_rider_id = rider_id.split('?')[0].strip() if rider_id else rider_id
         
         logger.info(f"[LIPA_LATER] Cleaned parameters - Rider: {clean_rider_id}, Customer: {clean_customer_id}")
+        logger.info(f"[LIPA_LATER] Payment amount: {payload.amount} KSh")
         
         # ✅ FIXED: Find the Lipa Later record by its UUID (lipa_later_id), not customer_mobile
         # PROBLEM: customer_id from frontend is a generated ID (e.g., "cust_0766554433_1788557784739")
@@ -544,11 +545,29 @@ def record_payment(
         ).first()
         
         if not record:
-            logger.warning(f"[LIPA_LATER] Record NOT found: ID={clean_customer_id}, Rider={clean_rider_id}")
-            logger.warning(f"[LIPA_LATER] TIP: customer_id should be lipa_later_id from /record-trip")
+            logger.warning(f"[LIPA_LATER] ❌ Record NOT found: ID={clean_customer_id}, Rider={clean_rider_id}")
+            logger.warning(f"[LIPA_LATER] This means:")
+            logger.warning(f"  1. The Lipa Later record was never synced to the backend")
+            logger.warning(f"  2. OR the customer_id sent is NOT the lipa_later_id UUID from /record-trip")
+            logger.warning(f"  3. OR the rider_id doesn't match")
+            
+            # ✅ HELPFUL DEBUG INFO: Show what records DO exist for this rider
+            existing_records = db.query(LipaLaterRecord).filter(
+                LipaLaterRecord.rider_id == clean_rider_id
+            ).all()
+            
+            if existing_records:
+                logger.warning(f"[LIPA_LATER] Found {len(existing_records)} Lipa Later records for rider {clean_rider_id}:")
+                for rec in existing_records:
+                    logger.warning(f"  - ID: {rec.id}, Customer: {rec.customer_name}, Amount: {rec.amount} KSh")
+            else:
+                logger.warning(f"[LIPA_LATER] No Lipa Later records found for this rider at all!")
+            
             raise HTTPException(404, 
-                f"No Lipa Later record found for ID: {clean_customer_id}. " +
-                f"Ensure customer_id is the lipa_later_id UUID from /record-trip endpoint.")
+                f"❌ CRITICAL: No Lipa Later record found for ID: {clean_customer_id}. " +
+                f"Ensure customer_id is the lipa_later_id UUID from /record-trip endpoint. " +
+                f"This error typically means the trip recording didn't sync to the server - " +
+                f"try recording the trip again while online.")
         
         remaining_before = get_remaining_balance(record, db)
         if payload.amount > remaining_before:

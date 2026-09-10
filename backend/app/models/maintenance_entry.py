@@ -9,7 +9,10 @@ class MaintenanceEntry(Base):
     __tablename__ = "maintenance_entry"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     rider_id = Column(UUID(as_uuid=True), ForeignKey("rider.id"), nullable=False)
-    service_type_code = Column(String(30), ForeignKey("service_type_master.code"), nullable=False)
+    # ✅ CRITICAL FIX: Make service_type_code nullable to prevent foreign key errors
+    # When not provided by frontend, backend sets it to "GENERAL_SERVICE" default
+    # This prevents psycopg2.errors.ForeignKeyViolation when service_type_master.code doesn't exist
+    service_type_code = Column(String(30), ForeignKey("service_type_master.code"), nullable=True, default="GENERAL_SERVICE")
     cost = Column(Numeric(8, 2), nullable=False)
     odometer_reading = Column(Integer)
     oil_type_code = Column(String(30), ForeignKey("oil_type_master.code"))

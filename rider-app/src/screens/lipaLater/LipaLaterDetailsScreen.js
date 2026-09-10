@@ -194,7 +194,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       let lipaLaterId = null;
       if (isConnected && isInitialized) {
         try {
-          console.log('📡 Syncing to API...');
+          console.log('📡 Syncing trip to API to get lipa_later_id...');
           const response = await api.post(
             `/lipa-later/record-trip?rider_id=${effectiveRiderId}`,
             {
@@ -207,9 +207,11 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
           );
           
           // ✅ CRITICAL FIX: Capture the lipa_later_id from API response
+          // This is the REAL UUID that must be used for ALL future payment recording
           if (response.data && response.data.lipa_later_id) {
             lipaLaterId = response.data.lipa_later_id;
-            console.log('✅ Captured lipa_later_id from API:', lipaLaterId);
+            console.log('✅ ✅ ✅ CAPTURED lipa_later_id from API response:', lipaLaterId);
+            console.log('   This UUID MUST be used for all future payment syncs!');
             
             // ✅ UPDATE customer record with the REAL lipa_later_id
             // ✅ IMPORTANT: Pass 0 as amount to avoid doubling (amount already added on first call)
@@ -217,7 +219,7 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
               effectiveRiderId,
               {
                 customerId: customerId,
-                lipaLaterId: lipaLaterId,
+                lipaLaterId: lipaLaterId,  // ✅ STORE THE REAL UUID HERE
                 customerName: formData.customerName.trim(),
                 customerPhone: formData.customerPhone.trim(),
                 dueDate: formData.dueDate,
@@ -226,20 +228,42 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
               },
               0  // ✅ CRITICAL: Pass 0 to avoid doubling the amount!
             );
-            console.log('✅ Updated customer record with lipaLaterId');
+            console.log('✅ Updated customer record with lipaLaterId:', lipaLaterId);
             
             // ✅ UPDATE local trip record with lipa_later_id
             lipaLaterTrip.lipaLaterId = lipaLaterId;
             await saveLipaLaterTripToDb(tripId, lipaLaterTrip);
             console.log('✅ Updated local trip record with lipaLaterId');
+            
+            console.log('✅ ✅ ✅ READY FOR PAYMENT RECORDING - lipaLaterId is now available');
           } else {
-            console.warn('⚠️ API response missing lipa_later_id:', response.data);
+            // ✅ CRITICAL ERROR: API didn't return lipa_later_id
+            console.error('❌ CRITICAL: API response missing lipa_later_id!');
+            console.error('   Response data:', response.data);
+            
+            // Show warning but continue with local save
+            // Payment sync will fail later if this is not fixed
+            showCriticalError(
+              '⚠️ Lipa Later ID not returned from server. ' +
+              'Payment recording may fail.\n\n' +
+              'Please check your internet connection and try again.',
+              'sync_error'
+            );
           }
           
           console.log('✅ Synced to API');
         } catch (apiErr) {
-          console.warn('⚠️ API sync will retry:', apiErr.message);
+          console.error('❌ API sync error:', {
+            status: apiErr.response?.status,
+            message: apiErr.message,
+            detail: apiErr.response?.data?.detail,
+          });
+          console.warn('⚠️ Continuing with local save. Payment recording will be queued for retry.');
         }
+      } else {
+        console.warn('⚠️ App is offline - trip will be synced when connection restored');
+        console.warn('⚠️ WARNING: lipaLaterId will not be available until sync completes');
+        console.warn('⚠️ Payment recording may fail if attempted before full sync');
       }
 
       setSuccessMessage('Trip recorded! 🎉');
