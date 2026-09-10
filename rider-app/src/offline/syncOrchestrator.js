@@ -29,7 +29,7 @@ rider-app/src/offline/syncOrchestrator.js
  * ============================================================================
  */
 
-import { processPendingSync } from './syncQueue';
+import { processPendingSync, getLastSyncReport } from './syncQueue';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import NetInfo from '@react-native-community/netinfo';
 
@@ -40,6 +40,8 @@ let lastSyncAttemptTime = 0;
 let isOrchestratorActive = false;
 let networkStateUnsubscribe = null;
 let lastNetworkState = { isConnected: false, isInternetReachable: false };
+let lastSyncReport = null; // ✅ NEW: Track last sync report
+let syncInProgress = false; // ✅ NEW: Prevent concurrent sync attempts
 
 /**
  * Set the sync check interval (in milliseconds)
@@ -73,11 +75,19 @@ export function getSyncCheckInterval() {
  * 
  * ✅ Non-blocking: Runs async without awaiting in caller
  * ✅ Safe: Catches errors internally, never throws
+ * ✅ NEW: Prevents concurrent sync attempts
+ * ✅ NEW: Returns comprehensive sync report with success/failure details
  * 
- * @returns {Promise<Object>} Result with stats {attempted, synced, failed}
+ * @returns {Promise<Object>} Complete sync report with successfulItems and failedItems
  */
 export async function performSyncCheck() {
   const now = Date.now();
+  
+  // ✅ NEW: Prevent concurrent sync attempts
+  if (syncInProgress) {
+    console.log('⏳ Sync already in progress, skipping check');
+    return { attempted: false, reason: 'sync_in_progress' };
+  }
   
   // Prevent sync spam: minimum 5-second gap between attempts
   if (now - lastSyncAttemptTime < 5000) {
@@ -86,35 +96,62 @@ export async function performSyncCheck() {
   }
   
   lastSyncAttemptTime = now;
+  syncInProgress = true; // ✅ NEW: Mark sync as in progress
   
   try {
     console.log('🔄 [SyncOrchestrator] Starting sync check...');
     
     // Call existing processPendingSync from syncQueue
-    // This handles all logic: network check, retry logic, etc.
-    const result = await processPendingSync();
+    // This now returns comprehensive SyncReport
+    const report = await processPendingSync();
+    
+    // ✅ NEW: Store the report for later retrieval
+    lastSyncReport = report;
     
     console.log('✅ [SyncOrchestrator] Sync check complete:', {
-      itemsSynced: result?.synced || 0,
-      itemsFailed: result?.failed || 0,
-      itemsPending: result?.pending || 0,
-      timestamp: new Date().toISOString(),
+      status: report?.status || 'unknown',
+      successCount: report?.successCount || 0,
+      failureCount: report?.failureCount || 0,
+      pendingCount: report?.pendingCount || 0,
+      timestamp: report?.timestamp || new Date().toISOString(),
     });
+    
+    // ✅ NEW: Log successful items
+    if (report?.successfulItems && report.successfulItems.length > 0) {
+      console.log(`✅ Successfully synced ${report.successfulItems.length} items:`, 
+        report.successfulItems.map(item => `${item.type} (${item.id})`).join(', ')
+      );
+    }
+    
+    // ✅ NEW: Log failed items with reasons
+    if (report?.failedItems && report.failedItems.length > 0) {
+      console.log(`❌ ${report.failedItems.length} items failed to sync:`, 
+        report.failedItems.map(item => ({
+          id: item.id,
+          type: item.type,
+          error: item.errorMessage,
+          status: item.statusCode
+        }))
+      );
+    }
     
     return {
       attempted: true,
-      synced: result?.synced || 0,
-      failed: result?.failed || 0,
-      pending: result?.pending || 0,
+      report: report,
+      successCount: report?.successCount || 0,
+      failureCount: report?.failureCount || 0,
+      pendingCount: report?.pendingCount || 0,
     };
   } catch (err) {
     console.error('❌ [SyncOrchestrator] Sync check error:', err.message);
     return {
       attempted: true,
       error: err.message,
-      synced: 0,
-      failed: 0,
+      successCount: 0,
+      failureCount: 0,
     };
+  } finally {
+    syncInProgress = false; // ✅ NEW: Mark sync as complete
   }
 }
 
@@ -122,6 +159,7 @@ export async function performSyncCheck() {
  * Start the periodic sync checker
  * Runs sync checks every SYNC_CHECK_INTERVAL milliseconds (1 minute by default)
  * ✅ CRITICAL: Also listens for network changes and syncs immediately when coming back online
+ * ✅ NEW: Comprehensive network state tracking and immediate reconnection sync
  * 
  * Safe to call multiple times (will not create duplicate timers)
  * Use stopSyncOrchestrator() to stop the periodic checks
@@ -138,26 +176,39 @@ export function startPeriodicSyncCheck() {
   // When coming back online, sync immediately without waiting for periodic check
   networkStateUnsubscribe = NetInfo.addEventListener(state => {
     const isNowOnline = state.isConnected && state.isInternetReachable;
+    const wasOnline = lastNetworkState.isConnected && lastNetworkState.isInternetReachable;
     const wasOffline = !lastNetworkState.isConnected || !lastNetworkState.isInternetReachable;
     
     lastNetworkState = state;
     
-    // ✅ CRITICAL: Detected reconnection - trigger sync immediately
+    // ✅ NEW: Log network state changes for debugging
     if (isNowOnline && wasOffline) {
-      console.log('🌐 Network restored! Triggering immediate sync...');
+      console.log('🌐 🎯 NETWORK RECONNECTED! Triggering immediate sync of all pending items...');
+      console.log(`   Current network state: connected=${state.isConnected}, reachable=${state.isInternetReachable}`);
+      console.log(`   Type: ${state.type}, isWifiEnabled: ${state.isWifiEnabled}`);
+      
+      // ✅ NEW: Reset throttle to allow immediate sync
+      lastSyncAttemptTime = 0;
+      
       performSyncCheck().catch(err => {
         console.error('❌ Sync on reconnect error:', err);
       });
+    } else if (!isNowOnline && wasOnline) {
+      console.log('📵 Network disconnected - will retry when connection restored');
+    } else if (isNowOnline) {
+      console.log(`📊 Network status change: ${state.type} (connected: ${state.isConnected}, reachable: ${state.isInternetReachable})`);
     }
   });
   
   // Perform first check immediately
+  console.log('📡 Performing initial sync check...');
   performSyncCheck().catch(err => {
     console.error('❌ Initial sync check error:', err);
   });
   
   // Then set up periodic checks as fallback
   syncTimerRef = setInterval(() => {
+    console.log(`⏰ Periodic sync check (every ${SYNC_CHECK_INTERVAL / 1000}s)`);
     performSyncCheck().catch(err => {
       console.error('❌ Periodic sync check error:', err);
     });
@@ -201,12 +252,58 @@ export function isSyncOrchestratorActive() {
  * - User manually triggered sync
  * - Critical operations
  * 
- * @returns {Promise<Object>} Sync result
+ * @returns {Promise<Object>} Sync result with detailed report
  */
 export async function forceSyncNow() {
-  console.log('📡 Force sync requested');
+  console.log('📡 Force sync requested by user/system');
   lastSyncAttemptTime = 0; // Reset throttle
   return await performSyncCheck();
+}
+
+/**
+ * Get the latest sync report
+ * ✅ NEW: Retrieve detailed information about the last sync operation
+ * @returns {Promise<Object|null>} - Last sync report with success/failure details
+ */
+export async function getLastSyncStatus() {
+  if (lastSyncReport) {
+    return lastSyncReport;
+  }
+  
+  // Fallback: get from storage
+  try {
+    return await getLastSyncReport();
+  } catch (err) {
+    console.warn('⚠️ Error retrieving sync report:', err);
+    return null;
+  }
+}
+
+/**
+ * Check if there are pending items waiting to sync
+ * ✅ NEW: Quick status check for UI
+ * @returns {Promise<Object>} - Sync status {hasPending, count, status}
+ */
+export async function getSyncStatus() {
+  try {
+    const report = await getLastSyncStatus();
+    return {
+      hasPending: report?.pendingCount > 0,
+      count: report?.pendingCount || 0,
+      status: report?.status || 'unknown',
+      lastSync: report?.timestamp,
+      successCount: report?.successCount || 0,
+      failureCount: report?.failureCount || 0,
+    };
+  } catch (err) {
+    console.error('❌ Error getting sync status:', err);
+    return {
+      hasPending: false,
+      count: 0,
+      status: 'error',
+      error: err.message
+    };
+  }
 }
 
 /**
@@ -278,4 +375,8 @@ export default {
   // Sync operations
   performSyncCheck,
   forceSyncNow,
+  
+  // ✅ NEW: Status and reporting
+  getLastSyncStatus,
+  getSyncStatus,
 };

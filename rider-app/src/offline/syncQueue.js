@@ -52,6 +52,7 @@ const SYNC_PRIORITY_QUEUE_KEY = 'sync_priority_queue';
 const SYNC_BATCH_KEY = 'sync_batch';
 const SYNC_HISTORY_KEY = 'sync_history';
 const SYNC_STATS_KEY = 'sync_stats';
+const SYNC_REPORT_KEY = 'sync_report'; // ✅ NEW: Store latest sync report
 const MAX_RETRIES = Infinity; // ✅ UPDATED: Unlimited retries for critical data sync
 const INITIAL_BACKOFF_MS = 1000; // 1 second
 const MAX_BACKOFF_MS = 32000; // 32 seconds
@@ -125,6 +126,74 @@ const RECORD_TYPE_VALIDATORS = {
     description: 'Financial History Record',
   },
 };
+
+// ============================================================================
+// SYNC REPORT STRUCTURE AND MANAGEMENT
+// ============================================================================
+
+/**
+ * SyncReport - Detailed report of sync operations
+ * ✅ NEW: Comprehensive reporting on what succeeded and what failed
+ * @typedef {Object} SyncReport
+ * @property {Date} timestamp - When the sync was performed (EAT)
+ * @property {Array} successfulItems - List of successfully synced items
+ * @property {Array} failedItems - List of items that failed to sync with reasons
+ * @property {number} totalAttempted - Total number of items attempted
+ * @property {number} successCount - Number of items synced successfully
+ * @property {number} failureCount - Number of items that failed
+ * @property {number} pendingCount - Number of items still waiting to be synced
+ * @property {string} status - Overall status: 'completed', 'partial', 'failed', 'idle'
+ */
+
+/**
+ * Generate a new SyncReport with detailed success/failure information
+ * ✅ NEW: Clear reporting structure for UI and logging
+ * @param {Object} params - Report parameters
+ * @returns {Object} - Structured sync report
+ */
+function createSyncReport(params = {}) {
+  return {
+    timestamp: getEastAfricanTimeISO(),
+    successfulItems: params.successfulItems || [],
+    failedItems: params.failedItems || [],
+    totalAttempted: params.totalAttempted || 0,
+    successCount: params.successCount || 0,
+    failureCount: params.failureCount || 0,
+    pendingCount: params.pendingCount || 0,
+    status: params.status || 'idle'
+  };
+}
+
+/**
+ * Save the latest sync report to storage
+ * ✅ NEW: Persists sync report for later retrieval
+ * @param {Object} report - SyncReport object
+ * @returns {Promise<boolean>} - Success status
+ */
+async function saveSyncReport(report) {
+  try {
+    await indexedDbAdapter.kvSet(SYNC_REPORT_KEY, report);
+    return true;
+  } catch (err) {
+    console.error('❌ Error saving sync report:', err);
+    return false;
+  }
+}
+
+/**
+ * Get the latest sync report
+ * ✅ NEW: Retrieve last sync report for status checking
+ * @returns {Promise<Object|null>} - Latest SyncReport or null if none
+ */
+export async function getLastSyncReport() {
+  try {
+    const report = await indexedDbAdapter.kvGet(SYNC_REPORT_KEY);
+    return report || createSyncReport({ status: 'idle' });
+  } catch (err) {
+    console.warn('⚠️ Error retrieving sync report:', err);
+    return createSyncReport({ status: 'idle' });
+  }
+}
 
 // ============================================================================
 // CORE QUEUE OPERATIONS
@@ -260,7 +329,8 @@ export async function getQueuedRecords() {
  * Process pending sync items and attempt to sync with backend
  * ✅ FIXED: Handles syncing of queued records to backend API
  * ✅ CRITICAL FIX #3 (ERROR #2): Variable scope - syncEndpoint declared outside try-catch
- * @returns {Promise<Object>} - Result summary {synced, failed, errors}
+ * ✅ NEW: Returns comprehensive SyncReport with detailed success/failure lists
+ * @returns {Promise<Object>} - Comprehensive SyncReport with successfulItems and failedItems arrays
  */
 export async function processPendingSync() {
   try {
@@ -268,14 +338,25 @@ export async function processPendingSync() {
     
     if (!pending || pending.length === 0) {
       console.log('✅ No pending items to sync');
-      return { synced: 0, failed: 0, errors: [] };
+      const report = createSyncReport({
+        totalAttempted: 0,
+        successCount: 0,
+        failureCount: 0,
+        pendingCount: 0,
+        status: 'idle',
+        successfulItems: [],
+        failedItems: []
+      });
+      await saveSyncReport(report);
+      return report;
     }
 
     console.log(`🔄 Processing ${pending.length} pending sync items`);
     
     let synced = 0;
     let failed = 0;
-    const errors = [];
+    const successfulItems = []; // ✅ NEW: Track successful syncs
+    const failedItems = []; // ✅ NEW: Track failed syncs with reasons
 
     // ✅ CRITICAL: Get current rider ID for bike_profile syncs
     let currentRiderId = null;
@@ -352,6 +433,16 @@ export async function processPendingSync() {
         // Mark as synced
         await markAsSynced(item.id);
         synced++;
+        
+        // ✅ NEW: Add to success list with details
+        successfulItems.push({
+          id: item.id,
+          type: item.type,
+          riderId: item.data?.rider_id || item.riderId,
+          syncedAt: getEastAfricanTimeISO(),
+          endpoint: syncEndpoint
+        });
+        
         console.log(`✅ Synced ${item.type} (${item.id})`);
       } catch (err) {
         failed++;
@@ -370,12 +461,16 @@ export async function processPendingSync() {
           url: syncEndpoint,  // ✅ THIS NO LONGER THROWS "syncEndpoint is not defined"
         });
         
-        errors.push({
+        // ✅ NEW: Add to failure list with detailed reason
+        failedItems.push({
           id: item.id,
           type: item.type,
+          riderId: item.data?.rider_id || item.riderId,
           statusCode: statusCode,
-          error: errorMsg,
-          fullError: errorData
+          errorMessage: errorMsg,
+          failedAt: getEastAfricanTimeISO(),
+          endpoint: syncEndpoint,
+          retryCount: item.retryCount || 0
         });
         
         // Mark as failed with error message
@@ -383,12 +478,48 @@ export async function processPendingSync() {
       }
     }
 
-    const summary = { synced, failed, errors };
-    console.log('✅ Sync process completed:', summary);
-    return summary;
+    // ✅ NEW: Get remaining pending count
+    const remainingPending = await getPendingItems();
+    const pendingCount = remainingPending ? remainingPending.length : 0;
+
+    // ✅ NEW: Create comprehensive sync report
+    const report = createSyncReport({
+      totalAttempted: synced + failed,
+      successCount: synced,
+      failureCount: failed,
+      pendingCount: pendingCount,
+      status: failed === 0 ? 'completed' : (synced > 0 ? 'partial' : 'failed'),
+      successfulItems: successfulItems,
+      failedItems: failedItems
+    });
+
+    // ✅ NEW: Save report for later retrieval
+    await saveSyncReport(report);
+
+    console.log('✅ Sync process completed:', {
+      successful: synced,
+      failed: failed,
+      pending: pendingCount,
+      status: report.status
+    });
+
+    return report;
   } catch (err) {
     console.error('❌ Error in processPendingSync:', err.message);
-    return { synced: 0, failed: 0, errors: [{ error: err.message }] };
+    const errorReport = createSyncReport({
+      totalAttempted: 0,
+      successCount: 0,
+      failureCount: 1,
+      pendingCount: 0,
+      status: 'failed',
+      successfulItems: [],
+      failedItems: [{
+        errorMessage: err.message,
+        failedAt: getEastAfricanTimeISO()
+      }]
+    });
+    await saveSyncReport(errorReport);
+    return errorReport;
   }
 }
 
@@ -1492,6 +1623,8 @@ export default {
   restoreFromHistory,
   createQueueBackup,
   restoreFromBackup,
+  // ✅ NEW SYNC REPORT FUNCTIONS
+  getLastSyncReport,
   PRIORITY_LEVELS,
   RECORD_TYPE_VALIDATORS,
 };
