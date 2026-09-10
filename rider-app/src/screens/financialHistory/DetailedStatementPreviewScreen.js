@@ -91,30 +91,69 @@ export default function DetailedStatementPreviewScreen({ navigation, route }) {
 
     try {
       setLoading(true);
-      console.log(`📊 Loading detailed statement for rider ${riderId} (${new Date(startDate).toLocaleDateString()} - ${new Date(endDate).toLocaleDateString()})`);
+      const startDate_Display = new Date(startDate).toLocaleDateString();
+      const endDate_Display = new Date(endDate).toLocaleDateString();
+      console.log(`📊 Loading detailed statement for rider ${riderId} (${startDate_Display} - ${endDate_Display})`);
+      console.log(`   Date range in ms: ${startDate} - ${endDate}`);
 
       // ✅ Load trips from IndexedDB
+      console.log('📥 Fetching trips from cache...');
       const trips = await getTripsForRange(riderId, startDate, endDate);
+      console.log(`✅ Fetched ${trips.length} trips`);
+      
+      if (trips.length === 0) {
+        console.warn('⚠️ No trips found for this period');
+      } else {
+        console.log('📋 Sample trip:', {
+          id: trips[0]?.id,
+          ts: trips[0]?.ts,
+          timestamp: trips[0]?.timestamp,
+          date: trips[0]?.date,
+          fare: trips[0]?.fare,
+          amount: trips[0]?.amount,
+        });
+      }
+      
       const processedIncomeData = processIncomeData(trips);
       setIncomeData(processedIncomeData.grouped);
       setIncomeTotal(processedIncomeData.total);
       setTotalIncomePages(Math.ceil(processedIncomeData.grouped.length / ITEMS_PER_PAGE));
+      console.log(`✅ Processed income: ${processedIncomeData.grouped.length} groups, total: KSh ${processedIncomeData.total.toLocaleString()}`);
 
       // ✅ Load expenses from IndexedDB
+      console.log('📥 Fetching expenses from cache...');
       const expenses = await getExpensesForRange(riderId, startDate, endDate);
+      console.log(`✅ Fetched ${expenses.length} expenses`);
+      
+      if (expenses.length === 0) {
+        console.warn('⚠️ No expenses found for this period');
+      } else {
+        console.log('📋 Sample expense:', {
+          id: expenses[0]?.id,
+          ts: expenses[0]?.ts,
+          timestamp: expenses[0]?.timestamp,
+          type: expenses[0]?.type,
+          amount: expenses[0]?.amount,
+        });
+      }
+      
       const processedExpenseData = processExpenseData(expenses);
       setExpenseData(processedExpenseData.grouped);
       setExpenseTotal(processedExpenseData.total);
       setTotalExpensePages(Math.ceil(processedExpenseData.grouped.length / ITEMS_PER_PAGE));
+      console.log(`✅ Processed expenses: ${processedExpenseData.grouped.length} groups, total: KSh ${processedExpenseData.total.toLocaleString()}`);
 
       hasLoadedRef.current = true;
-      console.log('✅ Detailed data loaded:', {
+      console.log('✅ Detailed statement loaded successfully:', {
         incomeCount: trips.length,
         expenseCount: expenses.length,
+        incomeTotal: processedIncomeData.total,
+        expenseTotal: processedExpenseData.total,
       });
     } catch (err) {
       console.error('❌ Load detailed data error:', err);
-      showToast('Error loading detailed statement', 'error');
+      console.error('   Stack:', err.stack);
+      showToast('Error loading detailed statement: ' + err.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -125,11 +164,27 @@ export default function DetailedStatementPreviewScreen({ navigation, route }) {
     const monthGroups = {};
     let total = 0;
 
+    if (!trips || trips.length === 0) {
+      console.warn('⚠️ No trips provided to processIncomeData');
+      return { grouped: [], total: 0 };
+    }
+
+    console.log(`📊 Processing ${trips.length} trips for income data`);
+
     trips.forEach((trip) => {
-      const tripDate = new Date(trip.timestamp || trip.date);
+      // ✅ Handle various timestamp formats (ts, timestamp, date)
+      const tripTimestamp = trip.ts || trip.timestamp || (trip.date ? new Date(trip.date).getTime() : null);
+      const tripDate = new Date(tripTimestamp);
+      
+      // ✅ Validate date is valid
+      if (isNaN(tripDate.getTime())) {
+        console.warn('⚠️ Invalid trip date for trip:', trip);
+        return; // Skip this trip if date is invalid
+      }
+      
       const monthKey = tripDate.toISOString().slice(0, 7); // YYYY-MM
       const monthLabel = tripDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-      const paymentMethod = trip.payment_method || 'cash';
+      const paymentMethod = trip.payment_method || trip.paymentMethod || 'cash';
 
       if (!monthGroups[monthKey]) {
         monthGroups[monthKey] = {
@@ -152,13 +207,13 @@ export default function DetailedStatementPreviewScreen({ navigation, route }) {
         id: trip.id,
         date: tripDate.toLocaleDateString(),
         time: tripDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        amount: trip.fare || 0,
+        amount: trip.fare || trip.amount || 0,
         route: trip.route || 'N/A',
       });
 
-      monthGroups[monthKey].paymentMethods[paymentMethod].subtotal += trip.fare || 0;
-      monthGroups[monthKey].total += trip.fare || 0;
-      total += trip.fare || 0;
+      monthGroups[monthKey].paymentMethods[paymentMethod].subtotal += trip.fare || trip.amount || 0;
+      monthGroups[monthKey].total += trip.fare || trip.amount || 0;
+      total += trip.fare || trip.amount || 0;
     });
 
     // Sort trips within each payment method (most recent first)
@@ -173,6 +228,7 @@ export default function DetailedStatementPreviewScreen({ navigation, route }) {
       (a, b) => new Date(b.monthKey) - new Date(a.monthKey)
     );
 
+    console.log(`✅ Processed income: ${grouped.length} months, total KSh ${total.toLocaleString()}`);
     return { grouped, total };
   };
 
@@ -182,7 +238,16 @@ export default function DetailedStatementPreviewScreen({ navigation, route }) {
     let total = 0;
 
     expenses.forEach((expense) => {
-      const expenseDate = new Date(expense.timestamp || expense.date);
+      // ✅ CRITICAL FIX: Handle ts field from getExpensesForRange
+      // getExpensesForRange returns expenses with 'ts' (milliseconds), not 'timestamp' or 'date'
+      const expenseDate = new Date(expense.ts || expense.timestamp || expense.date || Date.now());
+      
+      // ✅ Validate date is valid
+      if (isNaN(expenseDate.getTime())) {
+        console.warn('⚠️ Invalid expense date for expense:', expense);
+        return; // Skip this expense if date is invalid
+      }
+      
       const monthKey = expenseDate.toISOString().slice(0, 7); // YYYY-MM
       const monthLabel = expenseDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
       const expenseType = expense.type || 'other';
