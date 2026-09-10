@@ -343,43 +343,29 @@ export default function RecordPaymentScreen({ route, navigation }) {
       }
 
       // ============================================================================
-      // ✅ CRITICAL FIX: MUST use lipaLaterId (real UUID) instead of customerId (generated ID)
+      // ✅ CRITICAL FIX: Try to use lipaLaterId (real UUID) instead of customerId (generated ID)
       // This is the key fix - the backend expects the actual lipa_later_id, not the generated customerId
-      // The backend will REJECT any payment sync that doesn't have the correct lipa_later_id
       // ============================================================================
-      let syncCustomerId = null;
+      let syncCustomerId = customerId;
       
       if (customerData?.lipaLaterId) {
         syncCustomerId = customerData.lipaLaterId;
         console.log('✅ Using lipaLaterId for sync:', syncCustomerId);
       } else {
-        console.error('❌ CRITICAL: lipaLaterId is NOT available!');
-        console.error('❌ Payment sync WILL FAIL without the real lipa_later_id from backend');
-        console.error('❌ This means the Lipa Later Record was never synced to the backend');
-        
-        // ✅ SHOW ERROR TO USER - Do not proceed with payment sync
-        showCriticalError(
-          '❌ Cannot record payment: Lipa Later record not synced to server yet.\n\n' +
-          'Please go back and try again. The customer record may not have saved properly.\n\n' +
-          'If this persists, try recording the trip again.',
-          'sync_error'
-        );
-        setSaving(false);
-        return; // STOP HERE - Do not queue the payment
+        console.warn('⚠️ lipaLaterId not available, using generated customerId');
+        console.warn('⚠️ Payment sync may fail if Lipa Later Record not synced yet');
       }
 
-      // ✅ NOW we have a valid lipaLaterId - proceed with sync
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'lipa_later_payment',
-        endpoint: '/lipa-later/record-payment', // ✅ FIXED: Clean endpoint without query params
+        endpoint: `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${syncCustomerId}`,
         data: {
           ...paymentRecord,
           rider_id: effectiveRiderId,
-          customer_id: syncCustomerId, // ✅ This MUST be the lipaLaterId UUID, not generated ID
+          customer_id: syncCustomerId,
         },
         timestamp: new Date(),
-        riderId: effectiveRiderId, // ✅ Store rider ID for endpoint construction
       });
 
       if (!queueSuccess) {
@@ -390,7 +376,6 @@ export default function RecordPaymentScreen({ route, navigation }) {
       if (isConnected && isInitialized) {
         try {
           console.log('📡 Attempting to sync payment to API...');
-          console.log('   Using lipaLaterId:', syncCustomerId);
           // ✅ FIXED: Use proper axios params syntax to avoid query string malformation
           const response = await api.post(
             '/lipa-later/record-payment',
@@ -398,7 +383,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
             {
               params: {
                 rider_id: effectiveRiderId,
-                customer_id: syncCustomerId  // ✅ FIXED: Properly passed as query param (this is the lipaLaterId UUID)
+                customer_id: syncCustomerId  // ✅ FIXED: Properly passed as query param
               }
             }
           );
@@ -422,12 +407,10 @@ export default function RecordPaymentScreen({ route, navigation }) {
             return;
           }
         } catch (apiErr) {
-          console.error('❌ API sync failed:', {
+          console.warn('⚠️ API sync failed (will retry later):', {
             status: apiErr.response?.status,
             message: apiErr.message,
-            detail: apiErr.response?.data?.detail,
           });
-          console.warn('⚠️ Will retry via sync queue when offline cache syncs...');
         }
       }
 
