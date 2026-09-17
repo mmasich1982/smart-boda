@@ -2,12 +2,16 @@
 import uuid
 from sqlalchemy import Column, String, Numeric, Date, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 class Statement(Base):
     __tablename__ = "statement"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     rider_id = Column(UUID(as_uuid=True), ForeignKey("rider.id"), nullable=False)
+    
+    # ✅ Relationship to Rider (back_populates with Rider.statements)
+    rider = relationship("Rider", back_populates="statements")
     period_start = Column(Date, nullable=False)
     period_end = Column(Date, nullable=False)
     purpose_code = Column(String(30), ForeignKey("statement_purpose_master.code"))
