@@ -36,6 +36,17 @@ from app.models.other_expense import OtherExpense
 from app.models.out_of_window_request import OutOfWindowRequest
 from app.models.payment import Payment
 from app.models.pin_recovery_request import PinRecoveryRequest
+# ✅ FIXED: Import subscription models BEFORE Rider because Rider references them
+# This prevents mapper initialization errors from forward-declared classes
+from app.models.subscription import (
+    SubscriptionPlan, 
+    RiderSubscription,
+    SubscriptionTrial,
+    PricingChangeLog, 
+    PendingPriceChange, 
+    AccountLockHistory
+)
+
 from app.models.remittance import Remittance
 from app.models.revenue_target import RevenueTarget
 from app.models.rider import Rider
@@ -45,17 +56,6 @@ from app.models.savings_contribution import SavingsContribution
 from app.models.service_type_master import ServiceTypeMaster
 from app.models.statement import Statement
 from app.models.statement_download import StatementDownload
-
-# ✅ FIXED: Import ALL subscription models from the single consolidated subscription.py
-# This replaces the old separate imports from subscription.py and subscription_enhanced.py
-from app.models.subscription import (
-    SubscriptionPlan, 
-    RiderSubscription,
-    SubscriptionTrial,
-    PricingChangeLog, 
-    PendingPriceChange, 
-    AccountLockHistory
-)
 
 from app.models.suggestion import Suggestion
 from app.models.suggestion_category_master import SuggestionCategoryMaster

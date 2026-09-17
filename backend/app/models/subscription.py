@@ -123,6 +123,7 @@ class RiderSubscription(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # ✅ ALL RELATIONSHIPS WITH EXPLICIT PRIMARYJOIN
+    rider = relationship("Rider", back_populates="subscription")
     plan = relationship("SubscriptionPlan", back_populates="rider_subscriptions")
     
     # Relationship to Payment (viewonly because we can't cascade deletes across FK types)
