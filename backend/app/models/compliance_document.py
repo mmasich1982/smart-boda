@@ -2,6 +2,7 @@
 import uuid
 from sqlalchemy import Column, String, Date, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 class ComplianceDocument(Base):
@@ -16,3 +17,6 @@ class ComplianceDocument(Base):
     sync_status = Column(String(20), default="pending")
     submitted_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # ✅ FIXED: Added missing relationship to Rider
+    rider = relationship("Rider", back_populates="compliance_documents")

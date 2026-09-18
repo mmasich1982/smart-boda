@@ -2,6 +2,7 @@
 import uuid
 from sqlalchemy import Column, String, Numeric, Date, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 class Goal(Base):
@@ -14,3 +15,6 @@ class Goal(Base):
     target_date = Column(Date)
     status = Column(String(20), default="active")  # active | achieved | archived
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # ✅ FIXED: Added missing relationship to Rider
+    rider = relationship("Rider", back_populates="goals")

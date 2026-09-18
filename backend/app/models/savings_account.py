@@ -2,6 +2,7 @@
 import uuid
 from sqlalchemy import Column, String, DateTime, Numeric, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 class SavingsAccount(Base):
@@ -15,3 +16,6 @@ class SavingsAccount(Base):
     # add_savings_contribution -- BR-SB16-009 (period filter never changes this).
     lifetime_total = Column(Numeric(10, 2), default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # ✅ FIXED: Added missing relationship to Rider
+    rider = relationship("Rider", back_populates="savings_account")

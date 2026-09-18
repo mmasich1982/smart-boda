@@ -24,5 +24,8 @@ class LipaLaterRecord(Base):
     paid_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
+    # ✅ FIXED: Added missing relationship to Rider
+    rider = relationship("Rider", back_populates="lipa_later_records")
+    
     # Relationship to LipaLaterPayment (one-to-many)
     payments = relationship("LipaLaterPayment", back_populates="lipa_later_record", cascade="all, delete-orphan")

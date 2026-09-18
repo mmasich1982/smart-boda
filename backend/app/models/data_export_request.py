@@ -2,6 +2,7 @@
 import uuid
 from sqlalchemy import Column, String, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from app.database import Base
 
 class DataExportRequest(Base):
@@ -17,3 +18,6 @@ class DataExportRequest(Base):
     pin_verified_at = Column(DateTime(timezone=True), nullable=True)
     requested_at = Column(DateTime(timezone=True), nullable=False)
     fulfilled_at = Column(DateTime(timezone=True))
+    
+    # ✅ FIXED: Added missing relationship to Rider
+    rider = relationship("Rider", back_populates="data_export_requests")
