@@ -23,6 +23,7 @@ from app.models.goal_contribution import GoalContribution
 from app.models.goal_type_master import GoalTypeMaster
 from app.models.legal_content import LegalContent
 from app.models.lipa_later_record import LipaLaterRecord
+from app.models.location_models import County, SubCounty, Ward
 from app.models.lipa_later_payment import LipaLaterPayment
 from app.models.maintenance_entry import MaintenanceEntry
 from app.models.master_data import (
@@ -93,6 +94,9 @@ __all__ = [
     "LegalContent",
     "LipaLaterRecord",
     "LipaLaterPayment",
+    "County",
+    "SubCounty",
+    "Ward",
     "MaintenanceEntry",
     "LanguageMaster",
     "UiStringMaster",
