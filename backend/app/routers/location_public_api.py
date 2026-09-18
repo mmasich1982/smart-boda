@@ -14,11 +14,18 @@ logger = logging.getLogger(__name__)
 # ✅ IMPORTANT: Using /location-data prefix instead of /master-data to avoid conflicts
 router = APIRouter(prefix="/location-data", tags=["location-api"])
 
+# ✅ DEBUG: Health check endpoint to verify route registration
+@router.get("/health", tags=["location-public"])
+async def location_health_check():
+    """Health check endpoint for location API."""
+    logger.info("Location API health check requested")
+    return {"status": "ok", "service": "location-data-api"}
+
 # =============================================================================
 # PUBLIC County Endpoints (No Authentication Required)
 # =============================================================================
 
-@router.get("/counties")
+@router.get("/counties", tags=["location-public"])
 async def get_counties(
     search: str = Query(None, description="Search by county name"),
     skip: int = Query(0, ge=0, description="Number of records to skip"),
@@ -37,8 +44,11 @@ async def get_counties(
     
     Returns:
     - List of counties sorted by name with id, name, and code
+    
+    ✅ Status Code: 200 OK
     """
     try:
+        logger.info(f"Fetching counties: search={search}, skip={skip}, limit={limit}")
         query = db.query(County).filter(County.is_active == True)
         
         if search:
@@ -51,6 +61,7 @@ async def get_counties(
             )
         
         counties = query.order_by(County.county_name).offset(skip).limit(limit).all()
+        logger.info(f"Successfully fetched {len(counties)} counties")
         
         return {
             "status": "success",

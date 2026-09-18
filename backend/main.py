@@ -202,9 +202,16 @@ app.include_router(admin_auth.router, prefix="/admin/auth", tags=["admin-auth"])
 
 # ---- Module A routers ----
 from app.routers import master_data_admin, location_master_data_admin, location_public_api, language, bike_profile, mobile_number, pin
+
+# ✅ CRITICAL: Register location_public_api FIRST (before location_master_data_admin)
+# This ensures /location-data/counties GET is available before any conflicting routes
+app.include_router(location_public_api.router)  # Prefix: /location-data (public, no auth)
+
+# Then register the admin-protected location routes
+app.include_router(location_master_data_admin.router)  # Prefix: /master-data (admin only)
+
+# Register other Module A routers
 app.include_router(master_data_admin.router)
-app.include_router(location_master_data_admin.router)
-app.include_router(location_public_api.router)
 app.include_router(language.router)
 app.include_router(bike_profile.router)
 app.include_router(mobile_number.router)
@@ -321,10 +328,12 @@ def status_endpoint():
 # ✅ OPTIONS HANDLER FOR PREFLIGHT REQUESTS
 # ============================================================================
 # Handles browser preflight CORS requests
+# ✅ CRITICAL: Must explicitly support location-data endpoints
 
 @app.options("/{full_path:path}")
 async def options_handler(full_path: str):
     """Handle CORS preflight requests."""
+    logger.debug(f"OPTIONS request for path: /{full_path}")
     return JSONResponse(
         status_code=200,
         headers={
@@ -334,3 +343,63 @@ async def options_handler(full_path: str):
             "Access-Control-Max-Age": "600",
         }
     )
+
+# ✅ EXPLICIT GET HANDLER FOR /location-data/counties (bypass route resolution issues)
+@app.get("/location-data/counties", tags=["location-api"])
+async def get_counties_direct(
+    search: str = None,
+    skip: int = 0,
+    limit: int = 100
+):
+    """
+    Direct GET handler for counties endpoint.
+    This is a fallback to ensure the endpoint is always accessible.
+    """
+    from app.database import get_db
+    from sqlalchemy.orm import Session
+    from sqlalchemy import and_, or_
+    from app.models.location_models import County
+    
+    logger.info(f"Direct /location-data/counties GET called: search={search}, skip={skip}, limit={limit}")
+    
+    try:
+        # Get DB session manually since we're not using depends
+        from app.database import SessionLocal
+        db = SessionLocal()
+        
+        try:
+            query = db.query(County).filter(County.is_active == True)
+            
+            if search:
+                search_term = f"%{search.lower()}%"
+                query = query.filter(
+                    or_(
+                        County.county_name.ilike(search_term),
+                        County.county_code.ilike(search_term)
+                    )
+                )
+            
+            counties = query.order_by(County.county_name).offset(skip).limit(limit).all()
+            logger.info(f"Successfully fetched {len(counties)} counties via direct handler")
+            
+            return {
+                "status": "success",
+                "data": [
+                    {
+                        "id": county.id,
+                        "name": county.county_name,
+                        "code": county.county_code,
+                    }
+                    for county in counties
+                ],
+                "count": len(counties)
+            }
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in direct counties handler: {str(e)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Error fetching counties: {str(e)}"},
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
