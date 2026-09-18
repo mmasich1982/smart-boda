@@ -49,4 +49,3 @@ class Rider(Base):
     bike_profile = relationship("BikeProfile", uselist=False, back_populates="rider", cascade="all, delete-orphan")
     compliance_documents = relationship("ComplianceDocument", back_populates="rider", cascade="all, delete-orphan")
     data_export_requests = relationship("DataExportRequest", back_populates="rider", cascade="all, delete-orphan")
-    subscriptions_enhanced = relationship("SubscriptionEnhanced", uselist=False, back_populates="rider", cascade="all, delete-orphan")
