@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from app.database import get_db
-from app.models.location import County, SubCounty, Ward
+from app.models.location_models import County, SubCounty, Ward
 from app.auth import verify_admin_token
 
 router = APIRouter(prefix="/master-data", tags=["location-master-data"])

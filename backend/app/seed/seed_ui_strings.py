@@ -69,6 +69,18 @@ STRINGS_EN = {
     "profile.offline_badge": "● Offline — Will Activate on Reconnect",
     "profile.continue": "Continue →",
     
+    # ===== PROFILE LOCATION (SB-04-C) =====
+    "profile.location_title": "Where do you operate?",
+    "profile.location_subtitle": "Help us serve you better with location-aware insights.",
+    "profile.county_label": "County",
+    "profile.county_placeholder": "Select your county",
+    "profile.sub_county_label": "Sub-County",
+    "profile.sub_county_placeholder": "Select your sub-county",
+    "profile.ward_label": "Ward",
+    "profile.ward_placeholder": "Select your ward",
+    "profile.location_fetch_error": "Unable to load location data. Please try again.",
+    "profile.location_required": "Please select your operating location.",
+    
     # ===== PIN MANAGEMENT (SB-02-A, SB-02-B, SB-02-C) =====
     "pin.create_title": "Create your login PIN",
     "pin.create_subtitle": "You'll use this 4-digit PIN to log back in every time you reopen the app.",
@@ -296,6 +308,18 @@ STRINGS_SW = {
     "profile.online_badge": "● Mtandaoni — Inamiliki",
     "profile.offline_badge": "● Isimu — Itamiliki Ukikuwa Mtandaoni",
     "profile.continue": "Endelea →",
+    
+    # ===== PROFILE LOCATION (SB-04-C) =====
+    "profile.location_title": "Wapi unaofanya kazi?",
+    "profile.location_subtitle": "Tutuze na maelezo ya eneo lengwa.",
+    "profile.county_label": "Kaunti",
+    "profile.county_placeholder": "Chagua kaunti yako",
+    "profile.sub_county_label": "Sub-Kaunti",
+    "profile.sub_county_placeholder": "Chagua sub-kaunti yako",
+    "profile.ward_label": "Ward",
+    "profile.ward_placeholder": "Chagua ward yako",
+    "profile.location_fetch_error": "Haiwezi kupakia data ya eneo. Tafadhali jaribu tena.",
+    "profile.location_required": "Tafadhali chagua eneo lako la uendeshaji.",
     
     # ===== PIN MANAGEMENT =====
     "pin.create_title": "Unda PIN yako ya kuingia",
