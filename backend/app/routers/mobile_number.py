@@ -1,6 +1,5 @@
 # backend/app/routers/mobile_number.py
 # ✅ ENHANCED: Comprehensive mobile number validation with duplicate detection
-# ✅ UPDATED: profile-confirm endpoint now captures and stores location data (County, Sub-County, Ward)
 # Provides clear error messages and guidance to customers
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -219,8 +218,6 @@ def submit_mobile_number(
             mobile_number=normalized,
             mobile_verified=False,
             registration_status="pending",
-            language_code="en",  # ✅ FIXED: Set default language code
-            onboarding_step="mobile_verified",  # Track onboarding progress
             created_at=datetime.now(timezone.utc).replace(tzinfo=None),
             updated_at=datetime.now(timezone.utc).replace(tzinfo=None)
         )
@@ -228,51 +225,46 @@ def submit_mobile_number(
         db.commit()
         db.refresh(new_rider)
         
-        logger.info(f"New rider {new_rider.id} created with mobile {normalized}")
+        logger.info(f"New rider {new_rider.id} registered with mobile {normalized}")
         
         return {
             "rider_id": str(new_rider.id),
             "status": "new_registration",
-            "message": "Thank you! Let's set up your account.",
+            "message": f"Mobile number registered successfully. A verification OTP will be sent to {normalized}",
             "mobile_number": normalized,
             "formatted_mobile": normalized[3:],
-            "action": "proceed_to_next_step"
+            "action": "proceed_to_verification"  # This will lead to OTP verification when implemented
         }
     
     except Exception as e:
         db.rollback()
-        logger.error(f"Error creating new rider with mobile {normalized}: {str(e)}", exc_info=True)
+        logger.error(f"Error submitting mobile number: {str(e)}")
         raise HTTPException(
-            status_code=500, 
-            detail=f"Failed to register mobile number. Error: {str(e)}"
+            status_code=500,
+            detail="Failed to register mobile number. Please try again or contact support."
         )
 
 
 # ============================================================================
-# ENDPOINT: Confirm Profile with Location Data (Enhanced)
+# ENDPOINT: Confirm Rider Profile (Name & Consent)
 # ============================================================================
 
 @router.post("/profile-confirm")
-def profile_confirm_endpoint(
+def profile_confirm(
     payload: ProfileConfirmRequest,
-    rider_id: str = Query(..., description="Rider ID from previous steps"),
+    rider_id: str = Query(..., description="Rider UUID"),
     db: Session = Depends(get_db)
 ):
     """
     POST /onboarding/profile-confirm?rider_id=UUID
     
-    Confirm rider profile with location data (County, Sub-County, Ward).
-    This is SB-03-B: Onboarding step 4 of 5
+    Confirm rider profile with full name and consent acceptance.
     
-    Request body:
-    {
-        "full_name": "John Doe",
-        "consent_accepted": true,
-        "consent_content_version": "2024-08-01",
-        "county_id": 1,
-        "sub_county_id": 10,
-        "ward_id": 100
-    }
+    Validation:
+    - Rider must exist
+    - Full name must be provided (not empty/whitespace)
+    - Consent must be accepted
+    - Full name must not already be registered to another verified rider
     
     Returns:
     {
@@ -280,15 +272,12 @@ def profile_confirm_endpoint(
         "message": "Profile confirmed. Proceed to bike registration.",
         "rider_id": "UUID",
         "full_name": "John Doe",
-        "county_id": 1,
-        "sub_county_id": 10,
-        "ward_id": 100,
         "next_step": "bike_profile"
     }
     
     Error scenarios:
     - 404: Rider not found
-    - 422: Missing full name, consent not accepted, or location fields missing
+    - 422: Missing full name or consent not accepted
     - 409: Full name already registered to another verified rider (Conflict)
     - 500: Database error
     """
@@ -329,28 +318,6 @@ def profile_confirm_endpoint(
             headers={"X-Error-Code": "FULL_NAME_INVALID"}
         )
     
-    # ✅ ENHANCED: Validate location fields
-    if not payload.county_id or payload.county_id <= 0:
-        raise HTTPException(
-            status_code=422,
-            detail="County selection is required. Please select your county.",
-            headers={"X-Error-Code": "COUNTY_REQUIRED"}
-        )
-    
-    if not payload.sub_county_id or payload.sub_county_id <= 0:
-        raise HTTPException(
-            status_code=422,
-            detail="Sub-County selection is required. Please select your sub-county.",
-            headers={"X-Error-Code": "SUB_COUNTY_REQUIRED"}
-        )
-    
-    if not payload.ward_id or payload.ward_id <= 0:
-        raise HTTPException(
-            status_code=422,
-            detail="Ward selection is required. Please select your ward.",
-            headers={"X-Error-Code": "WARD_REQUIRED"}
-        )
-    
     # Check if full name is already registered by another VERIFIED rider
     # Only check verified riders to avoid conflicts with other pending registrations
     existing_rider_with_name = db.query(Rider).filter(
@@ -369,27 +336,18 @@ def profile_confirm_endpoint(
             headers={"X-Error-Code": "FULL_NAME_EXISTS"}
         )
     
-    # ✅ ENHANCED: Update rider profile with location data
+    # Update rider profile
     try:
         rider.full_name = full_name_clean
         rider.consent_accepted_at = datetime.now(timezone.utc).replace(tzinfo=None)
         rider.consent_content_version = payload.consent_content_version
         rider.registration_status = "verified_incomplete"  # Mobile verified but PIN not yet created
-        
-        # ✅ ENHANCED: Store location data
-        rider.county_id = payload.county_id
-        rider.sub_county_id = payload.sub_county_id
-        rider.ward_id = payload.ward_id
-        
         rider.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         
         db.commit()
         db.refresh(rider)
         
-        logger.info(
-            f"Rider {rider_id} confirmed profile with name: {full_name_clean}, "
-            f"Location - County ID: {payload.county_id}, Sub-County ID: {payload.sub_county_id}, Ward ID: {payload.ward_id}"
-        )
+        logger.info(f"Rider {rider_id} confirmed profile with name: {full_name_clean}")
         
         return {
             "status": "confirmed",
@@ -397,12 +355,8 @@ def profile_confirm_endpoint(
             "rider_id": str(rider.id),
             "full_name": rider.full_name,
             "mobile_number": rider.mobile_number,
-            # ✅ ENHANCED: Return location data in response
-            "county_id": rider.county_id,
-            "sub_county_id": rider.sub_county_id,
-            "ward_id": rider.ward_id,
             "next_step": "bike_profile",
-            "progress": "3/5"  # Show registration progress
+            "progress": "2/5"  # Show registration progress
         }
     
     except Exception as e:
