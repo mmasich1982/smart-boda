@@ -185,10 +185,10 @@ export default function ProfileConfirmationScreen({ route, navigation }) {
     try {
       setCountyLoading(true);
       setCountyError(null);
-      const response = await api.get('/master-data/counties');
-      setCounties(response.data.map(county => ({
+      const response = await api.get('/location-data/counties');
+      setCounties(response.data.data.map(county => ({
         id: county.id,
-        name: county.county_name,
+        name: county.name,
       })));
     } catch (err) {
       setCountyError(t('profile.location_fetch_error') || 'Failed to load counties');
@@ -203,12 +203,12 @@ export default function ProfileConfirmationScreen({ route, navigation }) {
     try {
       setSubCountyLoading(true);
       setSubCountyError(null);
-      const response = await api.get(`/master-data/sub-counties`, {
+      const response = await api.get(`/location-data/sub-counties`, {
         params: { county_id: countyId }
       });
-      setSubCounties(response.data.map(subCounty => ({
+      setSubCounties(response.data.data.map(subCounty => ({
         id: subCounty.id,
-        name: subCounty.sub_county_name,
+        name: subCounty.name,
       })));
     } catch (err) {
       setSubCountyError(t('profile.location_fetch_error') || 'Failed to load sub-counties');
@@ -223,12 +223,12 @@ export default function ProfileConfirmationScreen({ route, navigation }) {
     try {
       setWardLoading(true);
       setWardError(null);
-      const response = await api.get(`/master-data/wards`, {
+      const response = await api.get(`/location-data/wards`, {
         params: { sub_county_id: subCountyId }
       });
-      setWards(response.data.map(ward => ({
+      setWards(response.data.data.map(ward => ({
         id: ward.id,
-        name: ward.ward_name,
+        name: ward.name,
       })));
     } catch (err) {
       setWardError(t('profile.location_fetch_error') || 'Failed to load wards');

@@ -201,9 +201,10 @@ from app.routers import admin_auth
 app.include_router(admin_auth.router, prefix="/admin/auth", tags=["admin-auth"])
 
 # ---- Module A routers ----
-from app.routers import master_data_admin, location_master_data_admin, language, bike_profile, mobile_number, pin
+from app.routers import master_data_admin, location_master_data_admin, location_public_api, language, bike_profile, mobile_number, pin
 app.include_router(master_data_admin.router)
 app.include_router(location_master_data_admin.router)
+app.include_router(location_public_api.router)
 app.include_router(language.router)
 app.include_router(bike_profile.router)
 app.include_router(mobile_number.router)
