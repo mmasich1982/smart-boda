@@ -24,9 +24,10 @@ class Rider(Base):
     
     # ✅ ENHANCED: Location fields for rider's operating location (County, Sub-County, Ward)
     # Added in migration 0023 for better location-based services and analytics
-    county_id = Column(Integer, ForeignKey("location_county_master.id"), nullable=True)
-    sub_county_id = Column(Integer, ForeignKey("location_sub_county_master.id"), nullable=True)
-    ward_id = Column(Integer, ForeignKey("location_ward_master.id"), nullable=True)
+    # FIXED: Changed foreign key references from "location_*_master" to actual table names
+    county_id = Column(Integer, ForeignKey("counties.id"), nullable=True)
+    sub_county_id = Column(Integer, ForeignKey("sub_counties.id"), nullable=True)
+    ward_id = Column(Integer, ForeignKey("wards.id"), nullable=True)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now())
