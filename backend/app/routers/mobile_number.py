@@ -219,6 +219,8 @@ def submit_mobile_number(
             mobile_number=normalized,
             mobile_verified=False,
             registration_status="pending",
+            language_code="en",  # ✅ FIXED: Set default language code
+            onboarding_step="mobile_verified",  # Track onboarding progress
             created_at=datetime.now(timezone.utc).replace(tzinfo=None),
             updated_at=datetime.now(timezone.utc).replace(tzinfo=None)
         )
@@ -239,8 +241,11 @@ def submit_mobile_number(
     
     except Exception as e:
         db.rollback()
-        logger.error(f"Error creating new rider with mobile {normalized}: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to register mobile number. Please try again.")
+        logger.error(f"Error creating new rider with mobile {normalized}: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to register mobile number. Error: {str(e)}"
+        )
 
 
 # ============================================================================

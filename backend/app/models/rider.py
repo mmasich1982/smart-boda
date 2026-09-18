@@ -8,7 +8,7 @@ from app.database import Base
 class Rider(Base):
     __tablename__ = "rider"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    language_code = Column(String(10), ForeignKey("language_master.code"))
+    language_code = Column(String(10), ForeignKey("language_master.code"), nullable=True, default="en")
     mobile_number = Column(String(15), unique=True, nullable=False)
     mobile_verified = Column(Boolean, default=False)
     full_name = Column(String(80))
@@ -49,3 +49,4 @@ class Rider(Base):
     bike_profile = relationship("BikeProfile", uselist=False, back_populates="rider", cascade="all, delete-orphan")
     compliance_documents = relationship("ComplianceDocument", back_populates="rider", cascade="all, delete-orphan")
     data_export_requests = relationship("DataExportRequest", back_populates="rider", cascade="all, delete-orphan")
+    subscriptions_enhanced = relationship("SubscriptionEnhanced", uselist=False, back_populates="rider", cascade="all, delete-orphan")
