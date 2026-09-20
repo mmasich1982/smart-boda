@@ -328,3 +328,9 @@ async def get_ward_detail(
     except Exception as e:
         logger.error(f"Error fetching ward {ward_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error fetching ward: {str(e)}")
+
+
+# ============================================================================
+# ✅ MODULE EXPORT
+# ============================================================================
+__all__ = ['router']
