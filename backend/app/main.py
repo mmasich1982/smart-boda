@@ -1,18 +1,14 @@
-# backend/app/main.py - KEY SECTIONS ONLY
-# ============================================================================
-# PAYMENT ROUTER REGISTRATION - CORRECT PLACEMENT
-# ============================================================================
-
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 import os
 import logging
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
-from sqlalchemy import text
+from sqlalchemy import text, and_, or_
+from sqlalchemy.orm import Session
+from app.database import get_db
 from app.routers import sb08_financial_history, sb19_financial_history
-from app.routers import one_time_link
 
 # Configure logging
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -25,45 +21,26 @@ app = FastAPI(
 )
 
 # ============================================================================
-# ✅ CORS CONFIGURATION - MUST BE FIRST
+# CORS CONFIGURATION
 # ============================================================================
-
-def get_allowed_origins():
-    """Get allowed origins from environment or use permissive default for development."""
-    env_origins = os.getenv("CORS_ORIGINS", "")
-    
-    if env_origins:
-        origins = [origin.strip() for origin in env_origins.split(",") if origin.strip()]
-        return origins
-    else:
-        return ["*"]
-
-allowed_origins = get_allowed_origins()
-logger.info(f"CORS Configuration: {allowed_origins}")
-
-# ✅ CRITICAL: CORSMiddleware must be added FIRST (outermost)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
-    max_age=600,
 )
-
-# ============================================================================
-# ✅ CUSTOM CORS ERROR HANDLER
-# ============================================================================
 
 @app.middleware("http")
 async def ensure_cors_headers(request: Request, call_next):
     """Ensure CORS headers are always present, even on errors."""
     try:
         response = await call_next(request)
+        # CORS middleware already added headers, just pass through
         return response
     except Exception as e:
         logger.error(f"Middleware error: {str(e)}", exc_info=e)
+        # Return error response with CORS headers
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error"},
@@ -75,199 +52,265 @@ async def ensure_cors_headers(request: Request, call_next):
         )
 
 # ============================================================================
-# ✅ GLOBAL EXCEPTION HANDLERS
+# ERROR HANDLERS
 # ============================================================================
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle Pydantic validation errors with descriptive response."""
-    logger.warning(f"Validation error on {request.url}: {exc.errors()}")
     return JSONResponse(
         status_code=422,
-        content={
-            "detail": "Request validation failed",
-            "errors": [{"field": str(e["loc"]), "message": e["msg"]} for e in exc.errors()]
-        },
-        headers={"Access-Control-Allow-Origin": "*"}
+        content={"detail": exc.errors()},
     )
 
 @app.exception_handler(SQLAlchemyError)
-async def database_exception_handler(request: Request, exc: SQLAlchemyError):
-    """Handle database errors gracefully."""
+async def sqlalchemy_exception_handler(request: Request, exc: SQLAlchemyError):
     logger.error(f"Database error: {str(exc)}", exc_info=exc)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Database operation failed. Please try again."},
-        headers={"Access-Control-Allow-Origin": "*"}
+        content={"detail": "Database error occurred"},
     )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """Catch-all for unexpected exceptions."""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=exc)
     return JSONResponse(
         status_code=500,
-        content={"detail": "An unexpected error occurred. Please contact support."},
-        headers={"Access-Control-Allow-Origin": "*"}
+        content={"detail": "Internal server error"},
     )
 
 # ============================================================================
-# ✅ STARTUP/SHUTDOWN EVENTS
+# STARTUP & SHUTDOWN EVENTS
 # ============================================================================
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database and verify connectivity."""
+    """Initialize database and seed data on startup."""
     try:
         from app.database import init_db, engine
+        logger.info("🚀 Starting up Smart Boda MVP1 backend...")
         
-        logger.info("Initializing database...")
+        # Initialize database
+        init_db(engine)
+        logger.info("✓ Database initialized")
         
-        db_url = os.getenv("DATABASE_URL", "")
-        if "sqlite:///:memory:" not in db_url and "sqlite" not in db_url:
-            init_db()
-            
-            with engine.connect() as conn:
-                result = conn.execute(text("SELECT 1"))
-                logger.info(f"Database connectivity check returned: {result.scalar()}")
-            
-            logger.info("✓ Database initialized and verified")
-            
-            # Seed master data on startup
-            logger.info("Seeding master data...")
-            try:
-                from app.seed import (
-                    seed_languages, seed_trip_master_data, seed_fuel_master_data,
-                    seed_financial_master_data, seed_compliance_master_data,
-                    seed_value_preview_config, seed_ui_strings
-                )
-                
-                seeds = [
-                    ("languages", seed_languages),
-                    ("trip master data", seed_trip_master_data),
-                    ("fuel master data", seed_fuel_master_data),
-                    ("financial master data", seed_financial_master_data),
-                    ("compliance master data", seed_compliance_master_data),
-                    ("value preview config", seed_value_preview_config),
-                    ("UI strings", seed_ui_strings),
-                ]
-                
-                for i, (name, seed_module) in enumerate(seeds, 1):
-                    try:
-                        logger.info(f"[{i}/7] Seeding {name}...")
-                        seed_module.run()
-                    except IntegrityError:
-                        logger.info(f"[{i}/7] {name} already exists (skipping)")
-                    except Exception as e:
-                        logger.warning(f"[{i}/7] {name} seeding issue: {str(e)}")
-                
-                logger.info("✓ Master data seeding completed")
-            except Exception as seed_error:
-                logger.warning(f"Seed operation note: {str(seed_error)}")
-        else:
-            logger.info("✓ Skipping database initialization (test mode with SQLite in-memory)")
+        # Seed master data
+        from app.seed.seed_master_data import seed_all
+        seed_all()
+        logger.info("✓ Master data seeding completed")
+        
     except Exception as e:
-        logger.error(f"✗ Database initialization failed: {str(e)}", exc_info=e)
-        if "sqlite" not in os.getenv("DATABASE_URL", "").lower():
-            raise
+        logger.error(f"❌ Startup error: {str(e)}", exc_info=e)
+        raise
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Cleanup resources on shutdown."""
+    """Cleanup on shutdown."""
     try:
         from app.database import engine
+        logger.info("Shutting down...")
+        
+        # Close database connections
         engine.dispose()
         logger.info("✓ Database connection pool closed")
+        
     except Exception as e:
-        logger.error(f"Error during shutdown: {str(e)}")
+        logger.error(f"Shutdown error: {str(e)}", exc_info=e)
 
 # ============================================================================
-# ✅ ROUTE REGISTRATIONS
+# ✅ ROUTER REGISTRATION (Module A - Onboarding & Auth)
 # ============================================================================
 
-# ---- Admin auth ----
+# ---- Admin Auth Router ----
 from app.routers import admin_auth
 app.include_router(admin_auth.router, prefix="/admin/auth", tags=["admin-auth"])
 
 # ---- Module A routers ----
-from app.routers import master_data_admin, language, bike_profile, mobile_number, pin
+from app.routers import master_data_admin, location_master_data_admin, language, bike_profile, mobile_number, pin
 app.include_router(master_data_admin.router)
+app.include_router(location_master_data_admin.router)
 app.include_router(language.router)
 app.include_router(bike_profile.router)
 app.include_router(mobile_number.router)
 app.include_router(pin.router)
 
-# ---- Module B routers ----
-from app.routers import sb05_trip_entry, sb05_lipa_later, sb07_trip_correction, trip_master_data_admin
+# ---- Trip Routers (Module B - Trip Management) ----
+from app.routers import trip_master_data_admin, sb05_trip_entry, sb05_lipa_later, sb07_trip_correction
 app.include_router(trip_master_data_admin.router)
 app.include_router(sb05_trip_entry.router)
 app.include_router(sb05_lipa_later.router)
 app.include_router(sb07_trip_correction.router)
 
-# ---- Financial History & Statements ----
+# ---- Financial History Routers (Module C - Financial Tracking) ----
 app.include_router(sb08_financial_history.router_api)
 app.include_router(sb08_financial_history.router_compliance)
-app.include_router(sb19_financial_history.router)
+app.include_router(sb19_financial_history.router)  # ✅ NEW: Fixed financial history router
 
-# ---- Secure Smart Boda Link ----
-app.include_router(one_time_link.router)
-
-# ---- Module C/D/E routers ----
+# ---- Core Entry Routers (Modules D-H) ----
 from app.routers import (
-    sb09_fuel_entry, sb10_battery_entry, sb12_maintenance,
-    sb13_net_profit, sb14_financial_performance, sb15_revenue_targets, sb16_savings_tracker, sb17_goals_remittance,
-    sb18_compliance, sb20_statements, sb21_data_export,
-    sb22_settings, sb23_suggestions, sb24_subscription,
-    financial_expense, sync_status,
+    sb09_fuel_entry,
+    sb10_battery_entry,
+    sb12_maintenance,
+    financial_expense,
+    sb13_net_profit,
 )
 app.include_router(sb09_fuel_entry.router)
 app.include_router(sb10_battery_entry.router)
 app.include_router(sb12_maintenance.router)
 app.include_router(financial_expense.router)
 app.include_router(sb13_net_profit.router)
-app.include_router(sb14_financial_performance.router)
-app.include_router(sb15_revenue_targets.router)
-app.include_router(sb16_savings_tracker.router)
-app.include_router(sb17_goals_remittance.router)
-app.include_router(sb18_compliance.router)
-app.include_router(sb20_statements.router)
-app.include_router(sb21_data_export.router)
-app.include_router(sb22_settings.router)
-app.include_router(sb23_suggestions.router)
-app.include_router(sb24_subscription.router)
-app.include_router(sync_status.router)
 
-# ---- Admin master-data routers ----
+# ---- Admin Routers (Admin Console) ----
 from app.routers import compliance_master_data_admin, financial_master_data_admin, fuel_master_data_admin
 app.include_router(compliance_master_data_admin.router)
 app.include_router(financial_master_data_admin.router)
 app.include_router(fuel_master_data_admin.router)
 
-# ---- Admin Dashboard & Payments ----
-from app.routers import admin_dashboard, payment_admin
+# ---- Admin Dashboard ----
+from app.routers import admin_dashboard
 app.include_router(admin_dashboard.router)
+
+# ---- Payment Admin ----
+from app.routers import payment_admin
 app.include_router(payment_admin.router)
 
-# ============================================================================
-# ✅ PAYMENT SYNC ROUTER - CRITICAL
-# ============================================================================
-# THIS IS THE KEY REGISTRATION FOR PAYMENTS
-# If this is missing or incorrect, payments won't be saved
+# ---- Subscriptions Payment Router Registration ----
+from app.routers import subscriptions_payment
+app.include_router(subscriptions_payment.router)
 
-logger.info("📥 [STARTUP] Registering payment sync router...")
-try:
-    from app.routers import subscriptions_payment
-    app.include_router(subscriptions_payment.router)
-    logger.info("✅ [STARTUP] Payment sync router registered successfully")
-except ImportError as e:
-    logger.error(f"❌ [STARTUP] Failed to import subscriptions_payment: {e}")
-    logger.error("   Make sure subscriptions_payment.py exists in app/routers/")
-except Exception as e:
-    logger.error(f"❌ [STARTUP] Failed to register payment router: {e}")
-
-# ---- Trip support & corrections ----
+# ---- Correction window related ----
 from app.routers import trip_support
 app.include_router(trip_support.router)
+
+
+# ============================================================================
+# ✅ LOCATION DATA ENDPOINTS (Direct - No Router Needed)
+# ============================================================================
+# These endpoints are defined directly to ensure they work regardless of router registration issues
+
+@app.get("/location-data/counties")
+async def get_counties_direct(
+    search: str = Query(None, description="Search by county name"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db)
+):
+    """Fetch all active counties - PUBLIC ENDPOINT."""
+    try:
+        from app.models.location_models import County
+        query = db.query(County).filter(County.is_active == True)
+        
+        if search:
+            search_term = f"%{search.lower()}%"
+            query = query.filter(
+                or_(
+                    County.county_name.ilike(search_term),
+                    County.county_code.ilike(search_term)
+                )
+            )
+        
+        counties = query.order_by(County.county_name).offset(skip).limit(limit).all()
+        logger.info(f"✅ Fetched {len(counties)} counties")
+        
+        return {
+            "status": "success",
+            "data": [
+                {"id": c.id, "name": c.county_name, "code": c.county_code}
+                for c in counties
+            ],
+            "count": len(counties)
+        }
+    except Exception as e:
+        logger.error(f"❌ Error fetching counties: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/location-data/sub-counties")
+async def get_sub_counties_direct(
+    county_id: int = Query(..., description="County ID"),
+    search: str = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db)
+):
+    """Fetch sub-counties for a county - PUBLIC ENDPOINT."""
+    try:
+        from app.models.location_models import SubCounty
+        query = db.query(SubCounty).filter(
+            and_(SubCounty.county_id == county_id, SubCounty.is_active == True)
+        )
+        
+        if search:
+            search_term = f"%{search.lower()}%"
+            query = query.filter(
+                or_(
+                    SubCounty.sub_county_name.ilike(search_term),
+                    SubCounty.sub_county_code.ilike(search_term)
+                )
+            )
+        
+        sub_counties = query.order_by(SubCounty.sub_county_name).offset(skip).limit(limit).all()
+        logger.info(f"✅ Fetched {len(sub_counties)} sub-counties for county {county_id}")
+        
+        return {
+            "status": "success",
+            "data": [
+                {"id": sc.id, "name": sc.sub_county_name, "code": sc.sub_county_code, "county_id": sc.county_id}
+                for sc in sub_counties
+            ],
+            "count": len(sub_counties)
+        }
+    except Exception as e:
+        logger.error(f"❌ Error fetching sub-counties: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/location-data/wards")
+async def get_wards_direct(
+    sub_county_id: int = Query(None),
+    county_id: int = Query(None),
+    search: str = Query(None),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db)
+):
+    """Fetch wards with optional filtering - PUBLIC ENDPOINT."""
+    try:
+        from app.models.location_models import Ward
+        query = db.query(Ward).filter(Ward.is_active == True)
+        
+        if sub_county_id:
+            query = query.filter(Ward.sub_county_id == sub_county_id)
+        elif county_id:
+            query = query.filter(Ward.county_id == county_id)
+        else:
+            raise HTTPException(status_code=400, detail="sub_county_id or county_id required")
+        
+        if search:
+            search_term = f"%{search.lower()}%"
+            query = query.filter(
+                or_(
+                    Ward.ward_name.ilike(search_term),
+                    Ward.ward_code.ilike(search_term)
+                )
+            )
+        
+        wards = query.order_by(Ward.ward_name).offset(skip).limit(limit).all()
+        logger.info(f"✅ Fetched {len(wards)} wards")
+        
+        return {
+            "status": "success",
+            "data": [
+                {"id": w.id, "name": w.ward_name, "code": w.ward_code, "sub_county_id": w.sub_county_id, "county_id": w.county_id}
+                for w in wards
+            ],
+            "count": len(wards)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error fetching wards: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============================================================================
 # ✅ HEALTH & STATUS ENDPOINTS
@@ -284,38 +327,32 @@ def read_root():
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint - used by load balancers and monitoring."""
+    """Health check endpoint for load balancers."""
     return {
         "status": "healthy",
-        "service": "smartboda-backend"
+        "service": "smart-boda-api",
     }
 
 @app.get("/status")
-def status_endpoint():
-    """Detailed status information."""
-    return {
-        "status": "running",
-        "service": "Smart Boda MVP1 API",
-        "version": "1.0.0",
-        "modules": {
-            "admin": "✓",
-            "onboarding": "✓",
-            "trips": "✓",
-            "fuel": "✓",
-            "maintenance": "✓",
-            "financial": "✓",
-            "financial_history": "✓ (sb08 + sb19)",
-            "compliance": "✓",
-            "admin_dashboard": "✓",
-            "payment_admin": "✓",
-            "payment_sync": "✓",
-            "sync_status": "✓"
+async def status_check(db: Session = Depends(get_db)):
+    """Detailed status check including database connectivity."""
+    try:
+        # Test database connection
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "ok",
+            "service": "smart-boda-api",
+            "database": "connected",
+            "timestamp": os.getenv("DEPLOYMENT_TIME", "unknown")
         }
-    }
-
-# ============================================================================
-# ✅ OPTIONS HANDLER FOR PREFLIGHT REQUESTS
-# ============================================================================
+    except Exception as e:
+        logger.error(f"Status check failed: {str(e)}")
+        return {
+            "status": "degraded",
+            "service": "smart-boda-api",
+            "database": "disconnected",
+            "error": str(e)
+        }
 
 @app.options("/{full_path:path}")
 async def options_handler(full_path: str):
@@ -325,30 +362,7 @@ async def options_handler(full_path: str):
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, X-Sync-ID, X-Client-Timestamp",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
             "Access-Control-Max-Age": "600",
         }
     )
-
-# ============================================================================
-# NOTES
-# ============================================================================
-"""
-CRITICAL FIX FOR PAYMENT SYNC:
-
-1. The subscriptions_payment router MUST be imported and registered
-   using app.include_router(subscriptions_payment.router)
-
-2. Make sure subscriptions_payment.py exists at:
-   backend/app/routers/subscriptions_payment.py
-
-3. The router prefix is "/subscriptions" so endpoints are:
-   POST /subscriptions/payment
-   GET /subscriptions/payments
-   GET /subscriptions/payments/stats
-   GET /subscriptions/payment/diagnostics
-   GET /subscriptions/payment/verify/{sync_id}
-
-4. Verify the Payment model is imported in the router
-5. Ensure database session is properly configured with proper commit/rollback
-"""
