@@ -355,8 +355,10 @@ export async function processPendingSync() {
     
     let synced = 0;
     let failed = 0;
+    let skipped = 0; // ✅ NEW: Track skipped items (dependencies not met)
     const successfulItems = []; // ✅ NEW: Track successful syncs
     const failedItems = []; // ✅ NEW: Track failed syncs with reasons
+    const skippedItems = []; // ✅ NEW: Track skipped items waiting for dependencies
 
     // ✅ CRITICAL: Get current rider ID for bike_profile syncs
     let currentRiderId = null;
@@ -369,6 +371,22 @@ export async function processPendingSync() {
 
     // Process each pending item
     for (const item of pending) {
+      // ✅ CRITICAL: DEPENDENCY CHECK - Skip bike_profile if rider_id doesn't exist yet
+      // This prevents marking bike_profile as failed when rider_id hasn't been created
+      // Bike profile MUST be synced AFTER rider profile/ID creation in onboarding flow
+      if (item.type === 'bike_profile' && !currentRiderId) {
+        console.log(`⏳ [DEPENDENCY] Skipping ${item.type} (${item.id}): Waiting for rider_id to be created...`);
+        console.log(`   This will sync automatically once the rider profile is confirmed`);
+        skipped++;
+        skippedItems.push({
+          id: item.id,
+          type: item.type,
+          reason: 'rider_id_not_created_yet',
+          skippedAt: getEastAfricanTimeISO(),
+          note: 'Will sync automatically after rider profile creation'
+        });
+        continue; // ✅ CRITICAL: Skip to next item WITHOUT marking as failed
+      }
       // ✅ CRITICAL FIX #3 (ERROR #2 FIX): Declare syncEndpoint OUTSIDE try-catch
       // This ensures it's accessible in both try block (for assignment) and catch block (for logging)
       // BEFORE FIX: let syncEndpoint = item.endpoint; (inside try block - not accessible in catch)
@@ -382,8 +400,11 @@ export async function processPendingSync() {
         
         // ✅ CRITICAL FIX #1: Bike profile submissions use POST /onboarding/bike-profile?rider_id={riderId}
         if (item.type === 'bike_profile') {
+          // ✅ CRITICAL: Dependency already checked above (continue statement)
+          // At this point, currentRiderId is guaranteed to exist for bike_profile items
           if (!currentRiderId) {
-            throw new Error('Cannot sync bike_profile: rider_id not found in local context');
+            // This should never happen due to dependency check above, but add as safety fallback
+            throw new Error('Cannot sync bike_profile: rider_id not found in local context (this should be prevented by dependency check)');
           }
           // Endpoint is already '/onboarding/bike-profile' from enqueue(), just add rider_id
           syncEndpoint = `${item.endpoint}?rider_id=${currentRiderId}`;
@@ -563,15 +584,17 @@ export async function processPendingSync() {
     const remainingPending = await getPendingItems();
     const pendingCount = remainingPending ? remainingPending.length : 0;
 
-    // ✅ NEW: Create comprehensive sync report
+    // ✅ NEW: Create comprehensive sync report with skipped items info
     const report = createSyncReport({
       totalAttempted: synced + failed,
       successCount: synced,
       failureCount: failed,
       pendingCount: pendingCount,
+      skippedCount: skipped, // ✅ NEW: Include skipped items count
       status: failed === 0 ? 'completed' : (synced > 0 ? 'partial' : 'failed'),
       successfulItems: successfulItems,
-      failedItems: failedItems
+      failedItems: failedItems,
+      skippedItems: skippedItems // ✅ NEW: Include skipped items details
     });
 
     // ✅ NEW: Save report for later retrieval
@@ -580,8 +603,10 @@ export async function processPendingSync() {
     console.log('✅ Sync process completed:', {
       successful: synced,
       failed: failed,
+      skipped: skipped, // ✅ NEW: Log skipped count
       pending: pendingCount,
-      status: report.status
+      status: report.status,
+      details: skipped > 0 ? `${skipped} items waiting for dependencies (bike_profile waiting for rider_id)` : 'No dependencies pending'
     });
 
     return report;
