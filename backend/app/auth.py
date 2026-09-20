@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, Request, Header, status
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.admin_user import AdminUser
@@ -20,15 +20,9 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # one admin shift
 COOKIE_NAME = "sb_admin_session"
 
-# Initialize CryptContext with bcrypt
-# Note: We specify bcrypt__rounds=12 to avoid passlib's internal bug detection
-# which can fail if it tries to hash a password longer than 72 bytes.
-# By explicitly setting rounds, we prevent passlib from performing risky test hashes.
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__rounds=12  # Explicit rounds configuration
-)
+# Use bcrypt directly instead of passlib to avoid passlib's backend initialization issues
+# Passlib tries to detect wrap bugs by hashing test passwords, which fails if the password is > 72 bytes
+BCRYPT_ROUNDS = 12
 
 ROLE_HIERARCHY = {"support_admin": 1, "super_admin": 2}
 
@@ -82,7 +76,7 @@ def get_cookie_domain():
 
 def hash_password(plain: str) -> str:
     """
-    Hash a password using bcrypt.
+    Hash a password using bcrypt directly.
     Bcrypt has a 72-byte limit. This function automatically truncates.
     
     Args:
@@ -106,16 +100,17 @@ def hash_password(plain: str) -> str:
         plain_truncated = plain[:72]
     
     try:
-        hashed = pwd_context.hash(plain_truncated)
+        # Use bcrypt directly to avoid passlib's backend initialization issues
+        hashed = bcrypt.hashpw(plain_truncated.encode('utf-8'), bcrypt.gensalt(rounds=BCRYPT_ROUNDS))
         logger.debug(f"Password hashed successfully")
-        return hashed
+        return hashed.decode('utf-8')
     except Exception as e:
         logger.error(f"Password hashing failed: {str(e)}")
         raise ValueError(f"Failed to hash password: {str(e)}")
 
 def verify_password(plain: str, hashed: str) -> bool:
     """
-    Verify a plain password against a bcrypt hash.
+    Verify a plain password against a bcrypt hash using bcrypt directly.
     
     ✅ Bcrypt has a 72-byte limit. This function automatically truncates
     the input password before verification.
@@ -144,8 +139,8 @@ def verify_password(plain: str, hashed: str) -> bool:
         plain_truncated = plain[:72]
     
     try:
-        # pwd_context.verify() handles constant-time comparison
-        is_valid = pwd_context.verify(plain_truncated, hashed)
+        # Use bcrypt directly for constant-time comparison
+        is_valid = bcrypt.checkpw(plain_truncated.encode('utf-8'), hashed.encode('utf-8'))
         logger.debug(f"Password verification: {'✓ valid' if is_valid else '✗ invalid'}")
         return is_valid
     except Exception as e:
