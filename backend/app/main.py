@@ -82,22 +82,41 @@ async def general_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database and seed data on startup."""
+    """
+    Initialize database and seed data on startup.
+    
+    CORRECTED: This function now:
+    1. Initializes database tables (critical - must succeed)
+    2. Attempts to seed master data (non-critical - continues even if it fails)
+    3. Handles seeding errors gracefully without crashing the application
+    
+    The key fix: Seeding errors are now caught and logged as warnings rather than 
+    crashing the app with sys.exit(1). This allows deployments to succeed even if 
+    duplicate data already exists (common on redeployment).
+    """
     try:
         from app.database import init_db
         logger.info("🚀 Starting up Smart Boda MVP1 backend...")
         
-        # Initialize database
+        # Initialize database - CRITICAL (must succeed)
         init_db()
         logger.info("✓ Database initialized")
         
-        # Seed master data
-        from app.seed.seed_all_data import run_all_seeds
-        run_all_seeds()
-        logger.info("✓ Master data seeding completed")
+        # Seed master data - NON-CRITICAL (will not crash app if it fails)
+        # This is idempotent and safe to run multiple times
+        try:
+            from app.seed.seed_all_data import run_all_seeds
+            seeding_success = run_all_seeds()
+            if seeding_success:
+                logger.info("✓ Master data seeding completed")
+            else:
+                logger.warning("⚠ Master data seeding completed with warnings (see logs above)")
+        except Exception as seeding_error:
+            logger.warning(f"⚠ Seeding encountered an error but continuing startup: {str(seeding_error)}")
+            logger.debug("Full seeding error:", exc_info=True)
         
     except Exception as e:
-        logger.error(f"❌ Startup error: {str(e)}", exc_info=e)
+        logger.error(f"❌ Critical startup error: {str(e)}", exc_info=e)
         raise
 
 @app.on_event("shutdown")
