@@ -4,7 +4,7 @@
 # ✅ UPDATED: profile-confirm endpoint now captures and stores location data (County, Sub-County, Ward)
 # Provides clear error messages and guidance to customers
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from datetime import datetime, timezone
@@ -399,23 +399,39 @@ def confirm_mobile_number(
 # ENDPOINT: Confirm Profile (Profile Information Step)
 # ============================================================================
 
-@router.post("/profile-confirm/{rider_id}")
+@router.post("/profile-confirm")
 def confirm_profile(
-    rider_id: str,
-    payload: ProfileConfirmRequest,
+    rider_id: str = Query(..., description="The rider's UUID"),
+    payload: ProfileConfirmRequest = Body(...),
     db: Session = Depends(get_db)
 ):
     """
-    POST /onboarding/profile-confirm/UUID
+    POST /onboarding/profile-confirm?rider_id=UUID
+    
+    ✅ FIXED: Changed rider_id from path parameter to query parameter to match client implementation.
     
     Confirm rider profile with full name, consent, and location information.
     This endpoint captures location data (County, Sub-County, Ward) for the rider.
+    
+    Query Parameters:
+    - rider_id: The rider's UUID (required, passed as query parameter)
     
     Validation:
     - rider_id must exist
     - full_name: 2-80 characters (required)
     - consent_accepted: must be True (required)
     - county_id, sub_county_id, ward_id: must be > 0 (required)
+    
+    Request Body:
+    {
+        "device_id": "optional-device-id",
+        "full_name": "John Doe",
+        "consent_accepted": true,
+        "consent_content_version": "v1.0",
+        "county_id": 1,
+        "sub_county_id": 1,
+        "ward_id": 1
+    }
     
     Returns:
     {
