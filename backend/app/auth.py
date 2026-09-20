@@ -89,7 +89,15 @@ def hash_password(plain: str) -> str:
         raise ValueError("Password cannot be empty")
     
     # Truncate to 72 bytes (bcrypt limit)
-    plain_truncated = plain[:72]
+    # Note: We truncate by bytes, not characters, because bcrypt's limit is 72 bytes.
+    # Multi-byte UTF-8 characters could make a 72-character string exceed 72 bytes.
+    plain_bytes = plain.encode('utf-8')
+    if len(plain_bytes) > 72:
+        plain_bytes = plain_bytes[:72]
+        # Ensure we don't split a multi-byte character
+        plain_truncated = plain_bytes.decode('utf-8', errors='ignore')
+    else:
+        plain_truncated = plain
     
     try:
         hashed = pwd_context.hash(plain_truncated)
