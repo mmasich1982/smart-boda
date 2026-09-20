@@ -20,10 +20,26 @@ LANGUAGES = [
 
 def run():
     db = SessionLocal()
-    for lang in LANGUAGES:
-        db.merge(LanguageMaster(**lang))
-    db.commit()
-    db.close()
+    try:
+        for lang in LANGUAGES:
+            # Check if language already exists
+            existing_lang = db.query(LanguageMaster).filter(
+                LanguageMaster.code == lang["code"]
+            ).first()
+            
+            if existing_lang:
+                # Update existing record
+                existing_lang.display_name = lang["display_name"]
+                existing_lang.sort_order = lang["sort_order"]
+                existing_lang.is_active = lang["is_active"]
+            else:
+                # Create new record
+                new_lang = LanguageMaster(**lang)
+                db.add(new_lang)
+        
+        db.commit()
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     run()
