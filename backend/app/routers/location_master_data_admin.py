@@ -2,12 +2,12 @@
 # Location Master Data API Endpoints
 # Provides endpoints for fetching counties, sub-counties, and wards with filtering
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Header
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 from app.database import get_db
 from app.models.location_models import County, SubCounty, Ward
-from app.auth import verify_admin_token
+from app.auth import verify_token
 
 router = APIRouter(prefix="/master-data", tags=["location-master-data"])
 
@@ -303,7 +303,7 @@ async def get_ward_detail(
 # Admin-Only Management Endpoints (Optional - for future use)
 # =============================================================================
 
-@router.post("/counties", dependencies=[Depends(verify_admin_token)])
+@router.post("/counties", dependencies=[Depends(verify_token)])
 async def create_county(
     county_code: str,
     county_name: str,
@@ -333,7 +333,7 @@ async def create_county(
         raise HTTPException(status_code=500, detail=f"Error creating county: {str(e)}")
 
 
-@router.post("/sub-counties", dependencies=[Depends(verify_admin_token)])
+@router.post("/sub-counties", dependencies=[Depends(verify_token)])
 async def create_sub_county(
     sub_county_code: str,
     sub_county_name: str,
@@ -373,7 +373,7 @@ async def create_sub_county(
         raise HTTPException(status_code=500, detail=f"Error creating sub-county: {str(e)}")
 
 
-@router.post("/wards", dependencies=[Depends(verify_admin_token)])
+@router.post("/wards", dependencies=[Depends(verify_token)])
 async def create_ward(
     ward_code: str,
     ward_name: str,
