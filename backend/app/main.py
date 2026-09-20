@@ -92,8 +92,8 @@ async def startup_event():
         logger.info("✓ Database initialized")
         
         # Seed master data
-        from app.seed.seed_master_data import seed_all
-        seed_all()
+        from app.seed.seed_all_data import run_all_seeds
+        run_all_seeds()
         logger.info("✓ Master data seeding completed")
         
     except Exception as e:
