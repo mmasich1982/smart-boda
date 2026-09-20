@@ -1,4 +1,3 @@
-# backend/app/main.py
 from fastapi import FastAPI, Request, Query, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -85,11 +84,11 @@ async def general_exception_handler(request: Request, exc: Exception):
 async def startup_event():
     """Initialize database and seed data on startup."""
     try:
-        from app.database import init_db, engine
+        from app.database import init_db
         logger.info("🚀 Starting up Smart Boda MVP1 backend...")
         
         # Initialize database
-        init_db(engine)
+        init_db()
         logger.info("✓ Database initialized")
         
         # Seed master data
