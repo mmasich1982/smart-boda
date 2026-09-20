@@ -1,6 +1,7 @@
 # backend/app/seed/seed_trip_master_data.py
 from app.database import SessionLocal
 from app.models.trip_master_data import PaymentChannelMaster, CorrectionReasonMaster, TripEntryRuleConfig
+from sqlalchemy.exc import IntegrityError
 
 PAYMENT_CHANNELS = [
     {"code": "Cash", "display_name": "Cash", "emoji": "💵", "sort_order": 1},
@@ -30,13 +31,55 @@ RULE_CONFIG = [
     {"config_key": "oow_request_sla_hours", "config_value": 72, "description": "BR-SB07-007"},
 ]
 
+def seed_idempotent(db, model_class, data_list, unique_key):
+    """
+    Idempotent seeding function that checks if records exist before inserting.
+    
+    Args:
+        db: SQLAlchemy session
+        model_class: The ORM model class
+        data_list: List of dictionaries with record data
+        unique_key: The unique identifier field name (e.g., 'code')
+    """
+    for row in data_list:
+        # Check if record already exists using the unique key
+        existing = db.query(model_class).filter(
+            getattr(model_class, unique_key) == row[unique_key]
+        ).first()
+        
+        if existing:
+            # Record exists, update it if needed
+            for key, value in row.items():
+                setattr(existing, key, value)
+        else:
+            # Record doesn't exist, create new one
+            db.add(model_class(**row))
+    
+    db.commit()
+
 def run():
     db = SessionLocal()
-    for row in PAYMENT_CHANNELS: db.merge(PaymentChannelMaster(**row))
-    for row in CORRECTION_REASONS: db.merge(CorrectionReasonMaster(**row))
-    for row in RULE_CONFIG: db.merge(TripEntryRuleConfig(**row))
-    db.commit()
-    db.close()
+    try:
+        # Seed payment channels (use merge which handles updates)
+        for row in PAYMENT_CHANNELS: 
+            db.merge(PaymentChannelMaster(**row))
+        
+        # Seed correction reasons with idempotent logic
+        seed_idempotent(db, CorrectionReasonMaster, CORRECTION_REASONS, 'code')
+        
+        # Seed rule config with idempotent logic
+        seed_idempotent(db, TripEntryRuleConfig, RULE_CONFIG, 'config_key')
+        
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        print(f"Integrity error during seeding (likely duplicate data): {e}")
+        # Continue without failing - data may already be seeded
+    except Exception as e:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     run()
