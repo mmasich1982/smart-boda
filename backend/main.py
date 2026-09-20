@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, Query, Depends, HTTPException
+from fastapi import FastAPI, Request, Query, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -36,11 +36,9 @@ async def ensure_cors_headers(request: Request, call_next):
     """Ensure CORS headers are always present, even on errors."""
     try:
         response = await call_next(request)
-        # CORS middleware already added headers, just pass through
         return response
     except Exception as e:
         logger.error(f"Middleware error: {str(e)}", exc_info=e)
-        # Return error response with CORS headers
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error"},
@@ -86,16 +84,16 @@ async def general_exception_handler(request: Request, exc: Exception):
 async def startup_event():
     """Initialize database and seed data on startup."""
     try:
-        from app.database import init_db, engine
+        from app.database import init_db
         logger.info("🚀 Starting up Smart Boda MVP1 backend...")
         
         # Initialize database
-        init_db(engine)
+        init_db()
         logger.info("✓ Database initialized")
         
         # Seed master data
-        from app.seed.seed_master_data import seed_all
-        seed_all()
+        from app.seed.seed_all_data import run_all_seeds
+        run_all_seeds()
         logger.info("✓ Master data seeding completed")
         
     except Exception as e:
@@ -125,9 +123,8 @@ from app.routers import admin_auth
 app.include_router(admin_auth.router, prefix="/admin/auth", tags=["admin-auth"])
 
 # ---- Module A routers ----
-from app.routers import master_data_admin, location_master_data_admin, language, bike_profile, mobile_number, pin
+from app.routers import master_data_admin, language, bike_profile, mobile_number, pin
 app.include_router(master_data_admin.router)
-app.include_router(location_master_data_admin.router)
 app.include_router(language.router)
 app.include_router(bike_profile.router)
 app.include_router(mobile_number.router)
@@ -143,7 +140,7 @@ app.include_router(sb07_trip_correction.router)
 # ---- Financial History Routers (Module C - Financial Tracking) ----
 app.include_router(sb08_financial_history.router_api)
 app.include_router(sb08_financial_history.router_compliance)
-app.include_router(sb19_financial_history.router)  # ✅ NEW: Fixed financial history router
+app.include_router(sb19_financial_history.router)
 
 # ---- Core Entry Routers (Modules D-H) ----
 from app.routers import (
@@ -185,7 +182,6 @@ app.include_router(trip_support.router)
 # ============================================================================
 # ✅ LOCATION DATA ENDPOINTS (Direct - No Router Needed)
 # ============================================================================
-# These endpoints are defined directly to ensure they work regardless of router registration issues
 
 @app.get("/location-data/counties")
 async def get_counties_direct(
@@ -337,7 +333,6 @@ def health_check():
 async def status_check(db: Session = Depends(get_db)):
     """Detailed status check including database connectivity."""
     try:
-        # Test database connection
         db.execute(text("SELECT 1"))
         return {
             "status": "ok",
