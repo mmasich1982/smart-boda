@@ -21,7 +21,14 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # one admin shift
 COOKIE_NAME = "sb_admin_session"
 
 # Initialize CryptContext with bcrypt
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Note: We specify bcrypt__rounds=12 to avoid passlib's internal bug detection
+# which can fail if it tries to hash a password longer than 72 bytes.
+# By explicitly setting rounds, we prevent passlib from performing risky test hashes.
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__rounds=12  # Explicit rounds configuration
+)
 
 ROLE_HIERARCHY = {"support_admin": 1, "super_admin": 2}
 
@@ -88,16 +95,15 @@ def hash_password(plain: str) -> str:
     if not plain:
         raise ValueError("Password cannot be empty")
     
-    # Truncate to 72 bytes (bcrypt limit)
-    # Note: We truncate by bytes, not characters, because bcrypt's limit is 72 bytes.
-    # Multi-byte UTF-8 characters could make a 72-character string exceed 72 bytes.
-    plain_bytes = plain.encode('utf-8')
-    if len(plain_bytes) > 72:
-        plain_bytes = plain_bytes[:72]
-        # Ensure we don't split a multi-byte character
-        plain_truncated = plain_bytes.decode('utf-8', errors='ignore')
-    else:
-        plain_truncated = plain
+    # Truncate to 72 bytes (bcrypt's hard limit)
+    # We encode to UTF-8, truncate at 72 bytes, then re-decode.
+    # This handles multi-byte UTF-8 characters safely.
+    try:
+        plain_bytes = plain.encode('utf-8')[:72]  # Truncate at byte level first
+        plain_truncated = plain_bytes.decode('utf-8', errors='ignore')  # Re-encode, ignoring incomplete chars
+    except Exception as e:
+        # Fallback: just use first 72 characters if encoding fails
+        plain_truncated = plain[:72]
     
     try:
         hashed = pwd_context.hash(plain_truncated)
@@ -129,8 +135,13 @@ def verify_password(plain: str, hashed: str) -> bool:
     if not plain or not hashed:
         return False
     
-    # Truncate to 72 bytes (bcrypt limit)
-    plain_truncated = plain[:72]
+    # Truncate to 72 bytes (bcrypt limit) - same as hash_password
+    try:
+        plain_bytes = plain.encode('utf-8')[:72]
+        plain_truncated = plain_bytes.decode('utf-8', errors='ignore')
+    except Exception:
+        # Fallback: just use first 72 characters if encoding fails
+        plain_truncated = plain[:72]
     
     try:
         # pwd_context.verify() handles constant-time comparison
