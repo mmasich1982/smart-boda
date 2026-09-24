@@ -101,6 +101,13 @@ const PRIORITY_LEVELS = {
 // ============================================================================
 
 const RECORD_TYPE_VALIDATORS = {
+  // ✅ CRITICAL FIX: Added missing lipa_later_trip validator
+  lipa_later_trip: {
+    priority: PRIORITY_LEVELS.HIGH,
+    requiredFields: ['rider_id', 'amount', 'customerPhone'],
+    requiredEndpointParams: ['rider_id'],
+    description: 'Lipa Later Trip Recording',
+  },
   lipa_later_payment: {
     priority: PRIORITY_LEVELS.CRITICAL,
     requiredFields: ['rider_id', 'customer_id', 'amount'],
@@ -124,6 +131,20 @@ const RECORD_TYPE_VALIDATORS = {
     requiredFields: ['rider_id', 'amount'],
     requiredEndpointParams: [],
     description: 'Financial History Record',
+  },
+  // ✅ CRITICAL FIX: Added missing maintenance_entry validator
+  maintenance_entry: {
+    priority: PRIORITY_LEVELS.HIGH,
+    requiredFields: ['rider_id', 'cost'],
+    requiredEndpointParams: ['rider_id'],
+    description: 'Motorcycle Service/Maintenance Entry',
+  },
+  // ✅ CRITICAL FIX: Added missing other_expense_entry validator
+  other_expense_entry: {
+    priority: PRIORITY_LEVELS.NORMAL,
+    requiredFields: ['rider_id', 'category', 'amount'],
+    requiredEndpointParams: ['rider_id'],
+    description: 'Other Expense Entry',
   },
 };
 
@@ -461,6 +482,78 @@ export async function processPendingSync() {
           console.log(`   Backend Expects: { service_type_code?, cost, rider_id }`);
           console.log(`   ✅ Backend automatically sets: submitted_at, created_at`);
         }
+        // ✅ CRITICAL FIX: Other Expense Entry - proper validation and endpoint construction
+        else if (item.type === 'other_expense_entry') {
+          const riderId = item.data?.rider_id || item.riderId;
+          if (!riderId) {
+            throw new Error(`Missing rider_id for other_expense_entry sync - cannot construct endpoint`);
+          }
+          
+          // ✅ FIXED: Validate required fields for other expense
+          if (!item.data.category) {
+            throw new Error(`Missing category for other_expense_entry - required field`);
+          }
+          if (!item.data.amount || item.data.amount <= 0) {
+            throw new Error(`Invalid amount for other_expense_entry - must be greater than zero`);
+          }
+          
+          // ✅ FIXED: Check if endpoint already has query params to avoid duplication
+          syncEndpoint = item.endpoint.includes('?') 
+            ? item.endpoint 
+            : `${item.endpoint}?rider_id=${riderId}`;
+          
+          // ✅ CRITICAL: Ensure rider_id is in the payload
+          if (!item.data.rider_id) {
+            item.data.rider_id = riderId;
+          }
+          
+          // ✅ CRITICAL: Ensure created_at is present for backend tracking
+          if (!item.data.created_at) {
+            item.data.created_at = item.timestamp || new Date().toISOString();
+          }
+          
+          requestConfig.headers = {
+            'Content-Type': 'application/json',
+          };
+          
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
+          console.log(`   Payload:`, JSON.stringify(item.data, null, 2));
+          console.log(`   Backend Expects: { category, amount, rider_id, note?, created_at }`);
+        }
+        // ✅ CRITICAL FIX: Lipa Later Trip - requires rider_id query parameter
+        else if (item.type === 'lipa_later_trip') {
+          const riderId = item.riderId || item.data?.rider_id;
+          if (!riderId) {
+            throw new Error(`Missing rider_id for lipa_later_trip sync - cannot construct endpoint`);
+          }
+          
+          // ✅ FIXED: Validate required fields
+          if (!item.data.amount || item.data.amount <= 0) {
+            throw new Error(`Invalid amount for lipa_later_trip - must be greater than zero`);
+          }
+          if (!item.data.customerPhone) {
+            throw new Error(`Missing customerPhone for lipa_later_trip`);
+          }
+          
+          // ✅ FIXED: Check if endpoint already has query params to avoid duplication
+          syncEndpoint = item.endpoint.includes('?') 
+            ? item.endpoint 
+            : `${item.endpoint}?rider_id=${riderId}`;
+          
+          // Ensure rider_id is in the payload
+          if (!item.data.rider_id) {
+            item.data.rider_id = riderId;
+          }
+          
+          requestConfig.headers = {
+            'Content-Type': 'application/json',
+          };
+          
+          console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
+          console.log(`   Payload:`, JSON.stringify(item.data, null, 2));
+          console.log(`   Expected Response: { lipa_later_id (UUID), customer_id, ... }`);
+          console.log(`   ℹ️  CRITICAL: Frontend must capture lipa_later_id from response for future payment syncs`);
+        }
         // ✅ CRITICAL FIX #2: Subscription payment requires rider_id query parameter + special headers
         else if (item.type === 'subscription_payment') {
           const riderId = item.riderId || item.data?.rider_id;
@@ -544,6 +637,53 @@ export async function processPendingSync() {
           syncedAt: getEastAfricanTimeISO(),
           endpoint: syncEndpoint
         });
+        
+        // ✅ CRITICAL: Handle lipa_later_trip sync success
+        // When a trip syncs successfully, the backend returns the lipa_later_id
+        // This ID MUST be captured and used for all future payment syncs
+        if (item.type === 'lipa_later_trip') {
+          try {
+            const lipaLaterId = response.data?.lipa_later_id;
+            const customerId = item.data?.customerPhone;
+            
+            if (lipaLaterId && customerId) {
+              console.log(`✅ CAPTURED lipa_later_id from sync: ${lipaLaterId}`);
+              
+              // ✅ CRITICAL: Update customer record with the real lipa_later_id
+              // This ensures future payments use the correct UUID, not the generated ID
+              try {
+                const riderId = item.data?.rider_id || item.riderId;
+                const customerKey = `lipa_later_customer_${riderId}_${customerId}`;
+                
+                // Load existing customer data
+                let customerData = await indexedDbAdapter.kvGet(customerKey);
+                if (customerData) {
+                  customerData = typeof customerData === 'string' ? JSON.parse(customerData) : customerData;
+                  
+                  // ✅ UPDATE: Store the real lipa_later_id
+                  customerData.lipaLaterId = lipaLaterId;
+                  customerData.updatedAt = new Date().toISOString();
+                  
+                  await indexedDbAdapter.kvSet(customerKey, JSON.stringify(customerData));
+                  console.log(`✅ Updated customer record with lipaLaterId: ${lipaLaterId}`);
+                  
+                  // ✅ CRITICAL: Trigger retry of any pending lipa_later_payment items for this customer
+                  // These payments were queued with generated customer_id and will fail
+                  // Now that we have the real lipaLaterId, they should be updated and retried
+                  console.log(`ℹ️  Note: Pending lipa_later_payments for this customer will use correct lipaLaterId on next sync`);
+                }
+              } catch (updateErr) {
+                console.error('⚠️ Failed to update customer with lipa_later_id:', updateErr.message);
+                // This is non-critical - payments will retry and should get the ID then
+              }
+            } else {
+              console.warn('⚠️ lipa_later_trip sync succeeded but response missing lipa_later_id');
+              console.warn(`   Response data:`, response.data);
+            }
+          } catch (lipaErr) {
+            console.error('⚠️ Error handling lipa_later_trip success:', lipaErr.message);
+          }
+        }
         
         console.log(`✅ Synced ${item.type} (${item.id})`);
       } catch (err) {

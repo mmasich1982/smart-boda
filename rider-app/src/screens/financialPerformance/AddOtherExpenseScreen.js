@@ -277,17 +277,20 @@ export default function AddOtherExpenseScreen({ navigation }) {
       }
 
       // 4. Add to sync queue
+      // ✅ CRITICAL FIX: Use correct endpoint /financial/other-expense (not /financial/expense)
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'other_expense_entry',
-        endpoint: `/financial/other-expense?rider_id=${effectiveRiderId}`,
+        endpoint: `/financial/other-expense`,
         data: {
+          rider_id: effectiveRiderId,
           category,
           amount: amt,
           note: note || '',
           created_at: new Date().toISOString(),
         },
         timestamp: new Date(),
+        riderId: effectiveRiderId,
       });
 
       if (!queueSuccess) {
