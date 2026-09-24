@@ -201,13 +201,24 @@ export default function AddOtherExpenseScreen({ navigation }) {
           summary = typeof cached === 'string' ? JSON.parse(cached) : cached;
           if (!Array.isArray(summary.entries)) summary.entries = [];
           if (!summary.byCategory) summary.byCategory = {};
+          console.log(`📦 Loaded existing cache with ${summary.entries.length} entries`);
+        } else {
+          console.log('📦 No existing cache found - creating new');
         }
       } catch (err) {
         console.warn('⚠️ Error loading expense summary:', err);
       }
 
       // Add new expense
-      summary.entries.unshift(newExpense);
+      console.log(`➕ Adding expense to cache:`, {
+        id: newExpense.id,
+        category: newExpense.category,
+        amount: newExpense.amount,
+        ts: newExpense.ts,
+        timestamp: newExpense.timestamp,
+      });
+      
+      summary.entries.unshift(newExpense);  // Add to front (newest first)
       summary.total += newExpense.amount;
       summary.count += 1;
       
@@ -219,7 +230,12 @@ export default function AddOtherExpenseScreen({ navigation }) {
 
       // Save updated summary
       await indexedDbAdapter.kvSet(summaryKey, JSON.stringify(summary));
-      console.log('✅ Updated other_expenses_summary cache');
+      console.log('✅ Updated other_expenses_summary cache with:', {
+        total: summary.total,
+        count: summary.count,
+        entries: summary.entries.length,
+        byCategory: summary.byCategory,
+      });
     } catch (err) {
       console.error('❌ Error updating expenses cache:', err);
     }
@@ -297,8 +313,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
       }
 
       // 4. Add to sync queue
-      // ✅ CRITICAL FIX: Convert category display name to backend code
-      const categoryCode = getCategoryCode(category);
+      // ✅ CRITICAL FIX: Use categoryCode already converted above
       console.log(`📤 Converting category "${category}" to code "${categoryCode}"`);
       
       const queueSuccess = await addToSyncQueue({
