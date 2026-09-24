@@ -176,11 +176,14 @@ export default function LipaLaterDetailsScreen({ navigation, route }) {
       );
 
       // ✅ ADD TO SYNC QUEUE
+      // ✅ CRITICAL FIX: Include rider_id in both payload AND top-level for sync queue handler
       await addToSyncQueue({
         id: tripId,
         type: 'lipa_later_trip',
-        endpoint: `/lipa-later/record-trip?rider_id=${effectiveRiderId}`,
+        endpoint: `/lipa-later/record-trip`,  // ✅ FIXED: Clean endpoint (no hardcoded params)
+        riderId: effectiveRiderId,            // ✅ CRITICAL: Top-level rider_id for handler fallback
         data: {
+          rider_id: effectiveRiderId,         // ✅ CRITICAL: In payload for backend
           amount: parseFloat(formData.amount),
           paymentMethod: 'LipaLater',
           customerName: formData.customerName.trim(),

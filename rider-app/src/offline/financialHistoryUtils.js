@@ -200,16 +200,22 @@ export async function getFinancialSummaryForRange(riderId, rangeStart, rangeEnd)
       const otherCache = await indexedDbAdapter.kvGet(`other_expenses_summary_${riderId}`);
       if (otherCache) {
         const data = typeof otherCache === 'string' ? JSON.parse(otherCache) : otherCache;
-        if (data.entries && Array.isArray(data.entries)) {
-          data.entries.forEach(e => {
+        // ✅ CRITICAL FIX: Handle both summary format and direct entries format
+        const entries = data.entries || data.items || [];
+        if (Array.isArray(entries) && entries.length > 0) {
+          console.log(`📦 Found ${entries.length} other expense entries in cache`);
+          entries.forEach(e => {
             const ts = e.ts || e.timestamp || 0;
             if (ts >= startMs && ts <= endMs) {
               otherExpense += e.amount || 0;
+              console.log(`   ✓ Included: ${e.id || 'unknown'}, amount=${e.amount}, ts=${ts}`);
             }
           });
+        } else {
+          console.log(`⚠️ Other expenses cache empty or no entries array`);
         }
       }
-      console.log(`✅ Other expenses: KSh ${otherExpense}`);
+      console.log(`✅ Other expenses total: KSh ${otherExpense}`);
     } catch (err) {
       console.warn('⚠️ Error calculating other expenses:', err);
     }

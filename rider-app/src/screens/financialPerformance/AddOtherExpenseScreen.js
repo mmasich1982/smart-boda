@@ -22,6 +22,18 @@ import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus
 import { invalidateFinancialCaches } from '../../offline/financialPerformanceUtils';
 import api from '../../api/client';
 
+// ✅ CRITICAL FIX: Map frontend category display names to backend category codes
+// Backend expects: "loan_repayment", "sacco_dues", "personal_draw", "household", "other"
+// Frontend displays these user-friendly categories
+const CATEGORY_CODE_MAP = {
+  'Food & Refreshments': 'household',           // ✅ Maps to household
+  'Phone & Data': 'household',                   // ✅ Maps to household
+  'Transportation (non-bike)': 'household',     // ✅ Maps to household
+  'Health & Medical': 'household',               // ✅ Maps to household
+  'Family Support': 'personal_draw',             // ✅ Maps to personal_draw
+  'Other': 'other',                              // ✅ Direct match
+};
+
 export default function AddOtherExpenseScreen({ navigation }) {
   const { state } = useRider();
   const { t } = useTranslation();
@@ -38,6 +50,11 @@ export default function AddOtherExpenseScreen({ navigation }) {
   
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
+
+  // ✅ Helper function to convert display name to category code
+  const getCategoryCode = (displayName) => {
+    return CATEGORY_CODE_MAP[displayName] || 'other'; // ✅ Default to 'other' if not found
+  };
 
   // ✅ Load rider ID on mount
   useEffect(() => {
@@ -241,11 +258,14 @@ export default function AddOtherExpenseScreen({ navigation }) {
       const now = Date.now();
       const recordId = `other_expense_${effectiveRiderId}_${now}`;
       
+      // ✅ CRITICAL FIX: Convert category to code before storing
+      const categoryCode = getCategoryCode(category);
+      
       // ✅ Build expense record with timestamp for retention policy
       const entry = {
         id: recordId,
         rider_id: effectiveRiderId,
-        category,
+        category: categoryCode,  // ✅ Store the code, not display name
         amount: amt,
         note: note || '',
         ts: now,
@@ -256,7 +276,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
         syncStatus: 'pending',
       };
 
-      console.log('💾 Saving other expense:', { recordId, riderId: effectiveRiderId, category, amount: amt });
+      console.log('💾 Saving other expense:', { recordId, riderId: effectiveRiderId, category, categoryCode, amount: amt });
 
       // 1. Save locally first
       await indexedDbAdapter.kvSet(`other_expense_${recordId}`, JSON.stringify(entry));
@@ -277,14 +297,17 @@ export default function AddOtherExpenseScreen({ navigation }) {
       }
 
       // 4. Add to sync queue
-      // ✅ CRITICAL FIX: Use correct endpoint /financial/other-expense (not /financial/expense)
+      // ✅ CRITICAL FIX: Convert category display name to backend code
+      const categoryCode = getCategoryCode(category);
+      console.log(`📤 Converting category "${category}" to code "${categoryCode}"`);
+      
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'other_expense_entry',
         endpoint: `/financial/other-expense`,
         data: {
           rider_id: effectiveRiderId,
-          category,
+          category: categoryCode,  // ✅ CRITICAL: Send code, not display name
           amount: amt,
           note: note || '',
           created_at: new Date().toISOString(),
@@ -304,7 +327,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
           const response = await api.post(
             `/financial/other-expense?rider_id=${effectiveRiderId}`,
             {
-              category,
+              category: categoryCode,  // ✅ CRITICAL: Send code, not display name
               amount: amt,
               note: note || '',
               created_at: new Date().toISOString(),

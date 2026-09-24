@@ -201,13 +201,26 @@ async function calculateExpensesForPeriod(riderId, period) {
       const otherCache = await indexedDbAdapter.kvGet(`other_expenses_summary_${riderId}`);
       if (otherCache) {
         const data = typeof otherCache === 'string' ? JSON.parse(otherCache) : otherCache;
-        if (data.entries && Array.isArray(data.entries)) {
-          data.entries.forEach(e => {
+        // ✅ CRITICAL FIX: Handle both summary format and direct entries format
+        const entries = data.entries || data.items || [];
+        if (Array.isArray(entries) && entries.length > 0) {
+          console.log(`📦 Found ${entries.length} other expense entries in cache`);
+          entries.forEach(e => {
             const ts = e.ts || e.timestamp || 0;
+            console.log(`   Entry: ${e.id || 'unknown'}, ts=${ts}, startMs=${startMs}, endMs=${endMs}, inRange=${ts >= startMs && ts <= endMs}`);
             if (ts >= startMs && ts <= endMs) {
               other += e.amount || 0;
             }
           });
+        } else {
+          // ✅ NEW: If entries array is empty, maybe total is already calculated
+          if (data.total && data.count > 0) {
+            // Check if the summary itself is within range
+            // For summary, we need to check if entries were added during period
+            // If we have a total and entries, use the calculation above
+            // Otherwise use the total if no timestamp info
+            console.log(`⚠️ Cache has total (${data.total}) but no entries array - using calculated value`);
+          }
         }
       }
     } catch (err) {
@@ -318,6 +331,9 @@ export default function MoneyMasteryScreen({ navigation }) {
   useFocusEffect(
     useCallback(() => {
       if (riderId) {
+        console.log('🔄 MoneyMasteryScreen focused - reloading data...');
+        // ✅ CRITICAL: Reset loading to force fresh data
+        setLoading(true);
         loadPeriodData(riderId, period);
       }
     }, [riderId, period, loadPeriodData])

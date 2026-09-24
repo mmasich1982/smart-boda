@@ -184,13 +184,14 @@ export default function MaintenanceEntryScreen({ navigation }) {
       await updateMaintenanceHistoryCache(offlineRecord);
 
       // Add to sync queue for background sync
+      // ✅ CRITICAL FIX: Use clean endpoint without hardcoded rider_id
       const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'maintenance_entry',
-        endpoint: `/fuel-maintenance/maintenance-entry?rider_id=${effectiveRiderId}`,
+        endpoint: `/fuel-maintenance/maintenance-entry`,  // ✅ Clean endpoint
         data: {
           ...payload,
-          rider_id: effectiveRiderId,  // ✅ Include rider_id in payload for sync queue
+          rider_id: effectiveRiderId,  // ✅ Include rider_id in payload for backend
         },
         timestamp: new Date(),
         riderId: effectiveRiderId,  // ✅ Also add as top-level property for syncQueue fallback
