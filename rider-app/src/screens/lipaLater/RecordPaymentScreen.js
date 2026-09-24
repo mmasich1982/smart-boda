@@ -354,9 +354,36 @@ export default function RecordPaymentScreen({ route, navigation }) {
       } else {
         console.warn('⚠️ lipaLaterId not available, using generated customerId');
         console.warn('⚠️ Payment sync may fail if Lipa Later Record not synced yet');
+        
+        // ✅ NEW: Try to load from IndexedDB using the offline store as fallback
+        try {
+          const riderId = effectiveRiderId;
+          const customerPhone = customerData?.customerPhone;
+          if (customerPhone) {
+            const customerKey = `lipa_later_customer_${riderId}_${customerPhone}`;
+            const storedCustomerData = await indexedDbAdapter.kvGet(customerKey);
+            
+            if (storedCustomerData) {
+              const parsed = typeof storedCustomerData === 'string' ? JSON.parse(storedCustomerData) : storedCustomerData;
+              if (parsed.lipaLaterId) {
+                syncCustomerId = parsed.lipaLaterId;
+                console.log('✅ Loaded lipaLaterId from IndexedDB:', syncCustomerId);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('⚠️ Could not load lipaLaterId from IndexedDB:', err.message);
+          // Continue with generated customerId if IndexedDB lookup fails
+        }
       }
 
-      const queueSuccess = await addToSyncQueue({
+      // ✅ NEW: Warn user if lipaLaterId still not found
+      if (syncCustomerId === customerId && customerId.startsWith('cust_')) {
+        console.warn('⚠️ CRITICAL: Payment using generated customer ID, not real lipa_later_id');
+        console.warn('   This will likely fail on the backend!');
+        console.warn('   Reason: Lipa Later trip record never synced to server');
+        console.warn('   Solution: Ensure the trip was recorded and synced online before recording payment');
+      }
         id: recordId,
         type: 'lipa_later_payment',
         endpoint: `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${syncCustomerId}`,

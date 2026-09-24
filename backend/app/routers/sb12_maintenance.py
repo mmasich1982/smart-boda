@@ -5,6 +5,7 @@
 # ✅ NEW: 6-month data retention policy for IndexedDB
 # ✅ NEW: Automatic data deletion after 6-month cycle completion
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta
@@ -13,6 +14,9 @@ from app.database import get_db
 from app.models.maintenance_entry import MaintenanceEntry
 from app.models.rider import Rider
 from app.schemas.fuel_maintenance import MaintenanceEntryRequest
+
+# ✅ CRITICAL FIX: Initialize logger
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/fuel-maintenance", tags=["sb-12"])
 
