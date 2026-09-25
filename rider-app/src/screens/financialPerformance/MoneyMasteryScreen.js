@@ -118,6 +118,7 @@ async function calculateTripIncomeForPeriod(riderId, period) {
 /**
  * ✅ Calculate expense totals for period from IndexedDB caches
  * Properly filters all expense types within the period boundaries
+ * ✅ FIXED: Now returns other expenses broken down by category
  */
 async function calculateExpensesForPeriod(riderId, period) {
   try {
@@ -125,7 +126,8 @@ async function calculateExpensesForPeriod(riderId, period) {
     const startMs = start.getTime();
     const endMs = end.getTime();
 
-    let fuel = 0, battery = 0, maintenance = 0, other = 0;
+    let fuel = 0, battery = 0, maintenance = 0;
+    let otherByCategory = {};  // ✅ FIXED: Track other expenses by category
 
     // Fuel expenses
     try {
@@ -196,7 +198,7 @@ async function calculateExpensesForPeriod(riderId, period) {
       console.warn('⚠️ Error calculating maintenance:', err);
     }
 
-    // Other expenses
+    // ✅ FIXED: Other expenses - track by category
     try {
       const otherCache = await indexedDbAdapter.kvGet(`other_expenses_summary_${riderId}`);
       if (otherCache) {
@@ -209,29 +211,27 @@ async function calculateExpensesForPeriod(riderId, period) {
             const ts = e.ts || e.timestamp || 0;
             console.log(`   Entry: ${e.id || 'unknown'}, ts=${ts}, startMs=${startMs}, endMs=${endMs}, inRange=${ts >= startMs && ts <= endMs}`);
             if (ts >= startMs && ts <= endMs) {
-              other += e.amount || 0;
+              const category = e.category || 'Other';
+              if (!otherByCategory[category]) {
+                otherByCategory[category] = 0;
+              }
+              otherByCategory[category] += e.amount || 0;
             }
           });
         } else {
-          // ✅ NEW: If entries array is empty, maybe total is already calculated
-          if (data.total && data.count > 0) {
-            // Check if the summary itself is within range
-            // For summary, we need to check if entries were added during period
-            // If we have a total and entries, use the calculation above
-            // Otherwise use the total if no timestamp info
-            console.log(`⚠️ Cache has total (${data.total}) but no entries array - using calculated value`);
-          }
+          console.log(`⚠️ Cache has no entries array`);
         }
       }
     } catch (err) {
       console.warn('⚠️ Error calculating other expenses:', err);
     }
 
-    console.log(`✅ Expenses for ${period}: Fuel=${fuel}, Battery=${battery}, Maintenance=${maintenance}, Other=${other}`);
-    return { fuel, battery, maintenance, other };
+    const otherTotal = Object.values(otherByCategory).reduce((sum, val) => sum + val, 0);
+    console.log(`✅ Expenses for ${period}: Fuel=${fuel}, Battery=${battery}, Maintenance=${maintenance}, Other=${otherTotal}`, otherByCategory);
+    return { fuel, battery, maintenance, other: otherTotal, otherByCategory };
   } catch (err) {
     console.error('❌ Error calculating expenses:', err);
-    return { fuel: 0, battery: 0, maintenance: 0, other: 0 };
+    return { fuel: 0, battery: 0, maintenance: 0, other: 0, otherByCategory: {} };
   }
 }
 
@@ -246,6 +246,33 @@ async function calculateNetProfitForPeriod(riderId, period) {
     const totalExpense = expenses.fuel + expenses.battery + expenses.maintenance + expenses.other;
     const netProfit = income - totalExpense;
 
+    // ✅ FIXED: Build breakdown with individual Other Expense categories
+    const breakdown = [];
+    
+    if (expenses.fuel > 0) {
+      breakdown.push({ category: 'Fuel', amount: expenses.fuel });
+    }
+    
+    if (expenses.battery > 0) {
+      breakdown.push({ category: 'Battery', amount: expenses.battery });
+    }
+    
+    if (expenses.maintenance > 0) {
+      breakdown.push({ category: 'Maintenance', amount: expenses.maintenance });
+    }
+    
+    // ✅ FIXED: Add individual other expense categories
+    if (expenses.otherByCategory && Object.keys(expenses.otherByCategory).length > 0) {
+      for (const [category, amount] of Object.entries(expenses.otherByCategory)) {
+        if (amount > 0) {
+          breakdown.push({ category, amount });
+        }
+      }
+    }
+    
+    // Sort by amount descending
+    breakdown.sort((a, b) => b.amount - a.amount);
+
     return {
       income,
       fuel_expense: expenses.fuel,
@@ -254,12 +281,7 @@ async function calculateNetProfitForPeriod(riderId, period) {
       other_expense: expenses.other,
       total_expense: totalExpense,
       net_profit: netProfit,
-      breakdown: [
-        { category: 'Fuel', amount: expenses.fuel },
-        { category: 'Battery', amount: expenses.battery },
-        { category: 'Maintenance', amount: expenses.maintenance },
-        { category: 'Other', amount: expenses.other },
-      ].filter(b => b.amount > 0),
+      breakdown,
       week_avg_daily_profit: period === 'this_week' ? Math.round(netProfit / 7) : netProfit,
     };
   } catch (err) {

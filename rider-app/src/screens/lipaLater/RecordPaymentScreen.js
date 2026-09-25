@@ -384,6 +384,9 @@ export default function RecordPaymentScreen({ route, navigation }) {
         console.warn('   Reason: Lipa Later trip record never synced to server');
         console.warn('   Solution: Ensure the trip was recorded and synced online before recording payment');
       }
+
+      // ✅ ADD TO SYNC QUEUE
+      const queueSuccess = await addToSyncQueue({
         id: recordId,
         type: 'lipa_later_payment',
         endpoint: `/lipa-later/record-payment?rider_id=${effectiveRiderId}&customer_id=${syncCustomerId}`,

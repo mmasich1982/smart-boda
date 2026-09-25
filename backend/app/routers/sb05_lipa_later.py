@@ -516,6 +516,8 @@ def record_payment(
         "notes": "Payment received"
     }
     """
+    from uuid import UUID as UUIDType
+    
     logger.info(f"[LIPA_LATER] RECORD_PAYMENT_QUERY - Rider: {rider_id}, Customer: {customer_id}")
     
     try:
@@ -530,6 +532,23 @@ def record_payment(
         
         logger.info(f"[LIPA_LATER] Cleaned parameters - Rider: {clean_rider_id}, Customer: {clean_customer_id}")
         logger.info(f"[LIPA_LATER] Payment amount: {payload.amount} KSh")
+        
+        # ✅ CRITICAL FIX: Validate UUIDs before querying to prevent psycopg2.errors.InvalidTextRepresentation
+        # The error occurs when PostgreSQL receives a non-UUID value for a UUID column
+        # Example: "cust_0766554433_1790251268661" is NOT a valid UUID!
+        try:
+            UUIDType(clean_customer_id)
+        except (ValueError, AttributeError):
+            logger.error(f"[LIPA_LATER] ❌ Invalid UUID format for customer_id: {clean_customer_id}")
+            logger.error(f"[LIPA_LATER] Frontend sent a generated customer ID instead of the lipa_later_id UUID")
+            logger.error(f"[LIPA_LATER] This typically happens when:")
+            logger.error(f"  - Frontend didn't sync the /record-trip response containing lipa_later_id")
+            logger.error(f"  - Frontend generated a custom ID and sent that instead of the UUID")
+            raise HTTPException(400, 
+                f"❌ Invalid customer_id format: '{clean_customer_id}'. " +
+                f"Must be a valid UUID from /record-trip lipa_later_id. " +
+                f"Received: generated ID '{clean_customer_id}'. " +
+                f"Solution: Ensure /record-trip response syncs properly and use the returned lipa_later_id.")
         
         # ✅ FIXED: Find the Lipa Later record by its UUID (lipa_later_id), not customer_mobile
         # PROBLEM: customer_id from frontend is a generated ID (e.g., "cust_0766554433_1788557784739")

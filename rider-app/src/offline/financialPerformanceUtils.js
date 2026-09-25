@@ -770,11 +770,46 @@ export async function syncFinancialDataFromApi(riderId, dataType, entries) {
       cacheKey = `maintenance_history_${riderId}`;
       saveFunc = saveMaintenanceEntryToDb;
     } else if (dataType === 'other') {
-      // Other expenses don't have a history cache, just summary
+      // ✅ FIXED: Other expenses - save individual entries AND update summary cache
+      const summaryKey = `other_expenses_summary_${riderId}`;
+      
+      // Load existing summary or create new one
+      let summary = { entries: [], total: 0, count: 0, byCategory: {} };
+      try {
+        const existingSummary = await indexedDbAdapter.kvGet(summaryKey);
+        if (existingSummary) {
+          summary = typeof existingSummary === 'string' ? JSON.parse(existingSummary) : existingSummary;
+          if (!summary.entries) summary.entries = [];
+          if (!summary.byCategory) summary.byCategory = {};
+        }
+      } catch (err) {
+        console.warn('⚠️ Could not load existing summary, starting fresh');
+      }
+      
+      // Add synced entries to summary
       for (const entry of sorted) {
         await saveOtherExpenseToDb(entry.id, entry);
+        
+        // Add to summary if not already there
+        const entryExists = summary.entries.some(e => e.id === entry.id);
+        if (!entryExists) {
+          summary.entries.push(entry);
+          summary.total += entry.amount || 0;
+          summary.count += 1;
+          
+          // Update category breakdown
+          const category = entry.category || 'Other';
+          if (!summary.byCategory[category]) {
+            summary.byCategory[category] = 0;
+          }
+          summary.byCategory[category] += entry.amount || 0;
+        }
       }
+      
+      // ✅ CRITICAL: Save updated summary back to cache
+      await indexedDbAdapter.kvSet(summaryKey, JSON.stringify(summary));
       console.log('✅ Synced', sorted.length, dataType, 'entries from API');
+      console.log('   Updated summary:', { total: summary.total, count: summary.count, byCategory: summary.byCategory });
       return true;
     }
 
