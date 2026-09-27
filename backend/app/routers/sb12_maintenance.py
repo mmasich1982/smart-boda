@@ -20,7 +20,6 @@ from typing import Optional
 from app.database import get_db
 from app.models.maintenance_entry import MaintenanceEntry
 from app.models.rider import Rider
-from app.schemas.fuel_maintenance import MaintenanceEntryRequest
 
 # ✅ CRITICAL FIX: Initialize logger
 logger = logging.getLogger(__name__)
@@ -112,7 +111,7 @@ def is_within_retention_window(entry_date: datetime, rider_onboarding_date: date
 
 @router.post("/maintenance-entry")
 def save_maintenance_entry(
-    payload: MaintenanceEntryRequest,
+    payload: MaintenanceEntryCreate,
     rider_id: str = Query(..., description="UUID of the rider"),
     db: Session = Depends(get_db)
 ):
