@@ -1,3 +1,4 @@
+// rider-app/src/offline/financialHistoryRepository.js
 /**
  * Financial History Repository - COMPLETE INDEXEDDB MIGRATION
  * 
@@ -800,6 +801,64 @@ export async function getFinancialStoreStats() {
   }
 }
 
+
+/**
+ * ========== OTHER EXPENSE OPERATIONS (✅ FIXED) ==========
+ */
+
+/**
+ * Save other expense to IndexedDB
+ * ✅ FIXED: New method to handle other expenses
+ */
+export async function saveOtherExpense(expense) {
+  try {
+    if (!expense.rider_id || !expense.category || !expense.amount) {
+      throw new Error('Other expense must have rider_id, category, and amount');
+    }
+
+    const ts = expense.ts || expense.timestamp || expense.expense_date || Date.now();
+    expense.ts = expense.ts || ts;
+    expense.timestamp = expense.timestamp || ts;
+    expense.id = expense.id || `other_expense_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    expense.expense_date = expense.expense_date || new Date(ts).toISOString();
+    expense.status = expense.status || 'confirmed';
+
+    // Store in financial history with type 'other_expense'
+    await indexedDbAdapter.insertRow(FINANCIAL_STORE, {
+      ...expense,
+      type: 'other_expense',
+      category: expense.category
+    });
+    
+    console.log(`✅ saveOtherExpense: Saved other expense ${expense.id} (${expense.category})`);
+    return expense.id;
+  } catch (err) {
+    console.error('[saveOtherExpense] error:', err);
+    throw err;
+  }
+}
+
+/**
+ * Get other expenses for a rider within date range
+ * ✅ FIXED: New method to retrieve other expenses
+ */
+export async function getOtherExpenses(riderId, startTime, endTime) {
+  try {
+    const result = await getTransactionsByDateRange(riderId, startTime, endTime);
+    const allTransactions = result.transactions || [];
+    
+    // Filter for other_expense type
+    const otherExpenses = allTransactions.filter(t => t.type === 'other_expense');
+
+    console.log(`✅ getOtherExpenses: Retrieved ${otherExpenses.length} other expenses for rider ${riderId}`);
+    return { expenses: otherExpenses, count: otherExpenses.length };
+  } catch (err) {
+    console.error('[getOtherExpenses] error:', err);
+    return { expenses: [], count: 0 };
+  }
+}
+
+
 export default {
   // Retention management
   isWithinRetentionWindow,
@@ -812,6 +871,10 @@ export default {
   getFinancialTransaction,
   updateFinancialTransaction,
   deleteFinancialTransaction,
+  
+  // ✅ FIXED: Other expense operations
+  saveOtherExpense,
+  getOtherExpenses,
   
   // Compatibility functions (for screens)
   getFinancialSummary,

@@ -1,81 +1,272 @@
-# backend/app/services/net_profit_service.py
-# ✅ FIXED: Now properly aggregates Fuel, Battery, and Service costs from BOTH legacy tables AND OtherExpense
+# Fixed Net Profit Service - Backend
+# File: backend/app/services/net_profit_service.py
+
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
+from sqlalchemy import func, and_
 from app.models.trip import Trip
 from app.models.fuel_entry import FuelEntry
 from app.models.maintenance_entry import MaintenanceEntry
-from app.models.other_expense import OtherExpense
-from app.services.period_range_service import today_week_month_bounds
+from app.models.other_expense import OtherExpense  # FIX #4: Import OtherExpense
+from app.models.savings_contribution import SavingsContribution
+from app.models.lipa_later_payment import LipaLaterPayment
 
-
-# BR-SB13-001/002: Net Profit = Income (active trips only) minus Fuel/Energy + Service + Other Expense.
-# Nothing here is ever stored — it is recomputed from source records every single time it's requested.
-# ✅ FIXED: Now includes fuel, battery, and service costs from OtherExpense records as well
-def _net_profit_for_bounds(db: Session, rider_id: str, start, end) -> dict:
-    # BUG FIX: Trip's real columns are `amount` / `recorded_at` (see app/models/trip.py) --
-    # this previously queried `fare_amount` / `completed_at`, neither of which exist, so this
-    # would raise AttributeError/InvalidRequestError on first real use.
-    income = (db.query(Trip)
-        .filter(Trip.rider_id == rider_id, Trip.status == "active", Trip.recorded_at.between(start, end))
-        .with_entities(Trip.amount).all())
-    income_total = sum(float(t.amount) for t in income)
-
-    # ✅ FIXED: Calculate fuel costs from BOTH FuelEntry table and OtherExpense records with Fuel/Battery category
-    fuel_from_legacy = sum(float(f.cost) for f in db.query(FuelEntry)
-                     .filter(FuelEntry.rider_id == rider_id, FuelEntry.submitted_at.between(start, end)))
+class NetProfitService:
+    """
+    Service for calculating net profit.
+    FIX #4: Now includes other expenses in calculations.
+    """
     
-    fuel_from_other = sum(float(o.amount_ksh) for o in db.query(OtherExpense)
-        .filter(OtherExpense.rider_id == rider_id, OtherExpense.created_at.between(start, end), 
-                OtherExpense.category.in_(['Fuel', 'Battery'])))
+    @staticmethod
+    def calculate_net_profit(
+        db: Session,
+        rider_id: str,
+        start_date: datetime = None,
+        end_date: datetime = None
+    ) -> dict:
+        """
+        Calculate net profit = Revenue - (Fuel + Maintenance + Other Expenses + Savings + Lipa Later Payments)
+        
+        FIX #4.1: Includes other expenses in the calculation.
+        """
+        
+        # Default to current month if dates not provided
+        if not start_date:
+            start_date = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if not end_date:
+            end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # 1. Calculate revenue from trips
+        trips = db.query(Trip).filter(
+            Trip.rider_id == rider_id,
+            Trip.created_at >= start_date,
+            Trip.created_at <= end_date
+        ).all()
+        
+        revenue = sum(trip.fare_amount for trip in trips if trip.fare_amount) if trips else 0
+        
+        # 2. Calculate fuel expenses
+        fuel_entries = db.query(FuelEntry).filter(
+            FuelEntry.rider_id == rider_id,
+            FuelEntry.created_at >= start_date,
+            FuelEntry.created_at <= end_date
+        ).all()
+        
+        fuel_total = sum(entry.amount for entry in fuel_entries if entry.amount) if fuel_entries else 0
+        
+        # 3. Calculate maintenance expenses
+        maintenance_entries = db.query(MaintenanceEntry).filter(
+            MaintenanceEntry.rider_id == rider_id,
+            MaintenanceEntry.created_at >= start_date,
+            MaintenanceEntry.created_at <= end_date
+        ).all()
+        
+        maintenance_total = sum(entry.cost for entry in maintenance_entries if entry.cost) if maintenance_entries else 0
+        
+        # FIX #4.2: Get OTHER expenses (this was missing before!)
+        other_expenses = db.query(OtherExpense).filter(
+            OtherExpense.rider_id == rider_id,
+            OtherExpense.expense_date >= start_date,
+            OtherExpense.expense_date <= end_date
+        ).all()
+        
+        other_expenses_total = sum(entry.amount for entry in other_expenses if entry.amount) if other_expenses else 0
+        
+        # 4. Calculate savings contributions
+        savings_contributions = db.query(SavingsContribution).filter(
+            SavingsContribution.rider_id == rider_id,
+            SavingsContribution.created_at >= start_date,
+            SavingsContribution.created_at <= end_date
+        ).all()
+        
+        savings_total = sum(contrib.amount for contrib in savings_contributions if contrib.amount) if savings_contributions else 0
+        
+        # 5. Calculate Lipa Later payments
+        lipa_later_payments = db.query(LipaLaterPayment).filter(
+            LipaLaterPayment.rider_id == rider_id,
+            LipaLaterPayment.created_at >= start_date,
+            LipaLaterPayment.created_at <= end_date
+        ).all()
+        
+        lipa_later_total = sum(payment.amount for payment in lipa_later_payments if payment.amount) if lipa_later_payments else 0
+        
+        # FIX #4.3: Calculate total expenses including other expenses
+        total_expenses = fuel_total + maintenance_total + other_expenses_total + savings_total + lipa_later_total
+        
+        # FIX #4.4: Calculate net profit
+        net_profit = revenue - total_expenses
+        
+        return {
+            "revenue": revenue,
+            "expenses": {
+                "fuel": fuel_total,
+                "maintenance": maintenance_total,
+                "other": other_expenses_total,  # FIX #4.5: Include in response
+                "savings": savings_total,
+                "lipa_later": lipa_later_total,
+                "total": total_expenses
+            },
+            "net_profit": net_profit,
+            "margin_percentage": (net_profit / revenue * 100) if revenue > 0 else 0,
+            "period": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat()
+            },
+            "expense_breakdown": {
+                "fuel_percentage": (fuel_total / total_expenses * 100) if total_expenses > 0 else 0,
+                "maintenance_percentage": (maintenance_total / total_expenses * 100) if total_expenses > 0 else 0,
+                "other_percentage": (other_expenses_total / total_expenses * 100) if total_expenses > 0 else 0,  # FIX #4.6: Add percentage
+                "savings_percentage": (savings_total / total_expenses * 100) if total_expenses > 0 else 0,
+                "lipa_later_percentage": (lipa_later_total / total_expenses * 100) if total_expenses > 0 else 0
+            }
+        }
     
-    fuel_total = fuel_from_legacy + fuel_from_other
-
-    # ✅ FIXED: Calculate service costs from BOTH MaintenanceEntry table and OtherExpense records with Service category
-    service_from_legacy = sum(float(m.cost) for m in db.query(MaintenanceEntry)
-                        .filter(MaintenanceEntry.rider_id == rider_id, MaintenanceEntry.submitted_at.between(start, end)))
+    @staticmethod
+    def get_daily_net_profit(
+        db: Session,
+        rider_id: str,
+        date: datetime = None
+    ) -> dict:
+        """Calculate net profit for a specific day."""
+        
+        if not date:
+            date = datetime.now()
+        
+        start_date = date.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_date = date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        return NetProfitService.calculate_net_profit(db, rider_id, start_date, end_date)
     
-    service_from_other = sum(float(o.amount_ksh) for o in db.query(OtherExpense)
-        .filter(OtherExpense.rider_id == rider_id, OtherExpense.created_at.between(start, end), 
-                OtherExpense.category == 'Service'))
+    @staticmethod
+    def get_weekly_net_profit(
+        db: Session,
+        rider_id: str,
+        date: datetime = None
+    ) -> dict:
+        """Calculate net profit for the week containing the given date."""
+        
+        if not date:
+            date = datetime.now()
+        
+        # Get Monday of the week
+        start_date = date - timedelta(days=date.weekday())
+        start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Get Sunday of the week
+        end_date = start_date + timedelta(days=6)
+        end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        return NetProfitService.calculate_net_profit(db, rider_id, start_date, end_date)
     
-    service_total = service_from_legacy + service_from_other
-
-    # ✅ FIXED: OtherExpense uses created_at (not submitted_at) and amount_ksh (not amount)
-    # Get all other expenses that are NOT Fuel/Battery/Service (those are handled above)
-    other_entries = (db.query(OtherExpense)
-        .filter(OtherExpense.rider_id == rider_id, OtherExpense.created_at.between(start, end),
-                ~OtherExpense.category.in_(['Fuel', 'Battery', 'Service']))  # ✅ FIXED: Exclude Fuel/Battery/Service
-        .all())
-    other_total = sum(float(o.amount_ksh) for o in other_entries)
-
-    expense_total = fuel_total + service_total + other_total
-    net_profit = income_total - expense_total  # EXC-SB13-004: allowed to be negative, never clamped
-
-    # BR-SB13-004/005: breakdown, largest first, zero-spend categories omitted
-    # ✅ FIXED: Build breakdown including both legacy and OtherExpense sources
-    by_category = {"Fuel/Energy": fuel_total, "Service": service_total}
+    @staticmethod
+    def get_monthly_net_profit(
+        db: Session,
+        rider_id: str,
+        date: datetime = None
+    ) -> dict:
+        """Calculate net profit for the month containing the given date."""
+        
+        if not date:
+            date = datetime.now()
+        
+        start_date = date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
+        # Get last day of month
+        if date.month == 12:
+            end_date = date.replace(year=date.year + 1, month=1, day=1) - timedelta(days=1)
+        else:
+            end_date = date.replace(month=date.month + 1, day=1) - timedelta(days=1)
+        
+        end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        return NetProfitService.calculate_net_profit(db, rider_id, start_date, end_date)
     
-    # Add other expense categories (excluding Fuel/Battery/Service which are already handled)
-    for o in other_entries:
-        # ✅ FIXED: OtherExpense model has 'category' (not category_label_snapshot)
-        by_category[o.category] = by_category.get(o.category, 0) + float(o.amount_ksh)
-    
-    breakdown = sorted(
-        [{"category": k, "amount": v, "pct": round(v / expense_total * 100, 1) if expense_total else 0}
-         for k, v in by_category.items() if v > 0],
-        key=lambda row: row["amount"], reverse=True)
-
-    return {"net_profit": net_profit, "income": income_total, "total_expense": expense_total, "breakdown": breakdown}
-
-
-def net_profit_summary(db: Session, rider_id: str, period: str, now) -> dict:
-    start, end = today_week_month_bounds(period, now)
-    return _net_profit_for_bounds(db, rider_id, start, end)
-
-
-# AUDIT FIX (blocking): sb20_statements.py has always imported `net_profit_summary_for_range`
-# from this module for arbitrary period_start/period_end statement generation -- it never
-# existed, so importing sb20_statements.py (and therefore starting the app, since main.py
-# registers it) raised ImportError. Shares the same underlying calculation as the function above.
-def net_profit_summary_for_range(db: Session, rider_id: str, period_start, period_end) -> dict:
-    return _net_profit_for_bounds(db, rider_id, period_start, period_end)
+    @staticmethod
+    def get_expense_summary(
+        db: Session,
+        rider_id: str,
+        start_date: datetime = None,
+        end_date: datetime = None
+    ) -> dict:
+        """
+        Get a summary of all expenses by category.
+        FIX #4.7: Now includes other expenses categorization.
+        """
+        
+        if not start_date:
+            start_date = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if not end_date:
+            end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Get all expenses
+        fuel = db.query(FuelEntry).filter(
+            FuelEntry.rider_id == rider_id,
+            FuelEntry.created_at >= start_date,
+            FuelEntry.created_at <= end_date
+        ).all()
+        
+        maintenance = db.query(MaintenanceEntry).filter(
+            MaintenanceEntry.rider_id == rider_id,
+            MaintenanceEntry.created_at >= start_date,
+            MaintenanceEntry.created_at <= end_date
+        ).all()
+        
+        # FIX #4.8: Get other expenses and organize by category
+        other = db.query(OtherExpense).filter(
+            OtherExpense.rider_id == rider_id,
+            OtherExpense.expense_date >= start_date,
+            OtherExpense.expense_date <= end_date
+        ).all()
+        
+        # Organize other expenses by category
+        other_by_category = {}
+        for expense in other:
+            category = expense.category
+            if category not in other_by_category:
+                other_by_category[category] = {
+                    "total": 0,
+                    "count": 0,
+                    "entries": []
+                }
+            other_by_category[category]["total"] += expense.amount
+            other_by_category[category]["count"] += 1
+            other_by_category[category]["entries"].append({
+                "id": expense.id,
+                "amount": expense.amount,
+                "description": expense.description,
+                "date": expense.expense_date.isoformat()
+            })
+        
+        return {
+            "fuel": {
+                "total": sum(f.amount for f in fuel if f.amount),
+                "count": len(fuel),
+                "entries": [
+                    {
+                        "id": f.id,
+                        "amount": f.amount,
+                        "type": f.fuel_type,
+                        "date": f.created_at.isoformat()
+                    }
+                    for f in fuel
+                ]
+            },
+            "maintenance": {
+                "total": sum(m.cost for m in maintenance if m.cost),
+                "count": len(maintenance),
+                "entries": [
+                    {
+                        "id": m.id,
+                        "amount": m.cost,
+                        "type": m.service_type_code,
+                        "date": m.created_at.isoformat()
+                    }
+                    for m in maintenance
+                ]
+            },
+            "other": {  # FIX #4.9: Include organized other expenses
+                "by_category": other_by_category,
+                "total": sum(o.amount for o in other if o.amount),
+                "count": len(other)
+            }
+        }

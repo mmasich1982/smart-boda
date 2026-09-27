@@ -1,7 +1,7 @@
 /**
-rider-app/src/offline/syncOrchestrator.js
+ * rider-app/src/offline/syncOrchestrator.js
  * ============================================================================
- * SMART-BODA SYNC ORCHESTRATOR - PERIODIC SYNC CHECKER
+ * SMART-BODA SYNC ORCHESTRATOR - PERIODIC SYNC CHECKER + LIPA LATER SYNC
  * ============================================================================
  * 
  * 🎯 PURPOSE:
@@ -9,6 +9,7 @@ rider-app/src/offline/syncOrchestrator.js
  * Coordinates with existing SyncQueue to process pending items when:
  * - User comes online (network connectivity restored)
  * - Periodic interval expires (1 minute)
+ * ✅ FIXED: Now includes Lipa Later payment sync orchestration
  * 
  * ✅ KEY FEATURES:
  * - Non-blocking: Runs in background without interrupting user
@@ -18,6 +19,7 @@ rider-app/src/offline/syncOrchestrator.js
  * - Memory efficient: Tracks last sync time, not data copies
  * - Offline-first compatible: Works seamlessly with IndexedDB-first architecture
  * - East African Time: All timestamps use EAT for consistency
+ * ✅ Lipa Later sync: Ensures server IDs propagate correctly through payment workflow
  * 
  * 📋 CONFIGURATION:
  * By default, sync is checked every 1 minute.
@@ -32,6 +34,7 @@ rider-app/src/offline/syncOrchestrator.js
 import { processPendingSync, getLastSyncReport } from './syncQueue';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import NetInfo from '@react-native-community/netinfo';
+import { db } from './db';
 
 // Configuration constants
 let SYNC_CHECK_INTERVAL = 1 * 60 * 1000; // 1 minute in milliseconds (changed from 5 minutes)
@@ -354,6 +357,281 @@ export function shutdownSyncOrchestrator() {
   console.log('🛑 Sync orchestrator shutdown complete');
 }
 
+/**
+ * ========== LIPA LATER SYNC ORCHESTRATION (✅ FIXED) ==========
+ * FIX #9: Ensures Lipa Later payments are synced with real server IDs, not generated ones
+ */
+
+/**
+ * Record a Lipa Later trip locally
+ * ✅ FIXED: Generates temporary local ID for tracking
+ */
+export async function recordLipaLaterTrip(tripData) {
+  try {
+    // Generate a temporary local ID for tracking
+    const localId = `lipa_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Create the trip record with local ID
+    const lipaTrip = {
+      id: localId,
+      ...tripData,
+      sync_status: 'pending',
+      created_at: new Date().toISOString()
+    };
+    
+    // Store in local database
+    if (!db.getStore('lipa_later_trips')) {
+      await db.createStore('lipa_later_trips', { keyPath: 'id' }, [
+        { name: 'rider_id', unique: false },
+        { name: 'sync_status', unique: false }
+      ]);
+    }
+    
+    await db.add('lipa_later_trips', lipaTrip);
+    console.log(`📝 Created local Lipa Later trip: ${localId}`);
+    
+    // Add to sync queue
+    await syncQueue.addToQueue({
+      type: 'lipa_later_trip',
+      payload: lipaTrip
+    });
+    
+    return {
+      localId,
+      lipaTrip
+    };
+  } catch (error) {
+    console.error('❌ Error recording Lipa Later trip:', error);
+    throw error;
+  }
+}
+
+/**
+ * Record a Lipa Later payment locally
+ * ✅ FIXED: Stores the LOCAL lipa_later_id so we can update it later when trip syncs
+ */
+export async function recordLipaLaterPayment(paymentData, localLipaLaterId) {
+  try {
+    // FIX #9.2: Store the LOCAL lipa_later_id so we can update it later
+    const payment = {
+      id: `payment_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      ...paymentData,
+      local_lipa_later_id: localLipaLaterId, // Track which local trip this payment belongs to
+      lipa_later_id: null, // Will be filled when trip syncs
+      sync_status: 'pending',
+      awaiting_trip_sync: true,
+      created_at: new Date().toISOString()
+    };
+    
+    // Store in local database
+    if (!db.getStore('lipa_later_payments')) {
+      await db.createStore('lipa_later_payments', { keyPath: 'id' }, [
+        { name: 'rider_id', unique: false },
+        { name: 'local_lipa_later_id', unique: false }
+      ]);
+    }
+    
+    await db.add('lipa_later_payments', payment);
+    console.log(`⏳ Created Lipa Later payment (awaiting trip sync): ${payment.id}`);
+    console.log(`   Waiting for trip ${localLipaLaterId} to sync and return real lipa_later_id`);
+    
+    // Add to sync queue with special marker
+    await syncQueue.addToQueue({
+      type: 'lipa_later_payment',
+      payload: {
+        ...payment,
+        _awaiting_trip_sync: true,
+        _local_trip_id: localLipaLaterId
+      }
+    });
+    
+    return payment;
+  } catch (error) {
+    console.error('❌ Error recording Lipa Later payment:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update pending payments after a Lipa Later trip syncs successfully
+ * ✅ FIXED: This is the critical method that fixes Issue #1
+ * FIX #9.3: Propagates server-generated trip ID to all associated payments
+ */
+export async function updatePaymentsAfterTripSync(localTripId, serverTripId, syncResponse) {
+  try {
+    console.log(`🔄 Trip synced: local=${localTripId} → server=${serverTripId}`);
+    
+    // Get the real lipa_later_id from the sync response
+    const realLipaLaterId = syncResponse.lipa_later_id || serverTripId;
+    console.log(`✅ Server returned real lipa_later_id: ${realLipaLaterId}`);
+    
+    // Find all pending payments waiting for this trip
+    const pendingPayments = await db.getAllFromIndex(
+      'lipa_later_payments',
+      'local_lipa_later_id',
+      localTripId
+    );
+    
+    console.log(`📋 Found ${pendingPayments.length} pending payments for this trip`);
+    
+    // Update each payment with the real server ID
+    for (const payment of pendingPayments) {
+      if (payment.awaiting_trip_sync && !payment.lipa_later_id) {
+        try {
+          // FIX #9.4: Update the payment with the real server ID
+          const updatedPayment = {
+            ...payment,
+            lipa_later_id: realLipaLaterId, // NOW has the real ID
+            awaiting_trip_sync: false,
+            sync_status: 'pending' // Re-queue for sync
+          };
+          
+          await db.update('lipa_later_payments', updatedPayment);
+          console.log(`✅ Updated payment ${payment.id} with real lipa_later_id`);
+          
+          // Update the sync queue item if it exists
+          const queueItems = await db.getAll('sync_queue');
+          const paymentQueueItem = queueItems.find(
+            q => q.type === 'lipa_later_payment' && q.payload.id === payment.id
+          );
+          
+          if (paymentQueueItem) {
+            // FIX #9.5: Update the queued payload with the real ID
+            const updatedQueueItem = {
+              ...paymentQueueItem,
+              payload: updatedPayment,
+              status: 'pending' // Re-queue for sync
+            };
+            
+            await db.update('sync_queue', updatedQueueItem);
+            console.log(`✅ Updated sync queue item for payment ${payment.id}`);
+          }
+        } catch (error) {
+          console.error(`❌ Error updating payment ${payment.id}:`, error);
+          // Continue with other payments
+        }
+      }
+    }
+    
+    console.log(`✅ Completed updating payments for trip ${localTripId}`);
+    
+    return {
+      success: true,
+      updated: pendingPayments.length,
+      realLipaLaterId
+    };
+  } catch (error) {
+    console.error('❌ Error updating payments after trip sync:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Validate payment sync response and handle errors
+ * ✅ FIXED: If a payment sync fails due to invalid ID, provide recovery
+ * FIX #9.6: Recovers from stale generated IDs by finding synced trip
+ */
+export async function handlePaymentSyncError(payment, error, syncResponse) {
+  try {
+    console.error(`❌ Payment sync failed for ${payment.id}:`, error);
+    
+    // Check if error is due to missing lipa_later_id (the core Issue #1)
+    if (error.includes('Invalid lipa_later_id format') || 
+        error.includes('Lipa Later record not found')) {
+      
+      console.error(`⚠️ CRITICAL: Payment used generated customer_id instead of server lipa_later_id`);
+      console.error(`   This happens when payment is recorded BEFORE trip syncs`);
+      
+      // FIX #9.7: Try to recover by finding the synced trip
+      const tripId = payment.local_lipa_later_id;
+      const trip = await db.get('lipa_later_trips', tripId);
+      
+      if (trip && trip.sync_status === 'synced') {
+        // Trip has synced! Get its server ID and retry
+        console.log(`🔄 Found synced trip! Retrying payment with real ID...`);
+        
+        const updatedPayment = {
+          ...payment,
+          lipa_later_id: trip.server_id,
+          awaiting_trip_sync: false
+        };
+        
+        await db.update('lipa_later_payments', updatedPayment);
+        
+        return {
+          recovered: true,
+          message: 'Payment recovered - will retry with server lipa_later_id',
+          updatedPayment
+        };
+      } else {
+        // Trip hasn't synced yet
+        console.error(`❌ Associated trip ${tripId} hasn't synced yet`);
+        console.error(`   Solution: Ensure the Lipa Later trip syncs BEFORE payment`);
+        
+        return {
+          recovered: false,
+          message: 'Trip not yet synced - payment will retry when trip syncs',
+          needsRetry: true
+        };
+      }
+    }
+    
+    return {
+      recovered: false,
+      error: error.message
+    };
+  } catch (error) {
+    console.error('❌ Error handling payment sync error:', error);
+    return {
+      recovered: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Get comprehensive Lipa Later sync status
+ * ✅ FIXED: Provides visibility into what's pending and awaiting sync
+ */
+export async function getLipaLaterSyncStatus() {
+  try {
+    const trips = await db.getAll('lipa_later_trips') || [];
+    const payments = await db.getAll('lipa_later_payments') || [];
+    
+    const tripsStatus = {
+      total: trips.length,
+      pending: trips.filter(t => t.sync_status === 'pending').length,
+      synced: trips.filter(t => t.sync_status === 'synced').length,
+      failed: trips.filter(t => t.sync_status === 'failed').length
+    };
+    
+    const paymentsStatus = {
+      total: payments.length,
+      awaitingTripSync: payments.filter(p => p.awaiting_trip_sync).length,
+      pending: payments.filter(p => p.sync_status === 'pending' && !p.awaiting_trip_sync).length,
+      synced: payments.filter(p => p.sync_status === 'synced').length,
+      failed: payments.filter(p => p.sync_status === 'failed').length
+    };
+    
+    return {
+      trips: tripsStatus,
+      payments: paymentsStatus,
+      issues: {
+        paymentsAwaitingSync: paymentsStatus.awaitingTripSync,
+        message: paymentsStatus.awaitingTripSync > 0 
+          ? `⚠️ ${paymentsStatus.awaitingTripSync} payments waiting for trip sync`
+          : '✅ No Lipa Later sync issues'
+      }
+    };
+  } catch (error) {
+    console.error('❌ Error getting Lipa Later sync status:', error);
+    return null;
+  }
+}
+
 // ============================================================================
 // EXPORTS
 // ============================================================================
@@ -376,7 +654,14 @@ export default {
   performSyncCheck,
   forceSyncNow,
   
-  // ✅ NEW: Status and reporting
+  // ✅ Status and reporting
   getLastSyncStatus,
   getSyncStatus,
+  
+  // ✅ FIXED: Lipa Later sync operations
+  recordLipaLaterTrip,
+  recordLipaLaterPayment,
+  updatePaymentsAfterTripSync,
+  handlePaymentSyncError,
+  getLipaLaterSyncStatus,
 };

@@ -1,4 +1,5 @@
 // rider-app/src/screens/financialPerformance/AddOtherExpenseScreen.js
+// ============================================================================
 // ✅ REFACTORED: IndexedDB-first architecture (mirrors FuelEntryScreen)
 // ✅ SEAMLESS ONLINE/OFFLINE: Silent sync, clean UI, immediate feedback
 // ✅ UNIFIED ARCHITECTURE: Uses consistent other_expense_${entryId} pattern
@@ -9,6 +10,9 @@
 // ✅ FIXED: Infinite loop resolved with proper dependency management
 // ✅ FIXED: Navigation stack properly managed using pop() instead of navigate()
 // ✅ FIXED: Cache invalidation errors handled gracefully without blocking saves
+// ✅ FIXED: Category codes aligned to PostgreSQL schema with practical categories
+// ✅ FIXED: Enhanced error handling with fallback messages
+// ============================================================================
 
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, TextInput, Picker, ActivityIndicator } from 'react-native';
@@ -22,15 +26,34 @@ import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus
 import { invalidateFinancialCaches } from '../../offline/financialPerformanceUtils';
 import api from '../../api/client';
 
-// ✅ CRITICAL FIX: Map frontend category display names to backend category codes
-// Backend expects: "loan_repayment", "sacco_dues", "personal_draw", "household", "other"
-// Frontend displays these user-friendly categories
+/**
+ * ============================================================================
+ * CATEGORY CODE MAPPING - DATABASE ALIGNMENT
+ * ============================================================================
+ * 
+ * ✅ CRITICAL FIX: Maps frontend category display names to backend codes
+ * Backend expects these exact codes from PostgreSQL other_expenses table:
+ * - 'food': Food & Refreshments, snacks, beverages
+ * - 'phone': Phone credits, data bundles, airtime
+ * - 'transport': Matatu, taxi, other non-bike transport
+ * - 'health': Medical expenses, pharmacy, healthcare
+ * - 'family': Family support, remittances, dependents
+ * - 'other': Miscellaneous expenses
+ * 
+ * These codes are enforced by PostgreSQL CHECK constraint:
+ * CONSTRAINT check_other_expenses_category 
+ *   CHECK (category IN ('food','phone','transport','health','family','other'))
+ * 
+ * Frontend displays practical, user-friendly category names for better UX
+ * while backend stores the technical codes for consistency and validation.
+ * ============================================================================
+ */
 const CATEGORY_CODE_MAP = {
-  'Food & Refreshments': 'household',           // ✅ Maps to household
-  'Phone & Data': 'household',                   // ✅ Maps to household
-  'Transportation (non-bike)': 'household',     // ✅ Maps to household
-  'Health & Medical': 'household',               // ✅ Maps to household
-  'Family Support': 'personal_draw',             // ✅ Maps to personal_draw
+  'Food & Refreshments': 'food',                 // ✅ Maps to food code
+  'Phone & Data': 'phone',                       // ✅ Maps to phone code
+  'Transportation (non-bike)': 'transport',      // ✅ Maps to transport code
+  'Health & Medical': 'health',                  // ✅ Maps to health code
+  'Family Support': 'family',                    // ✅ Maps to family code
   'Other': 'other',                              // ✅ Direct match
 };
 
@@ -51,12 +74,19 @@ export default function AddOtherExpenseScreen({ navigation }) {
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
 
-  // ✅ Helper function to convert display name to category code
+  /**
+   * ✅ Helper function to convert display name to category code
+   * @param {string} displayName - The display name from the UI
+   * @returns {string} The backend category code
+   */
   const getCategoryCode = (displayName) => {
     return CATEGORY_CODE_MAP[displayName] || 'other'; // ✅ Default to 'other' if not found
   };
 
-  // ✅ Load rider ID on mount
+  /**
+   * ✅ Load rider ID on mount
+   * Retrieves the logged-in rider's ID from local storage
+   */
   useEffect(() => {
     async function loadRiderId() {
       try {
@@ -77,9 +107,16 @@ export default function AddOtherExpenseScreen({ navigation }) {
   // ✅ Use local storage as primary, fallback to context
   const effectiveRiderId = localRiderId || state?.riderId;
 
-  // ✅ Load categories on mount - Single execution
-  // ✅ CRITICAL: Only isInitialized in dependencies
-  // Removed isConnected and t which are recreated each render and cause infinite loops
+  /**
+   * ✅ Load categories on mount - Single execution
+   * CRITICAL: Only isInitialized in dependencies
+   * Removed isConnected and t which are recreated each render and cause infinite loops
+   * 
+   * Attempts to:
+   * 1. Load from IndexedDB cache first (offline support)
+   * 2. Fetch fresh from API if online
+   * 3. Fall back to hardcoded defaults if both fail
+   */
   useEffect(() => {
     if (!isInitialized || hasLoadedCategoriesRef.current) {
       return; // Exit if already loaded
@@ -188,6 +225,8 @@ export default function AddOtherExpenseScreen({ navigation }) {
   /**
    * ✅ Update other expenses summary cache
    * Called after saving new expense to keep MoneyMasteryScreen data fresh
+   * 
+   * Maintains a running total and category breakdown for quick dashboard access
    */
   const updateOtherExpensesCache = async (newExpense) => {
     try {
@@ -233,144 +272,156 @@ export default function AddOtherExpenseScreen({ navigation }) {
       console.log('✅ Updated other_expenses_summary cache with:', {
         total: summary.total,
         count: summary.count,
-        entries: summary.entries.length,
-        byCategory: summary.byCategory,
+        byCategory: summary.byCategory
       });
     } catch (err) {
-      console.error('❌ Error updating expenses cache:', err);
+      console.warn('⚠️ Error updating other_expenses_summary cache:', err);
+      // Don't throw - cache update failures shouldn't block the save
     }
   };
 
+  /**
+   * ✅ Main handler for saving other expense
+   * 
+   * Workflow:
+   * 1. Validate inputs (category, amount)
+   * 2. Create expense record with proper IDs and timestamps
+   * 3. Save to IndexedDB (offline storage)
+   * 4. Add to sync queue (for API upload)
+   * 5. Update financial caches (for immediate UI updates)
+   * 6. Navigate back on success or show error
+   */
   const handleSave = async () => {
-    clearCriticalError();
-
-    if (!effectiveRiderId) {
+    if (!effectiveRiderId || !category || !amount) {
       showCriticalError(
-        t('error_riderIdNotFound') || 'Rider ID not found. Please return to Home and try again.',
-        'auth'
-      );
-      return;
-    }
-
-    if (!category) {
-      showCriticalError(
-        t('error_selectCategory') || 'Select an Expense Category.',
-        'validation'
-      );
-      return;
-    }
-
-    const amt = parseFloat(amount || '0');
-    if (!amt || amt <= 0) {
-      showCriticalError(
-        t('error_enterValidAmount') || 'Please enter an amount greater than zero to save this expense.',
-        'validation'
+        t('error_validation') || 'Please fill in all required fields',
+        'validation_error'
       );
       return;
     }
 
     setSaving(true);
+
     try {
-      const now = Date.now();
-      const recordId = `other_expense_${effectiveRiderId}_${now}`;
-      
-      // ✅ CRITICAL FIX: Convert category to code before storing
-      const categoryCode = getCategoryCode(category);
-      
-      // ✅ Build expense record with timestamp for retention policy
-      const entry = {
-        id: recordId,
+      const entryId = `other_expense_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const now = new Date().toISOString();
+      const parsedAmount = parseFloat(amount);
+
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        showCriticalError(
+          t('error_invalidAmount') || 'Please enter a valid amount',
+          'amount_error'
+        );
+        setSaving(false);
+        return;
+      }
+
+      // ✅ Create the expense object with proper backend category code
+      const expense = {
+        id: entryId,
         rider_id: effectiveRiderId,
-        category: categoryCode,  // ✅ Store the code, not display name
-        amount: amt,
-        note: note || '',
-        ts: now,
-        timestamp: now,
-        created_at: new Date().toISOString(),
-        date: new Date().toISOString().split('T')[0],
-        status: 'active',
-        syncStatus: 'pending',
+        category: getCategoryCode(category),        // ✅ Use the backend code
+        amount: parsedAmount,
+        description: note || '',
+        expense_date: now,
+        sync_status: 'pending',
+        ts: Date.now(),
+        timestamp: Date.now(),
+        created_at: now,
+        updated_at: now,
       };
 
-      console.log('💾 Saving other expense:', { recordId, riderId: effectiveRiderId, category, categoryCode, amount: amt });
-
-      // 1. Save locally first
-      await indexedDbAdapter.kvSet(`other_expense_${recordId}`, JSON.stringify(entry));
-      
-      // 2. Update cache immediately for instant UI feedback
-      await updateOtherExpensesCache(entry);
-      
-      // 3. Invalidate financial performance caches
-      // ✅ FIXED: Wrapped in comprehensive try-catch to handle IndexedDB transaction errors gracefully
-      try {
-        await invalidateFinancialCaches(effectiveRiderId);
-        console.log('✅ Financial caches invalidated successfully');
-      } catch (cacheErr) {
-        // ✅ FIXED: Don't let cache errors block the save
-        // Logs warning but allows save to continue
-        console.warn('⚠️ Failed to clear cache key (transaction may not exist):', cacheErr.message);
-        // Cache will be refreshed on next screen focus
-      }
-
-      // 4. Add to sync queue
-      // ✅ CRITICAL FIX: Use categoryCode already converted above
-      console.log(`📤 Converting category "${category}" to code "${categoryCode}"`);
-      
-      const queueSuccess = await addToSyncQueue({
-        id: recordId,
-        type: 'other_expense_entry',
-        endpoint: `/financial/other-expense`,
-        data: {
-          rider_id: effectiveRiderId,
-          category: categoryCode,  // ✅ CRITICAL: Send code, not display name
-          amount: amt,
-          note: note || '',
-          created_at: new Date().toISOString(),
-        },
-        timestamp: new Date(),
-        riderId: effectiveRiderId,
+      console.log('💾 Saving other expense to IndexedDB:', {
+        id: expense.id,
+        rider_id: expense.rider_id,
+        category_display: category,
+        category_code: expense.category,
+        amount: expense.amount,
       });
 
-      if (!queueSuccess) {
-        console.warn('⚠️ Failed to add to queue, but local save succeeded');
-      }
-
-      // 5. Try to sync immediately only if online
-      if (isConnected && isInitialized) {
+      // ✅ Save to IndexedDB
+      try {
+        const cacheKey = `other_expenses_${effectiveRiderId}`;
+        
+        // Load existing entries
+        let entries = [];
         try {
-          console.log('📡 Attempting to sync to API...');
-          const response = await api.post(
-            `/financial/other-expense?rider_id=${effectiveRiderId}`,
-            {
-              category: categoryCode,  // ✅ CRITICAL: Send code, not display name
-              amount: amt,
-              note: note || '',
-              created_at: new Date().toISOString(),
-            }
-          );
-
-          if (response.status === 200 || response.status === 201) {
-            console.log('✅ Expense synced successfully to API');
+          const cached = await indexedDbAdapter.kvGet(cacheKey);
+          if (cached) {
+            entries = typeof cached === 'string' ? JSON.parse(cached) : cached;
+            if (!Array.isArray(entries)) entries = [];
           }
-        } catch (apiErr) {
-          console.warn('⚠️ API sync failed (will retry later):', {
-            status: apiErr.response?.status,
-            message: apiErr.message,
-          });
-          // Data is saved and queued, continue
+        } catch (err) {
+          console.warn('⚠️ Error loading existing expenses:', err);
         }
+
+        // Add new expense to the list
+        entries.unshift(expense);
+        
+        // Save back to cache
+        await indexedDbAdapter.kvSet(cacheKey, JSON.stringify(entries));
+        console.log('✅ Saved other expense to IndexedDB');
+      } catch (indexedDbErr) {
+        console.error('❌ IndexedDB save failed:', indexedDbErr);
+        throw new Error('Failed to save expense locally: ' + indexedDbErr.message);
       }
 
-      // ✅ FIXED: Use pop() instead of navigate() to return to previous screen
-      // This prevents navigation stack from growing
-      // User came from MoneyMastery, so pop() goes back to MoneyMastery
-      // Then pressing back on MoneyMastery goes directly to Home
-      navigation.pop();
+      // ✅ Add to sync queue for API upload
+      try {
+        await addToSyncQueue({
+          type: 'other_expense',
+          payload: expense,
+          status: 'pending',
+          timestamp: Date.now(),
+        });
+        console.log('✅ Added other expense to sync queue');
+      } catch (queueErr) {
+        console.error('❌ Sync queue error:', queueErr);
+        // Continue anyway - it's cached locally
+      }
+
+      // ✅ Update financial caches for immediate UI refresh
+      try {
+        await updateOtherExpensesCache(expense);
+        
+        // Invalidate related financial caches
+        const cacheKeysToInvalidate = [
+          `financial_summary_${effectiveRiderId}`,
+          `net_profit_${effectiveRiderId}`,
+          `expense_breakdown_${effectiveRiderId}`,
+          `financial_history_${effectiveRiderId}`,
+        ];
+
+        for (const key of cacheKeysToInvalidate) {
+          try {
+            await indexedDbAdapter.kvDelete(key);
+            console.log(`✅ Invalidated cache: ${key}`);
+          } catch (delErr) {
+            console.warn(`⚠️ Error invalidating ${key}:`, delErr);
+            // Don't throw - cache invalidation shouldn't block saves
+          }
+        }
+      } catch (cacheErr) {
+        console.warn('⚠️ Cache update error (non-critical):', cacheErr);
+        // Don't throw - cache errors shouldn't block the save
+      }
+
+      console.log('✅ Expense saved successfully!');
+      showCriticalError('Expense saved successfully!', 'success');
+      
+      // ✅ Navigate back after 500ms to let user see success message
+      setTimeout(() => {
+        if (navigation.canGoBack()) {
+          navigation.pop();
+        } else {
+          navigation.navigate('FinancialPerformance');
+        }
+      }, 500);
 
     } catch (err) {
       console.error('❌ Save error:', err);
       showCriticalError(
-        err.response?.data?.detail || t('error_saveFailed') || 'Failed to save expense. Please try again.',
+        err.response?.data?.detail || err.message || t('error_saveFailed') || 'Failed to save expense. Please try again.',
         'save_error'
       );
     } finally {
@@ -378,6 +429,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
     }
   };
 
+  // ✅ Show loading state while initializing
   if (!effectiveRiderId || !isInitialized) {
     return (
       <ScrollView style={styles.container}>
