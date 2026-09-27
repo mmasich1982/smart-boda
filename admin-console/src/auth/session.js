@@ -230,6 +230,63 @@ export function clearSession() {
 }
 
 // ============================================================================
+// HELPER FUNCTIONS - Used by UI components
+// ============================================================================
+
+/**
+ * Get current admin's name.
+ * Returns empty string if not authenticated.
+ * Used by Sidebar.jsx to display admin name.
+ */
+export function currentAdminName() {
+  return sessionState?.name || '';
+}
+
+/**
+ * Get current admin's role.
+ * Returns empty string if not authenticated.
+ * Used by Sidebar.jsx to display admin role.
+ */
+export function currentAdminRole() {
+  return sessionState?.role || '';
+}
+
+/**
+ * Get current admin's email.
+ * Returns empty string if not authenticated.
+ */
+export function currentAdminEmail() {
+  return sessionState?.email || '';
+}
+
+/**
+ * Get current admin's ID.
+ * Returns null if not authenticated.
+ */
+export function currentAdminId() {
+  return sessionState?.id || null;
+}
+
+// ============================================================================
+// BACKWARD COMPATIBILITY ALIASES
+// ============================================================================
+// These aliases maintain compatibility with existing code that uses different names
+
+/**
+ * Alias for isAuthenticated() - used by App.jsx
+ */
+export function isLoggedIn() {
+  return isAuthenticated();
+}
+
+/**
+ * Alias for initSession() - used by App.jsx
+ */
+export async function hydrateSession() {
+  return initSession();
+}
+
+// ============================================================================
 // DEBUG HELPERS
 // ============================================================================
 
@@ -260,4 +317,6 @@ if (typeof window !== 'undefined') {
   window.__debugSession = debugSession;
   window.__getSession = getSession;
   window.__isAuthenticated = isAuthenticated;
+  window.__currentAdminName = currentAdminName;
+  window.__currentAdminRole = currentAdminRole;
 }
