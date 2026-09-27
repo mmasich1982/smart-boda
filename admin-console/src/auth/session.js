@@ -112,6 +112,29 @@ export function isAdmin() {
 // ============================================================================
 
 /**
+ * Manually set session state.
+ * 
+ * Used by LoginPage after successful login to update session state.
+ * In normal flow, login() function is used instead.
+ * 
+ * @param {object} data - Session data object {id, name, email, role, is_active}
+ */
+export function setSession(data) {
+  if (data && typeof data === 'object') {
+    sessionState = {
+      id: data.id,
+      name: data.name,
+      email: data.email,
+      role: data.role,
+      is_active: data.is_active !== undefined ? data.is_active : true
+    };
+    console.log(`✓ Session set: ${sessionState.email} (${sessionState.role})`);
+  } else {
+    console.error('Invalid session data provided to setSession');
+  }
+}
+
+/**
  * Admin login with email and password.
  * 
  * FLOW:

@@ -1,8 +1,10 @@
 // admin-console/src/pages/LoginPage.jsx
+// CORRECTED: Login page with proper error handling and session management
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
-import { setSession } from '../auth/session';
+import { login } from '../auth/session';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -30,29 +32,24 @@ export default function LoginPage() {
       // AUDIT FIX (Admin Console §2): the backend now sets an httpOnly session cookie
       // directly on this response -- the frontend never sees or stores a token.
       console.log('🔐 Attempting login...');
-      const { data } = await api.post('/admin/auth/login', { 
-        email: email.trim(), 
-        password: password.trim() 
-      });
       
-      // ✅ FIXED: Now backend returns name, role, email
-	  console.log('✓ Login successful, setting session...');
-      setSession({ 
-        id: data.id,
-        name: data.name, 
-        role: data.role, 
-        email: data.email 
-      });
-	  
-	  // After successful login response:
-      localStorage.setItem('adminToken', response.data.token);
-      setSession(response.data);
+      // Use the session.login() function which handles:
+      // 1. Making the API request
+      // 2. Validating the response
+      // 3. Setting session state
+      // 4. Error handling with proper messages
+      await login(email.trim(), password.trim());
+      
+      console.log('✓ Login successful, navigating to dashboard...');
       navigate('/dashboard');
 
     } catch (err) {
       // ============================================================================
       // ERROR HANDLING - IMPROVED
       // ============================================================================
+      // The login() function in session.js handles and re-throws errors with messages
+      // Here we just display them to the user
+      
       const status = err.response?.status;
       const detail = err.response?.data?.detail;
       
@@ -75,8 +72,20 @@ export default function LoginPage() {
           '2. VITE_API_BASE_URL is correct in .env'
         );
         console.error('CORS Error - See browser Network tab for details');
+      } else if (err.isNetworkError) {
+        console.error('❌ Network Error - Cannot reach backend');
+        console.error(`   API Base URL: ${api.defaults.baseURL}`);
+        console.error(`   Error: ${err.message}`);
+        setError('Network error - backend is not responding');
+      } else if (err.isCORSError) {
+        console.error('❌ CORS Error - Browser blocked the request');
+        console.error('   This usually means:');
+        console.error('   1. Backend CORS is not configured correctly');
+        console.error('   2. withCredentials is true but CORS origin is not specific');
+        console.error('   3. Check browser Network tab for details');
+        setError('CORS configuration error - check browser console');
       } else {
-        setError(detail || 'An error occurred. Please try again.');
+        setError(detail || err.message || 'An error occurred. Please try again.');
       }
     } finally {
       setSubmitting(false);
