@@ -154,7 +154,7 @@ export default function MaintenanceEntryScreen({ navigation }) {
 
       const now = Date.now();
       const payload = {
-        service_type_code: 'GENERAL_SERVICE',  // ✅ FIXED: Include default service type code
+        service_type_code: 'general_service',  // ✅ FIXED: matches seeded service_type_master code casing (was 'GENERAL_SERVICE', which never matched any seeded row)
         cost: parseFloat(cost),
         created_at: new Date().toISOString(),
       };

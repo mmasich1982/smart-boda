@@ -164,13 +164,24 @@ def save_maintenance_entry(
         try:
             # ✅ CRITICAL FIX #2.4: Use default service type code if not provided by frontend
             # This prevents psycopg2.errors.ForeignKeyViolation when service_type_master.code doesn't exist
-            service_type_code = payload.service_type_code if payload.service_type_code else "GENERAL_SERVICE"
+            # NOTE: seed_fuel_master_data.py (the seeder that actually runs from seed_all_data.py)
+            # seeds lowercase snake_case codes like "general_service", "oil_change", etc. The
+            # previous default here was "GENERAL_SERVICE" (uppercase), which never matched any
+            # seeded row - that's exactly the
+            #   WARNING: service_type_code 'GENERAL_SERVICE' not found in master table
+            # line from the pilot log. Using the lowercase code that's actually seeded fixes it.
+            service_type_code = payload.service_type_code if payload.service_type_code else "general_service"
             
             # ✅ CRITICAL FIX #2.5: Validate that the service_type_code exists in service_type_master
             # If it doesn't exist, use NULL (now allowed with nullable=True) to prevent FK violation
+            # Matched case-insensitively so any future casing drift from a client is normalized to
+            # the canonical stored code instead of silently nulling out again.
             from app.models.service_type_master import ServiceTypeMaster
+            from sqlalchemy import func as sa_func
             
-            service_type_exists = db.query(ServiceTypeMaster).filter_by(code=service_type_code).first()
+            service_type_exists = db.query(ServiceTypeMaster).filter(
+                sa_func.lower(ServiceTypeMaster.code) == service_type_code.lower()
+            ).first()
             
             if not service_type_exists:
                 logger.warning(f"[MAINTENANCE] service_type_code '{service_type_code}' not found in master table")
@@ -179,6 +190,9 @@ def save_maintenance_entry(
                 # Set to None to avoid foreign key violation
                 # The model allows nullable now
                 service_type_code = None
+            else:
+                # Normalize to the canonical code stored in service_type_master
+                service_type_code = service_type_exists.code
             
             # ✅ FIXED #2.6: Parse maintenance date safely
             maintenance_date = None
@@ -214,7 +228,7 @@ def save_maintenance_entry(
                 "id": str(entry.id),
                 "status": "recorded",
                 "timestamp": entry.created_at.isoformat() if entry.created_at else None,
-                "service_type_code": service_type_code or "GENERAL_SERVICE"  # ✅ FIXED #2: Return confirmation
+                "service_type_code": service_type_code or "general_service"  # ✅ FIXED #2: Return confirmation
             }
         
         except HTTPException:
@@ -508,7 +522,7 @@ def get_maintenance_summary(
         # Group by service type
         by_service_type = {}
         for entry in entries:
-            service_type = entry.service_type_code or "GENERAL_SERVICE"
+            service_type = entry.service_type_code or "general_service"
             if service_type not in by_service_type:
                 by_service_type[service_type] = {"count": 0, "total": 0}
             by_service_type[service_type]["count"] += 1

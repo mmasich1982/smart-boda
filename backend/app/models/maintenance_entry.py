@@ -1,6 +1,6 @@
 # backend/app/models/maintenance_entry.py
 import uuid
-from sqlalchemy import Column, String, Numeric, Integer, DateTime, ForeignKey, func
+from sqlalchemy import Column, String, Numeric, Integer, DateTime, Text, ForeignKey, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -10,10 +10,20 @@ class MaintenanceEntry(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     rider_id = Column(UUID(as_uuid=True), ForeignKey("rider.id"), nullable=False)
     # ✅ CRITICAL FIX: Make service_type_code nullable to prevent foreign key errors
-    # When not provided by frontend, backend sets it to "GENERAL_SERVICE" default
+    # When not provided by frontend, backend sets it to "general_service" default
     # This prevents psycopg2.errors.ForeignKeyViolation when service_type_master.code doesn't exist
-    service_type_code = Column(String(30), ForeignKey("service_type_master.code"), nullable=True, default="GENERAL_SERVICE")
+    service_type_code = Column(String(30), ForeignKey("service_type_master.code"), nullable=True, default="general_service")
     cost = Column(Numeric(8, 2), nullable=False)
+    # ✅ FIX (500 error): These three columns are set by sb12_maintenance.save_maintenance_entry()
+    # on every request (description, maintenance_date, service_provider) but were missing from
+    # this model, so SQLAlchemy's declarative constructor rejected them with:
+    #   TypeError: 'description' is an invalid keyword argument for MaintenanceEntry
+    # Added here (see backend/sql/fix_maintenance_entry.sql for the matching
+    # SQL script that recreates the smart_boda.maintenance_entry table with
+    # these columns).
+    description = Column(Text, nullable=True)
+    maintenance_date = Column(DateTime(timezone=True), nullable=True)
+    service_provider = Column(String(120), nullable=True)
     odometer_reading = Column(Integer)
     oil_type_code = Column(String(30), ForeignKey("oil_type_master.code"))
     next_service_odometer = Column(Integer)

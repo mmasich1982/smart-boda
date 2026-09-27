@@ -655,26 +655,64 @@ export async function processPendingSync() {
                 const riderId = item.data?.rider_id || item.riderId;
                 const customerKey = `lipa_later_customer_${riderId}_${customerId}`;
                 
-                // Load existing customer data
+                // ✅ FIXED: Load existing customer data (may not exist yet - that's OK)
                 let customerData = await indexedDbAdapter.kvGet(customerKey);
-                if (customerData) {
-                  customerData = typeof customerData === 'string' ? JSON.parse(customerData) : customerData;
-                  
-                  // ✅ UPDATE: Store the real lipa_later_id
-                  customerData.lipaLaterId = lipaLaterId;
-                  customerData.updatedAt = new Date().toISOString();
-                  
-                  await indexedDbAdapter.kvSet(customerKey, JSON.stringify(customerData));
-                  console.log(`✅ Updated customer record with lipaLaterId: ${lipaLaterId}`);
-                  
-                  // ✅ CRITICAL: Trigger retry of any pending lipa_later_payment items for this customer
-                  // These payments were queued with generated customer_id and will fail
-                  // Now that we have the real lipaLaterId, they should be updated and retried
-                  console.log(`ℹ️  Note: Pending lipa_later_payments for this customer will use correct lipaLaterId on next sync`);
-                }
+                customerData = customerData
+                  ? (typeof customerData === 'string' ? JSON.parse(customerData) : customerData)
+                  : {};
+                
+                // ✅ FIXED: ALWAYS write the record (upsert), not just when one already existed.
+                // Previously this block only ran `if (customerData)`, but nothing ever wrote to
+                // this key first, so customerData was always null/undefined and this whole
+                // update was silently skipped - the real lipaLaterId was never persisted here.
+                customerData.lipaLaterId = lipaLaterId;
+                customerData.updatedAt = new Date().toISOString();
+                
+                await indexedDbAdapter.kvSet(customerKey, JSON.stringify(customerData));
+                console.log(`✅ Stored customer record with lipaLaterId: ${lipaLaterId}`);
               } catch (updateErr) {
                 console.error('⚠️ Failed to update customer with lipa_later_id:', updateErr.message);
                 // This is non-critical - payments will retry and should get the ID then
+              }
+
+              // ✅ CRITICAL FIX: Rewrite any ALREADY-QUEUED lipa_later_payment /
+              // lipa_later_settlement items for this customer so they stop retrying with
+              // the stale generated customer_id (which the backend always rejects as an
+              // invalid UUID) and use the real lipaLaterId instead.
+              try {
+                const riderId = item.data?.rider_id || item.riderId;
+                const normalizedPhone = String(customerId).replace(/\D/g, '');
+                const staleIdPrefix = `cust_${normalizedPhone}_`;
+
+                const fullQueue = await loadSyncQueue();
+                let queueChanged = false;
+
+                for (const queuedItem of fullQueue) {
+                  if (
+                    (queuedItem.type === 'lipa_later_payment' || queuedItem.type === 'lipa_later_settlement') &&
+                    queuedItem.status !== 'synced' &&
+                    queuedItem.data?.customer_id &&
+                    queuedItem.data.customer_id.startsWith(staleIdPrefix) &&
+                    (queuedItem.data?.rider_id === riderId || queuedItem.riderId === riderId)
+                  ) {
+                    console.log(`✅ Rewriting stale customer_id for queued ${queuedItem.type} (${queuedItem.id}): ${queuedItem.data.customer_id} -> ${lipaLaterId}`);
+                    queuedItem.data.customer_id = lipaLaterId;
+                    if (queuedItem.endpoint) {
+                      const base = queuedItem.endpoint.split('?')[0];
+                      queuedItem.endpoint = `${base}?rider_id=${encodeURIComponent(riderId)}&customer_id=${encodeURIComponent(lipaLaterId)}`;
+                    }
+                    // Clear any prior failure state so it's retried promptly with the fixed ID
+                    queuedItem.nextRetryTime = null;
+                    queueChanged = true;
+                  }
+                }
+
+                if (queueChanged) {
+                  await saveSyncQueue(fullQueue);
+                  console.log('✅ Persisted corrected customer_id for previously-queued lipa_later_payment item(s)');
+                }
+              } catch (rewriteErr) {
+                console.error('⚠️ Failed to rewrite queued lipa_later_payment items with lipa_later_id:', rewriteErr.message);
               }
             } else {
               console.warn('⚠️ lipa_later_trip sync succeeded but response missing lipa_later_id');

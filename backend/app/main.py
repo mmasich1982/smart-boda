@@ -1,3 +1,4 @@
+# backend/app/main.py
 from fastapi import FastAPI, Request, Query, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -196,6 +197,20 @@ app.include_router(subscriptions_payment.router)
 # ---- Correction window related ----
 from app.routers import trip_support
 app.include_router(trip_support.router)
+
+# ✅ FIX (405 Method Not Allowed on POST /compliance/statements):
+# sb20_statements.py fully implements GET/POST /compliance/statements but was
+# never registered here, so no route existed for it. The catch-all
+# `@app.options("/{full_path:path}")` handler further down this file matches
+# *any* path for OPTIONS only, which is why OPTIONS returned 200 while POST
+# returned 405 (Starlette sees a path match for the wrong method, rather than
+# no match at all -> 405 instead of 404). Registering the router fixes this.
+# sb18_compliance.py (/compliance/documents, expiry tracking) was found in
+# the same audit - also fully implemented, also never registered - so it's
+# included here too.
+from app.routers import sb18_compliance, sb20_statements
+app.include_router(sb18_compliance.router)
+app.include_router(sb20_statements.router)
 
 
 # ============================================================================
