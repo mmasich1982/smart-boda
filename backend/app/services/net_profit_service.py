@@ -270,3 +270,37 @@ class NetProfitService:
                 "count": len(other)
             }
         }
+
+
+# ✅ FIX (ImportError: cannot import name 'net_profit_summary_for_range'):
+# app/routers/sb20_statements.py has always done
+#   from app.services.net_profit_service import net_profit_summary_for_range
+# but only the NetProfitService class above was ever defined in this file -
+# this module-level function never existed. Because sb20_statements was never
+# registered in app/main.py until now, this ImportError never surfaced; the
+# moment the router is imported (to be mounted), Python fails to import this
+# name and the whole app crashes on startup.
+#
+# This is a thin adapter: it converts the date-only period bounds used by a
+# Statement (BR-SB20-002: figures come only from the carried-forward
+# Financial History range, period_start/period_end are plain `date` objects -
+# see StatementRequest in app/schemas/compliance_history.py) into full-day
+# datetime bounds, then reshapes NetProfitService.calculate_net_profit()'s
+# richer response into the flat {"income", "total_expense", "net_profit"}
+# shape that Statement's columns (and sb20_statements.generate_statement)
+# expect.
+def net_profit_summary_for_range(db: Session, rider_id: str, period_start, period_end) -> dict:
+    """
+    BR-SB20-002: Figures for a Statement come only from the carried-forward
+    Financial History range, never projected forward.
+    """
+    start_dt = datetime.combine(period_start, datetime.min.time())
+    end_dt = datetime.combine(period_end, datetime.max.time())
+
+    result = NetProfitService.calculate_net_profit(db, rider_id, start_dt, end_dt)
+
+    return {
+        "income": result["revenue"],
+        "total_expense": result["expenses"]["total"],
+        "net_profit": result["net_profit"],
+    }
