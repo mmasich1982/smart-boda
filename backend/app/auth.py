@@ -1,6 +1,6 @@
 # backend/app/auth.py
-# CORRECTED VERSION - Fixes cross-subdomain cookie sharing
-# This version properly handles cookies between smart-boda-admin and smart-boda-api
+# CORRECTED VERSION - Comprehensive authentication fixes
+# Fixes: CORS cookie sharing, password verification, error handling
 
 import os
 import logging
@@ -79,6 +79,8 @@ def hash_password(plain: str) -> str:
     Hash a password using bcrypt directly.
     Bcrypt has a 72-byte limit. This function automatically truncates.
     
+    ✅ CORRECTED: Improved error handling and validation
+    
     Args:
         plain: Plain text password
     Returns:
@@ -97,22 +99,27 @@ def hash_password(plain: str) -> str:
         plain_truncated = plain_bytes.decode('utf-8', errors='ignore')  # Re-encode, ignoring incomplete chars
     except Exception as e:
         # Fallback: just use first 72 characters if encoding fails
+        logger.warning(f"Encoding issue during password truncation, using fallback: {str(e)}")
         plain_truncated = plain[:72]
     
     try:
         # Use bcrypt directly to avoid passlib's backend initialization issues
-        hashed = bcrypt.hashpw(plain_truncated.encode('utf-8'), bcrypt.gensalt(rounds=BCRYPT_ROUNDS))
-        logger.debug(f"Password hashed successfully")
+        salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+        hashed = bcrypt.hashpw(plain_truncated.encode('utf-8'), salt)
+        logger.debug(f"Password hashed successfully (rounds={BCRYPT_ROUNDS})")
         return hashed.decode('utf-8')
     except Exception as e:
-        logger.error(f"Password hashing failed: {str(e)}")
+        logger.error(f"Password hashing failed: {str(e)}", exc_info=True)
         raise ValueError(f"Failed to hash password: {str(e)}")
 
 def verify_password(plain: str, hashed: str) -> bool:
     """
     Verify a plain password against a bcrypt hash using bcrypt directly.
     
-    ✅ Bcrypt has a 72-byte limit. This function automatically truncates
+    ✅ CORRECTED: Enhanced validation and error handling
+    - Handles invalid hash formats gracefully
+    - Provides detailed error logging for debugging
+    - Bcrypt has a 72-byte limit. This function automatically truncates
     the input password before verification.
     
     Args:
@@ -128,24 +135,43 @@ def verify_password(plain: str, hashed: str) -> bool:
         - Truncates password to 72 bytes for bcrypt compatibility
     """
     if not plain or not hashed:
+        logger.warning("verify_password called with empty plain or hashed password")
+        return False
+    
+    # Validate hash format (bcrypt hashes start with $2a$, $2b$, or $2y$)
+    if not isinstance(hashed, str) or not hashed.startswith(('$2a$', '$2b$', '$2y$')):
+        logger.warning(f"Invalid hash format detected. Expected bcrypt hash, got: {hashed[:20]}...")
         return False
     
     # Truncate to 72 bytes (bcrypt limit) - same as hash_password
     try:
         plain_bytes = plain.encode('utf-8')[:72]
         plain_truncated = plain_bytes.decode('utf-8', errors='ignore')
-    except Exception:
-        # Fallback: just use first 72 characters if encoding fails
+    except Exception as e:
+        logger.warning(f"Encoding error during password truncation: {str(e)}")
         plain_truncated = plain[:72]
     
     try:
         # Use bcrypt directly for constant-time comparison
         is_valid = bcrypt.checkpw(plain_truncated.encode('utf-8'), hashed.encode('utf-8'))
-        logger.debug(f"Password verification: {'✓ valid' if is_valid else '✗ invalid'}")
+        
+        if is_valid:
+            logger.debug(f"✓ Password verification successful")
+        else:
+            logger.debug(f"✗ Password verification failed - password doesn't match")
+        
         return is_valid
+    
+    except ValueError as e:
+        # ValueError: Invalid salt - hash is corrupted or invalid format
+        logger.warning(f"Invalid salt in password hash: {str(e)} - returning False")
+        logger.debug(f"Hash that failed validation: {hashed[:30]}...")
+        return False
+    
     except Exception as e:
         # Catch ALL exceptions - don't raise, just return False
-        logger.warning(f"Password verification error: {str(e)} - returning False")
+        logger.warning(f"Password verification error ({type(e).__name__}): {str(e)} - returning False")
+        logger.debug(f"Full error:", exc_info=True)
         return False
 
 def create_access_token(admin: AdminUser) -> str:
@@ -158,7 +184,9 @@ def create_access_token(admin: AdminUser) -> str:
         "role": admin.role,
         "exp": expire,
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    logger.debug(f"JWT token created for {admin.email}, expires in {ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
+    return token
 
 def set_session_cookie(response, token: str) -> None:
     """
@@ -166,9 +194,10 @@ def set_session_cookie(response, token: str) -> None:
     
     ✅ FIXED: Now properly handles cookies across subdomains
     - httpOnly: JavaScript cannot access the cookie
-    - Secure: Only sent over HTTPS
+    - Secure: Only sent over HTTPS (in production)
     - SameSite=Lax: Allows cookie on safe cross-site requests
     - Domain: Set to parent domain for cross-subdomain sharing
+    - Credentials: Must be sent with all requests
     """
     cookie_domain = get_cookie_domain()
     
@@ -182,7 +211,7 @@ def set_session_cookie(response, token: str) -> None:
         samesite="lax",
         max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         path="/",
-        domain=cookie_domain,  # ✅ NEW: Set domain for cross-subdomain sharing
+        domain=cookie_domain,  # ✅ Set domain for cross-subdomain sharing
     )
     logger.info(f"✓ Session cookie set (expires in {ACCESS_TOKEN_EXPIRE_MINUTES} minutes)")
 
@@ -197,12 +226,17 @@ def clear_session_cookie(response) -> None:
     logger.info("✓ Session cookie cleared")
 
 def _decode_token(request: Request) -> dict:
-    """Decode JWT from session cookie."""
+    """
+    Decode JWT from session cookie.
+    
+    ✅ CORRECTED: Better error handling and logging
+    """
     token = request.cookies.get(COOKIE_NAME)
     
     # Log cookie presence for debugging
     if not token:
-        logger.warning(f"No session cookie found. Available cookies: {list(request.cookies.keys())}")
+        available_cookies = list(request.cookies.keys())
+        logger.warning(f"No session cookie found. Available cookies: {available_cookies}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     
     logger.debug(f"✓ Session cookie found, decoding JWT...")
@@ -219,8 +253,12 @@ def get_current_admin(request: Request, db: Session = Depends(get_db)) -> AdminU
     """Get the current authenticated admin from the session cookie."""
     payload = _decode_token(request)
     admin = db.query(AdminUser).get(payload["sub"])
-    if not admin or not admin.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account disabled")
+    if not admin:
+        logger.warning(f"Admin user not found in database: {payload['sub']}")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found")
+    if not admin.is_active:
+        logger.warning(f"Login attempt on disabled account: {admin.email}")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
     return admin
 
 def require_admin(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:
@@ -230,6 +268,7 @@ def require_admin(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:
 def require_super_admin(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:
     """Requires super_admin role."""
     if admin.role != "super_admin":
+        logger.warning(f"Super admin access attempt by {admin.role}: {admin.email}")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admin role required")
     return admin
 

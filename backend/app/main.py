@@ -1,4 +1,11 @@
 # backend/app/main.py
+# ============================================================================
+# CRITICAL FIX: CORS Configuration for credentials with specific origins
+# ============================================================================
+# ISSUE: Browser blocks requests with "withCredentials: true" when server 
+# returns "Access-Control-Allow-Origin: *"
+# SOLUTION: Use specific origins instead of wildcard when allow_credentials=True
+
 from fastapi import FastAPI, Request, Query, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -22,14 +29,51 @@ app = FastAPI(
 )
 
 # ============================================================================
-# CORS CONFIGURATION
+# CORS CONFIGURATION - FIXED
 # ============================================================================
+# Parse allowed origins from environment variable
+def get_cors_origins():
+    """
+    Parse CORS origins from environment variable.
+    
+    CORRECTED: Uses specific origins instead of wildcard when allow_credentials=True.
+    This fixes the browser error:
+    "The value of the 'Access-Control-Allow-Origin' header in the response 
+     must not be the wildcard '*' when the request's credentials mode is 'include'."
+    
+    Expected format in .env:
+    CORS_ORIGINS=https://smart-boda-admin.onrender.com,https://smart-boda-api.onrender.com,http://localhost:3000,http://localhost:5173
+    """
+    cors_env = os.getenv("CORS_ORIGINS", "")
+    
+    if not cors_env:
+        logger.warning(
+            "⚠️  CORS_ORIGINS environment variable not set. Defaulting to localhost for development.\n"
+            "For production, set CORS_ORIGINS in .env or deployment config."
+        )
+        return [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://localhost:8000",
+            "https://smart-boda-admin.onrender.com",
+        ]
+    
+    # Split by comma and strip whitespace
+    origins = [origin.strip() for origin in cors_env.split(",") if origin.strip()]
+    logger.info(f"✓ CORS origins configured: {origins}")
+    return origins
+
+allow_origins = get_cors_origins()
+
+# Add CORS middleware with specific origins (not wildcard)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allow_origins,           # Specific origins, not "*"
+    allow_credentials=True,                 # Enable credentials (cookies, auth headers)
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    expose_headers=["Content-Length", "Content-Range"],
+    max_age=600,                            # Preflight cache 10 minutes
 )
 
 @app.middleware("http")
@@ -37,17 +81,29 @@ async def ensure_cors_headers(request: Request, call_next):
     """Ensure CORS headers are always present, even on errors."""
     try:
         response = await call_next(request)
+        
+        # Ensure CORS headers are set on all responses
+        origin = request.headers.get("origin")
+        if origin in allow_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
         return response
     except Exception as e:
         logger.error(f"Middleware error: {str(e)}", exc_info=e)
+        origin = request.headers.get("origin")
+        headers = {
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+        }
+        if origin in allow_origins:
+            headers["Access-Control-Allow-Origin"] = origin
+            headers["Access-Control-Allow-Credentials"] = "true"
+        
         return JSONResponse(
             status_code=500,
             content={"detail": "Internal server error"},
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type, Authorization",
-            }
+            headers=headers
         )
 
 # ============================================================================
@@ -98,6 +154,7 @@ async def startup_event():
     try:
         from app.database import init_db
         logger.info("🚀 Starting up Smart Boda MVP1 backend...")
+        logger.info(f"🔓 CORS Origins: {allow_origins}")
         
         # Initialize database - CRITICAL (must succeed)
         init_db()
@@ -384,14 +441,17 @@ async def status_check(db: Session = Depends(get_db)):
         }
 
 @app.options("/{full_path:path}")
-async def options_handler(full_path: str):
+async def options_handler(full_path: str, request: Request):
     """Handle CORS preflight requests."""
-    return JSONResponse(
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-            "Access-Control-Max-Age": "600",
-        }
-    )
+    origin = request.headers.get("origin")
+    headers = {
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+        "Access-Control-Max-Age": "600",
+    }
+    
+    if origin in allow_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    
+    return JSONResponse(status_code=200, headers=headers)
