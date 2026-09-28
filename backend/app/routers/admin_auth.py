@@ -137,22 +137,26 @@ def admin_logout(response: Response, current_admin: AdminUser = Depends(get_curr
 @router.get("/health")
 def auth_health_check():
     """
-    Quick health check for the auth system.
-    Useful for debugging cross-origin issues.
-    
-    Returns:
-    - status: "ok" if auth system is ready
-    - service: service name
-    - cookie_name: name of the session cookie (for debugging)
-    - algorithm: JWT algorithm in use
-    - rounds: bcrypt rounds for password hashing
+    Auth health check that reports the settings this deployment is ACTUALLY running with.
+
+    Open https://<api-host>/admin/auth/health in a browser after a deploy:
+      - cookie_samesite must be "none" and cookie_domain must be null. If you see
+        cookie_domain ".onrender.com" the old auth.py is still deployed and the browser
+        will drop the login cookie (every admin page then returns 401).
+      - secret_configured must be true.
+    Never returns secret values.
     """
+    from app import auth as auth_module
     return {
         "status": "ok",
         "service": "admin-auth",
-        "cookie_name": "sb_admin_session",
-        "algorithm": "HS256",
-        "bcrypt_rounds": 12,
+        "cookie_name": auth_module.COOKIE_NAME,
+        "cookie_domain": auth_module.get_cookie_domain(),
+        "cookie_samesite": "none",
+        "cookie_secure": True,
+        "secret_configured": bool(auth_module.SECRET_KEY),
+        "algorithm": auth_module.ALGORITHM,
+        "bcrypt_rounds": auth_module.BCRYPT_ROUNDS,
     }
 
 # ============================================================================
