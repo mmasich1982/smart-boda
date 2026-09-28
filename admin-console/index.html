@@ -2,10 +2,162 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Smart Boda Admin Console - Administration dashboard for rider management, payments, and reporting" />
+    <meta name="theme-color" content="#ff7a1a" />
     <title>Smart Boda Admin Console</title>
+    
+    <!-- Preload critical assets -->
+    <link rel="preload" as="style" href="/src/theme.css" />
+    
+    <!-- Fallback styles in case CSS fails to load -->
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      
+      body {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: #f6f4ef;
+        color: #1a1c20;
+      }
+      
+      #root {
+        min-height: 100vh;
+        width: 100%;
+      }
+      
+      /* Fallback error page styling */
+      .error-fallback {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 20px;
+        background: #f5f5f5;
+      }
+      
+      .error-box {
+        background: white;
+        padding: 40px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        max-width: 500px;
+        text-align: center;
+      }
+      
+      .error-box h1 {
+        font-size: 24px;
+        font-weight: bold;
+        color: #d32f2f;
+        margin-bottom: 16px;
+      }
+      
+      .error-box p {
+        font-size: 14px;
+        color: #666;
+        margin-bottom: 20px;
+        line-height: 1.6;
+      }
+      
+      .error-box code {
+        display: block;
+        background: #f5f5f5;
+        padding: 12px;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 12px;
+        color: #999;
+        margin-bottom: 20px;
+        overflow-x: auto;
+      }
+      
+      .error-box button {
+        background: #1976d2;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      
+      .error-box button:hover {
+        background: #1565c0;
+      }
+      
+      .loading-message {
+        display: none;
+        text-align: center;
+        padding: 20px;
+        color: #666;
+      }
+      
+      .loading-message.show {
+        display: block;
+      }
+    </style>
   </head>
   <body>
+    <!-- Main React application root -->
     <div id="root"></div>
+    
+    <!-- Fallback error page (shown if React fails to load) -->
+    <div id="error-fallback" class="error-fallback" style="display: none;">
+      <div class="error-box">
+        <h1>⚠️ Application Error</h1>
+        <p>The application failed to load. This could be due to:</p>
+        <ul style="text-align: left; font-size: 14px; margin-bottom: 20px;">
+          <li>• JavaScript is disabled in your browser</li>
+          <li>• A network connectivity issue</li>
+          <li>• The server is not responding</li>
+          <li>• A browser compatibility issue</li>
+        </ul>
+        <button onclick="window.location.reload()">Reload Application</button>
+      </div>
+    </div>
+    
+    <!-- Loading message for slow networks -->
+    <div id="loading-message" class="loading-message">
+      <p>Loading application...</p>
+    </div>
+
+    <!-- Main application script -->
+    <!-- CRITICAL FIX: Module script ensures React can load and initialize properly -->
     <script type="module" src="/src/main.jsx"></script>
+    
+    <!-- Fallback script in case React fails to load -->
+    <script>
+      // Wait 5 seconds for React to load, then show error page if it hasn't
+      const errorFallbackTimeout = setTimeout(() => {
+        const root = document.getElementById('root');
+        const errorFallback = document.getElementById('error-fallback');
+        
+        // If root is still empty after 5 seconds, show error page
+        if (root && !root.hasChildNodes()) {
+          console.error('React failed to load within 5 seconds');
+          errorFallback.style.display = 'flex';
+          root.style.display = 'none';
+        }
+      }, 5000);
+      
+      // Clear timeout once React loads
+      const observer = new MutationObserver(() => {
+        const root = document.getElementById('root');
+        if (root.hasChildNodes()) {
+          clearTimeout(errorFallbackTimeout);
+          document.getElementById('error-fallback').style.display = 'none';
+          observer.disconnect();
+        }
+      });
+      
+      observer.observe(document.getElementById('root'), { childList: true });
+      
+      // Log that page has loaded
+      console.log('✓ index.html loaded, waiting for React to initialize...');
+    </script>
   </body>
 </html>

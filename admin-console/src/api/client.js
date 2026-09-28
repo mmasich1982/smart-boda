@@ -1,5 +1,7 @@
 // admin-console/src/api/client.js
 // Single shared axios instance with improved error handling and timeouts
+// CRITICAL FIX: Removed localStorage token handling (uses httpOnly cookies instead)
+
 import axios from 'axios';
 
 // ============================================================================
@@ -27,22 +29,20 @@ if (apiBaseUrl && apiBaseUrl.includes('admin.onrender.com')) {
 const api = axios.create({
   baseURL: apiBaseUrl,
   timeout: 30000, // Increased to 30s for Render free tier cold starts
-  withCredentials: true, // Important: send cookies with requests
+  withCredentials: true, // CRITICAL: Required to send/receive httpOnly cookies
   headers: {
     'Content-Type': 'application/json',
   }
 });
 
 // ============================================================================
-// REQUEST INTERCEPTOR - Add auth token
+// REQUEST INTERCEPTOR
 // ============================================================================
+// CRITICAL FIX: Removed localStorage token handling
+// Authentication is now done via httpOnly cookies automatically sent by browser
+// No need to manually add Authorization header
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('adminToken');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    
     if (import.meta.env.DEV) {
       console.debug(`📤 ${config.method?.toUpperCase()} ${config.url}`);
     }
@@ -68,8 +68,10 @@ api.interceptors.response.use(
     const status = error.response?.status;
     const url = error.config?.url;
     const method = error.config?.method?.toUpperCase();
-    
-    // Handle timeout errors
+
+    // ========================================================================
+    // TIMEOUT ERRORS
+    // ========================================================================
     if (error.code === 'ECONNABORTED') {
       console.error(
         `⏱️ Request timeout (30s) on ${method} ${url}\n` +
@@ -82,41 +84,78 @@ api.interceptors.response.use(
       error.isTimeout = true;
       return Promise.reject(error);
     }
-    
-    // Log error details
-    console.error(`❌ API Error: ${status} on ${method} ${url}`);
+
+    // ========================================================================
+    // NETWORK ERRORS (No response received)
+    // ========================================================================
+    if (!error.response) {
+      if (error.message === 'Network Error') {
+        console.error(
+          '❌ Network Error - Cannot reach backend. This could be:\n' +
+          '  1. Backend API is not running or not accessible\n' +
+          '  2. VITE_API_BASE_URL is incorrect\n' +
+          '  3. CORS is not properly configured on backend\n' +
+          '  4. Network connectivity issue\n' +
+          `  Trying to reach: ${apiBaseUrl}`
+        );
+        error.isNetworkError = true;
+        error.isCORSError = true; // Likely CORS issue
+      } else if (error.code === 'ECONNREFUSED') {
+        console.error(
+          `❌ Connection refused on ${method} ${url}\n` +
+          `   Backend at ${apiBaseUrl} is not responding`
+        );
+        error.isNetworkError = true;
+      } else {
+        console.error(`❌ Network Error: ${error.message}`);
+        error.isNetworkError = true;
+      }
+      return Promise.reject(error);
+    }
+
+    // ========================================================================
+    // HTTP ERROR RESPONSES (Got a response, but status indicates error)
+    // ========================================================================
+    console.error(`❌ API Error: ${status} ${method} ${url}`);
     if (error.response?.data?.detail) {
       console.error(`   Detail: ${error.response.data.detail}`);
     }
-    
-    // Handle 401 Unauthorized - clear session and redirect to login
+
+    // ========================================================================
+    // 401 UNAUTHORIZED - Session expired or invalid
+    // ========================================================================
     if (status === 401) {
-      const { clearSession } = await import('../auth/session');
-      clearSession();
-      
+      console.warn('🔐 Received 401 Unauthorized - Session is invalid or expired');
+      console.warn('   Clearing session and redirecting to login...');
+
+      // Import and clear session
+      try {
+        const { clearSession } = await import('../auth/session');
+        clearSession();
+      } catch (e) {
+        console.error('Could not clear session:', e);
+      }
+
+      // Redirect to login if not already there
       if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-        console.warn('🔐 Session expired. Redirecting to login...');
         window.location.assign('/login');
       }
     }
-    
-    // Handle 403 Forbidden
+
+    // ========================================================================
+    // 403 FORBIDDEN - Access denied
+    // ========================================================================
     if (status === 403) {
       console.warn('⛔ Access denied (403 Forbidden)');
     }
-    
-    // Handle network errors and CORS issues
-    if (error.message === 'Network Error' && !error.response) {
-      console.error(
-        '❌ Network Error - Check if:\n' +
-        '  1. Backend API is running and accessible\n' +
-        '  2. VITE_API_BASE_URL is correct\n' +
-        '  3. CORS is properly configured on backend\n' +
-        `  4. Trying to reach: ${apiBaseUrl}`
-      );
-      error.isNetworkError = true;
+
+    // ========================================================================
+    // 500+ SERVER ERRORS
+    // ========================================================================
+    if (status >= 500) {
+      console.error(`⚠️ Backend server error (${status}): ${error.response?.data?.detail || error.message}`);
     }
-    
+
     return Promise.reject(error);
   }
 );
