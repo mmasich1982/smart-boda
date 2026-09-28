@@ -1,5 +1,6 @@
 # backend/app/routers/admin_auth.py
 from fastapi import APIRouter, Depends, HTTPException, Response
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from app.database import get_db
@@ -45,7 +46,10 @@ def admin_login(payload: LoginRequest, response: Response, db: Session = Depends
     6. Return admin data for session initialization
     """
     # Query for admin user
-    admin = db.query(AdminUser).filter(AdminUser.email == payload.email).first()
+    # Emails are matched case-insensitively and ignoring stray spaces (phones auto-capitalise
+    # the first letter and add trailing spaces, which previously caused "Invalid email or password").
+    email = payload.email.strip().lower()
+    admin = db.query(AdminUser).filter(func.lower(AdminUser.email) == email).first()
     
     if not admin:
         logger.warning(f"Login attempt with non-existent email: {payload.email}")
