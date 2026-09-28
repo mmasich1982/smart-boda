@@ -4,31 +4,14 @@ services:
     env: node
     nodeVersion: 22.11.0
     plan: free
-    buildCommand: npm cache clean --force && npm install --legacy-peer-deps && npm run build
+    # --include=dev is REQUIRED: NODE_ENV=production makes plain `npm install`
+    # skip devDependencies, so vite/tailwind are missing and the build fails
+    # (leaving a stale committed dist/ to be served).
+    buildCommand: npm install --include=dev --legacy-peer-deps && npm run build
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 3000
       - key: VITE_API_BASE_URL
         value: https://smart-boda-api.onrender.com
-    routes:
-      - path: /
-        destination: /
-      - path: /login
-        destination: /
-      - path: /dashboard
-        destination: /
-      - path: /master-data/*
-        destination: /
-      - path: /rider-support/*
-        destination: /
-      - path: /payments/*
-        destination: /
-      - path: /users/*
-        destination: /
-      - path: /subscription*
-        destination: /
-      - path: /reporting/*
-        destination: /

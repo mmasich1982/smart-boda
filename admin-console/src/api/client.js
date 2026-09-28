@@ -7,6 +7,9 @@ import axios from 'axios';
 // ============================================================================
 // AXIOS CONFIGURATION
 // ============================================================================
+// Event fired on any unexpected 401 so the router (not the browser) handles the redirect.
+export const AUTH_UNAUTHORIZED_EVENT = 'auth:unauthorized';
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'https://smart-boda-api.onrender.com';
 
 console.log(`📡 API Base URL: ${apiBaseUrl}`);
@@ -124,21 +127,27 @@ api.interceptors.response.use(
     // ========================================================================
     // 401 UNAUTHORIZED - Session expired or invalid
     // ========================================================================
+    // ROOT-CAUSE FIX: this used to call window.location.assign('/login'), a HARD
+    // browser navigation. While React Router was already rendering <LoginPage/>
+    // client-side, the browser then requested GET /login from the static host,
+    // which has no such file and answered "Not Found" -- so the login page
+    // flashed for a few milliseconds and was replaced by a blank "Not Found".
+    //
+    // Now the interceptor never navigates. It only broadcasts an event; the
+    // <SessionWatcher/> inside <BrowserRouter> (App.jsx) clears the session and
+    // does a client-side navigate('/login'), which needs no server round-trip.
+    //
+    // The two auth-bootstrap calls are excluded: a 401 from /admin/auth/me on
+    // page load just means "not logged in yet", and a 401 from /admin/auth/login
+    // means "wrong password" -- both are handled by their callers.
     if (status === 401) {
-      console.warn('🔐 Received 401 Unauthorized - Session is invalid or expired');
-      console.warn('   Clearing session and redirecting to login...');
+      const isAuthBootstrapCall =
+        typeof url === 'string' &&
+        (url.includes('/admin/auth/me') || url.includes('/admin/auth/login'));
 
-      // Import and clear session
-      try {
-        const { clearSession } = await import('../auth/session');
-        clearSession();
-      } catch (e) {
-        console.error('Could not clear session:', e);
-      }
-
-      // Redirect to login if not already there
-      if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
-        window.location.assign('/login');
+      if (!isAuthBootstrapCall && typeof window !== 'undefined') {
+        console.warn('🔐 Received 401 Unauthorized - session invalid or expired');
+        window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT));
       }
     }
 

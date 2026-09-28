@@ -7,9 +7,10 @@
 // 4. Proper loading state handling
 
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
-import { isLoggedIn, hydrateSession, currentAdminRole } from './auth/session';
+import { isLoggedIn, hydrateSession, currentAdminRole, clearSession } from './auth/session';
+import { AUTH_UNAUTHORIZED_EVENT } from './api/client';
 
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
@@ -300,6 +301,30 @@ function LoadingScreen({ error = null }) {
 }
 
 // ============================================================================
+// SESSION WATCHER - client-side redirect on expired session
+// ============================================================================
+// Replaces the old hard `window.location.assign('/login')` in the axios 401
+// interceptor, which caused the "Login flashes then 'Not Found'" bug. A hard
+// navigation asks the web server for /login; a client-side navigate() does not.
+function SessionWatcher() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    function onUnauthorized() {
+      clearSession();
+      if (location.pathname !== '/login') {
+        navigate('/login', { replace: true });
+      }
+    }
+    window.addEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(AUTH_UNAUTHORIZED_EVENT, onUnauthorized);
+  }, [navigate, location.pathname]);
+
+  return null;
+}
+
+// ============================================================================
 // ROUTES COMPONENT - Separated from App for cleaner code
 // ============================================================================
 // This component is only rendered AFTER hydration is complete
@@ -440,6 +465,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
+        <SessionWatcher />
         <AppRoutes />
       </BrowserRouter>
     </ErrorBoundary>

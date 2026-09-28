@@ -116,9 +116,11 @@ console.log('   • /dashboard → serves index.html (React Router handles)');
 console.log('   • /any-route → serves index.html (React Router handles)');
 console.log('   • React Router handles ALL routing on client\n');
 
-app.all('*', (req, res) => {
+app.get('*', (req, res) => {
   // Get file extension if it exists
   const ext = path.extname(req.path);
+
+  // Never serve the SPA shell for API-style paths or missing hashed assets
 
   // If request has a file extension and wasn't caught by express.static,
   // it's probably a missing asset file - return 404

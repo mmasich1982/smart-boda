@@ -20,7 +20,7 @@ if (!rootElement) {
       <p>Root element not found. Please check your index.html configuration.</p>
     </div>
   `;
-  process.exit(1);
+  throw new Error('Root element #root not found');
 }
 
 // ============================================================================
