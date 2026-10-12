@@ -17,6 +17,7 @@ from sqlalchemy import text, and_, or_
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.routers import sb08_financial_history, sb19_financial_history
+from app.routers import admin_groups
 
 # Configure logging
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -246,6 +247,9 @@ app.include_router(admin_dashboard.router)
 # ---- Payment Admin ----
 from app.routers import payment_admin
 app.include_router(payment_admin.router)
+
+# ---- Manage Groups ----
+app.include_router(admin_groups.router)
 
 # ---- Subscriptions Payment Router Registration ----
 from app.routers import subscriptions_payment

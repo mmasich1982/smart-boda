@@ -29,6 +29,13 @@ const SECTIONS = [
     ],
   },
   {
+    label: '👥 Manage Groups',
+    items: [
+      { to: '/groups/manage', label: 'Manage Groups and Members' },
+      { to: '/groups/incoming-additions', label: 'Incoming Group Member Additions' },
+    ],
+  },
+  {
     label: '💳 Payments & Reconciliation',
     items: [
       { to: '/payments/history', label: 'Payment History' },

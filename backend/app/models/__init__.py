@@ -63,6 +63,7 @@ from app.models.suggestion_category_master import SuggestionCategoryMaster
 from app.models.swap_partner_master import SwapPartnerMaster
 from app.models.target_streak import TargetStreak
 from app.models.trip import Trip
+from app.models.boda_group import BodaGroup, GroupSlotRequest, AppNotification
 from app.models.trip_master_data import (
     PaymentChannelMaster,
     CorrectionReasonMaster,
@@ -76,6 +77,9 @@ __all__ = [
     "BikeProfile",
     "DuplicatePlateCase",
     "ComplianceDocument",
+    "BodaGroup",
+    "GroupSlotRequest",
+    "AppNotification",
     "DocumentTypeMaster",
     "StatementPurposeMaster",
     "ComplianceRuleConfig",

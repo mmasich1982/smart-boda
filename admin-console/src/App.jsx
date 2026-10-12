@@ -35,6 +35,8 @@ import ChurnAnalysis from './pages/ChurnAnalysis';
 import DailyRevenueReport from './pages/DailyRevenueReport';
 import UserEngagementMetrics from './pages/UserEngagementMetrics';
 import SystemHealth from './pages/SystemHealth';
+import ManageGroupsAndMembers from './pages/ManageGroupsAndMembers';
+import IncomingGroupMemberAdditions from './pages/IncomingGroupMemberAdditions';
 
 // ============================================================================
 // ERROR BOUNDARY COMPONENT
@@ -370,6 +372,10 @@ function AppRoutes() {
       <Route path="/reporting/daily-revenue" element={<RequireAuth><Shell><DailyRevenueReport /></Shell></RequireAuth>} />
       <Route path="/reporting/engagement" element={<RequireAuth><Shell><UserEngagementMetrics /></Shell></RequireAuth>} />
       <Route path="/reporting/system-health" element={<RequireAuth><Shell><SystemHealth /></Shell></RequireAuth>} />
+	  
+	  {/* GROUP MANAGEMENT ROUTES */}
+      <Route path="/groups/manage" element={<RequireAuth><Shell><ManageGroupsAndMembers /></Shell></RequireAuth>} />
+      <Route path="/groups/incoming-additions" element={<RequireAuth><Shell><IncomingGroupMemberAdditions /></Shell></RequireAuth>} />
 
       {/* CATCH-ALL - Redirect to dashboard if logged in, login otherwise */}
       <Route path="*" element={<Navigate to={isLoggedIn() ? "/dashboard" : "/login"} replace />} />
