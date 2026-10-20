@@ -4,7 +4,8 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { withChamaOnlineGate } from '../../components/ChamaOnlineGate';   // My Savings / My Loans / My Chama require an internet connection
-import { View, Text, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput } from 'react-native';
+import DecisionDialog from '../../components/DecisionDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
 import { useToast } from '../../components/Toast';
@@ -40,12 +41,16 @@ function ChamaQueueScreen({ navigation, route }) {
   const { showToast } = useToast();
   const [items, setItems] = useState([]);
   const [pool, setPool] = useState(null);
-  const [rejecting, setRejecting] = useState(null);
+  const [dlg, setDlg] = useState(null);          // { i: item, mode: 'yes' | 'reject' }
+  const [pick, setPick] = useState(null);        // chosen reject reason
+  const [other, setOther] = useState('');         // free text when the reason is Other
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => queueList(kind, groupId).then((r) => { setItems(r.items); setPool(r.pool ?? null); }).catch(() => {}), [kind, groupId]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
   async function decide(id, action, reason) {
+    setBusy(true);
     try {
       await queueDecide(kind, id, action, reason, groupId);
       // ✅ PART 5: repayment lists get their own reject message
@@ -53,14 +58,16 @@ function ChamaQueueScreen({ navigation, route }) {
       showToast(action === 'reject'
         ? (REPAY ? 'Repayment rejected. The member will see it in their loan history.' : 'Rejected. The member will see your reason.')
         : 'Done.', action === 'reject' ? 'warn' : 'success');
-      setRejecting(null);
+      closeDlg();
       load();
     } catch (e) {
       showToast(apiError(e, 'Could not complete this. Check your connection.'), 'warn');
+      closeDlg();
       load();
-    }
+    } finally { setBusy(false); }
   }
-  const ask = (i) => Alert.alert(c.yesLabel + '?', `${i.member} · ${fmt(i.amount)}`, [{ text: 'Cancel' }, { text: 'Yes', onPress: () => decide(i.id, c.yes) }]);
+  const closeDlg = () => { setDlg(null); setPick(null); setOther(''); };
+  const rejectReason = () => (pick === 'Other' ? (other.trim() ? `Other: ${other.trim()}` : '') : pick || '');
 
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
@@ -79,23 +86,27 @@ function ChamaQueueScreen({ navigation, route }) {
               {!i.security.ok && i.security.blockers.map((b) => <Text key={b} style={[s.hint, { color: colors.signalAmber }]}>⏳ {b}</Text>)}
               {i.security.to_check > 0 && <TouchableOpacity onPress={() => navigation.navigate('SecurityHeld', { groupId })}><Text style={{ color: colors.bodaOrange, fontWeight: '800', marginTop: 4 }}>Check the security ›</Text></TouchableOpacity>}
             </View>)}
-          {rejecting === i.id ? (
-            <View style={{ marginTop: 8 }}>
-              <Text style={s.label}>WHY ARE YOU REJECTING THIS?</Text>
-              {(REASONS[kind] || REASONS.default).map((r) => (
-                <TouchableOpacity key={r} style={s.row} onPress={() => decide(i.id, 'reject', r)}><Text>{r}</Text></TouchableOpacity>
-              ))}
-              <TouchableOpacity onPress={() => setRejecting(null)}><Text style={{ color: colors.inkSoft, marginTop: 6 }}>Cancel</Text></TouchableOpacity>
-            </View>
-          ) : (
-            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-              <TouchableOpacity disabled={kind === 'loanRequests' && i.security && !i.security.ok} style={{ flex: 1, backgroundColor: colors.bodaOrange, padding: 10, borderRadius: 8, alignItems: 'center', opacity: kind === 'loanRequests' && i.security && !i.security.ok ? 0.4 : 1 }} onPress={() => ask(i)}>
-                <Text style={{ color: '#fff', fontWeight: '800' }}>{c.yesLabel}</Text></TouchableOpacity>
-              {!c.noReject && (
-                <TouchableOpacity style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.line }} onPress={() => setRejecting(i.id)}>
-                  <Text style={{ fontWeight: '700' }}>Reject</Text></TouchableOpacity>)}
-            </View>)}
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+            <TouchableOpacity testID={`yes-${i.id}`} disabled={kind === 'loanRequests' && i.security && !i.security.ok} style={{ flex: 1, backgroundColor: colors.bodaOrange, padding: 10, borderRadius: 8, alignItems: 'center', opacity: kind === 'loanRequests' && i.security && !i.security.ok ? 0.4 : 1 }} onPress={() => setDlg({ i, mode: 'yes' })}>
+              <Text style={{ color: '#fff', fontWeight: '800' }}>{c.yesLabel}</Text></TouchableOpacity>
+            {!c.noReject && (
+              <TouchableOpacity testID={`reject-${i.id}`} style={{ padding: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.line }} onPress={() => { setPick(null); setOther(''); setDlg({ i, mode: 'reject' }); }}>
+                <Text style={{ fontWeight: '700' }}>Reject</Text></TouchableOpacity>)}
+          </View>
         </View>))}
+      <DecisionDialog visible={dlg?.mode === 'yes'} busy={busy}
+        title={`${c.yesLabel}?`} message={dlg ? `${dlg.i.member} · ${fmt(dlg.i.amount)}` : ''}
+        confirmLabel="Yes, I got it" onCancel={closeDlg} onConfirm={() => decide(dlg.i.id, c.yes)} />
+      <DecisionDialog visible={dlg?.mode === 'reject'} busy={busy} danger
+        title="Why are you rejecting this?" message={dlg ? `${dlg.i.member} · ${fmt(dlg.i.amount)}. The member will see your reason.` : ''}
+        confirmLabel="Reject" confirmDisabled={!rejectReason()} onCancel={closeDlg} onConfirm={() => decide(dlg.i.id, 'reject', rejectReason())}>
+        {(REASONS[kind] || REASONS.default).map((x) => (
+          <TouchableOpacity key={x} testID={`reason-${x}`} style={[s.row, { alignItems: 'center' }]} onPress={() => setPick(x)}>
+            <Text style={{ flex: 1, fontWeight: pick === x ? '800' : '400' }}>{pick === x ? '◉ ' : '○ '}{x}</Text>
+          </TouchableOpacity>))}
+        {pick === 'Other' && (
+          <TextInput testID="reason-other" style={[s.input, { marginTop: 8 }]} placeholder="Tell the member what the problem is" value={other} onChangeText={setOther} maxLength={200} multiline />)}
+      </DecisionDialog>
     </ScrollView>);
 }
 

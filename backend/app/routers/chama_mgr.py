@@ -364,6 +364,14 @@ def _activity(db, g, circle_id, member_ids, role=None):
     for r, m, c in pq.order_by(ChamaMgrRound.paid_out_at.desc()).limit(50).all():
         items.append({"kind": "payout", "at": r.paid_out_at.isoformat(), "circle": c.name, "circle_id": str(c.id),
                       "to": m.full_name, "amount": r.paid_out_amount, "turn_no": r.turn_no})
+    if member_ids is not None:   # the rider's own payments: confirmed, waiting, or rejected (with the Treasurer's reason)
+        cq = db.query(ChamaContribution, ChamaMgrRound.circle_id).join(ChamaMgrRound, ChamaMgrRound.id == ChamaContribution.round_id)\
+               .filter(ChamaContribution.group_id == g.id, ChamaContribution.member_id.in_(list(member_ids)))
+        if circle_id: cq = cq.filter(ChamaMgrRound.circle_id == circle_id)
+        for c, cid_ in cq.order_by(ChamaContribution.submitted_at.desc()).limit(50).all():
+            items.append({"kind": "contribution", "id": str(c.id), "circle_id": str(cid_), "reference": c.reference,
+                          "amount": c.amount, "method": c.method, "status": c.status, "reason": c.reject_reason,
+                          "at": (c.decided_at or c.submitted_at).isoformat()})
     return sorted(items, key=lambda x: x["at"], reverse=True)
 
 # ───────────────────────────── Rider: my circles ─────────────────────────────

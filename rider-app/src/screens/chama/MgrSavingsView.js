@@ -41,7 +41,7 @@ export default function MgrSavingsView({ navigation, group, reload }) {
   const [cid, setCid] = useState(null);
   const [activity, setActivity] = useState([]);
   const c = circles.find((x) => x.id === cid) || circles[0];
-  useEffect(() => { completeSeen(SEEN); mgrMyActivity().then((a) => setActivity(a || [])).catch(() => {}); }, [group.group_id]);
+  useEffect(() => { completeSeen(SEEN); mgrMyActivity().then((a) => setActivity(a || [])).catch(() => {}); }, [group]);
 
   const act = async (fn, ok, bad) => { try { await fn(); showToast(ok, 'success'); reload && reload(); } catch (e) { showToast(apiError(e, bad), 'warn'); } };
 
@@ -51,15 +51,18 @@ export default function MgrSavingsView({ navigation, group, reload }) {
       <Text>Your Treasurer has not put you in a circle yet.</Text></View>);
   }
   const R = c.round;
+  const myPays = activity.filter((a) => a.kind === 'contribution' && a.circle_id === c.id);
+  const lastRej = myPays[0] && myPays[0].status === 'rejected' ? myPays[0] : null;   // newest decision was a rejection
   const banner = c.status === 'draft' || !R
     ? ['⏳', c.joins_next_cycle ? 'You join from the next cycle.' : 'Waiting for your Treasurer to start this circle.']
     : R.i_receive ? ['🎉', "It's your turn! Everyone else pays you this round."]
     : R.owes_total <= 0 ? ['✅', 'Nothing to pay this round.']
     : R.owed <= 0 ? ['✅', "You've paid for this round."]
     : R.pending > 0 ? ['⏳', `${fmt(R.pending)} sent. Waiting for your Treasurer to confirm.`]
+    : lastRej && R.owed > 0 ? ['❌', `Your ${fmt(lastRej.amount)} payment was not accepted${lastRej.reason ? `: “${lastRej.reason}”` : ''}. Please pay again.`]
     : ['💳', `Pay ${fmt(R.owed)} by ${niceDate(R.deadline)}.`];
   const mySwaps = (c.swaps || []);
-  const history = activity.filter((a) => !c || a.circle_id === c.id).slice(0, 8);
+  const history = activity.filter((a) => !c || a.circle_id === c.id).slice(0, 10);
   return (<>
     <Text style={s.sub}>{group.group_name} · Treasurer {group.treasurer?.name}</Text>
     <Tabs small tabs={circles.map((x) => ({ key: x.id, label: x.name }))} value={c.id} onChange={setCid} />
@@ -113,8 +116,12 @@ export default function MgrSavingsView({ navigation, group, reload }) {
       <Text style={[s.cardTitle, { marginTop: 14 }]}>Activity history</Text>
       {history.map((a, i) => (
         <View key={`${a.kind}-${a.id || i}`} style={s.row}>
-          <Text style={[s.k, { flex: 3 }]}>{a.kind === 'payout' ? `💸 ${a.to} received ${fmt(a.amount)} (Turn ${a.turn_no})`
-            : `🔁 ${swapStatus(a).head}: ${a.effect?.text || ''}`}</Text>
+          <View style={{ flex: 3 }}>
+            <Text style={s.k}>{a.kind === 'payout' ? `💸 ${a.to} received ${fmt(a.amount)} (Turn ${a.turn_no})`
+              : a.kind === 'contribution' ? `${a.status === 'confirmed' ? '✅' : a.status === 'rejected' ? '❌' : '⏳'} ${fmt(a.amount)} · ${a.method === 'cash' ? 'Cash' : 'M-Pesa'} · ${a.status === 'confirmed' ? 'Confirmed by your Treasurer' : a.status === 'rejected' ? 'Not accepted' : 'Waiting for your Treasurer'}`
+              : `🔁 ${swapStatus(a).head}: ${a.effect?.text || ''}`}</Text>
+            {a.kind === 'contribution' && a.status === 'rejected' && !!a.reason && <Text style={[s.hint, { color: colors.signalRed }]}>Reason: {a.reason}</Text>}
+          </View>
           <Text style={[s.v, { flex: 1 }]}>{niceDateTime(a.at)}</Text></View>))}
     </>)}
   </>);
