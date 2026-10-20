@@ -1,7 +1,7 @@
 // admin-console/src/pages/ManageGroupsAndMembers.jsx
 import React, { useEffect, useState } from 'react';
 import { listGroups, getGroupStats, createGroup, updateGroup, setGroupActive } from '../api/groups';
-import { getGroupFinance } from '../api/groups';   // add to the existing groups.js import
+import { getGroupFinance, checkTreasurerPhone } from '../api/groups';   // add to the existing groups.js import
 import { useApiResource } from '../hooks/useApiResource';
 import ConfirmButton from '../components/ConfirmButton';
 import MaskedPhone from '../components/MaskedPhone';
@@ -60,9 +60,35 @@ export default function ManageGroupsAndMembers() {
   const [view, setView] = useState(null);     // read-only details
   const [msg, setMsg] = useState(null);
   const [errors, setErrors] = useState({});
+  const [origPhone, setOrigPhone] = useState('');        // the Treasurer phone the group already had (edit only)
+  const [phoneWarn, setPhoneWarn] = useState(null);      // BLOCKING: the number already belongs to a rider (and is not a valid pair)
+  const [phonePair, setPhonePair] = useState(null);      // info only: the number completes a Merry-Go-Round + Table Banking pair
   const stats = useApiResource(getGroupStats, []);
   const groups = useApiResource(() => listGroups({ q: q || undefined, status: status || undefined }), [q, status]);
   const refresh = () => { stats.refresh(); groups.refresh(); };
+
+  // BLOCKING: a number that already belongs to a rider cannot be used for a new Treasurer (the server enforces it too),
+  // EXCEPT when the same Treasurer already runs an active group of the OTHER type (a Merry-Go-Round + Table Banking pair).
+  // Skipped while editing if the phone is unchanged.
+  const phoneNow = form?.treasurer_phone || '';
+  const typeNow = form?.group_type || '';
+  useEffect(() => {
+    const clean = phoneNow.replace(/ /g, '');
+    if (!form || !typeNow || !/^(\+254|0)(7|1)[0-9]{8}$/.test(clean) || (editId && clean === (origPhone || '').replace(/ /g, ''))) {
+      setPhoneWarn(null); setPhonePair(null); return undefined;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      checkTreasurerPhone(clean, typeNow, editId || undefined)
+        .then((r) => {
+          if (cancelled) return;
+          setPhoneWarn(r?.has_account && !r.pair_ok ? r : null);
+          setPhonePair(r?.has_account && r.pair_ok ? r : null);
+        })
+        .catch(() => { if (!cancelled) { setPhoneWarn(null); setPhonePair(null); } });
+    }, 400);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [phoneNow, typeNow, !!form, editId, origPhone]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   function validate(f) {
     const e = {};
@@ -79,13 +105,15 @@ export default function ManageGroupsAndMembers() {
   }
 
   async function save() {
-    const e = validate(form); setErrors(e);
+    const e = validate(form);
+    if (phoneWarn) e.treasurer_phone = phoneWarn.message;     // blocks saving
+    setErrors(e);
     if (Object.keys(e).length) return;
     try {
       const body = { ...form, group_type: form.group_type || null, approved_slots: Number(form.approved_slots) };
       const saved = editId ? await updateGroup(editId, body) : await createGroup(body);
       setMsg(editId ? 'Group updated.' : `Group created. Group Code: ${saved.group_code}`);
-      setForm(null); setEditId(null); refresh();
+      setForm(null); setEditId(null); setPhoneWarn(null); setPhonePair(null); refresh();
     } catch (err) { setMsg(errText(err, 'Could not save the group.')); }
   }
   const s = stats.data || {};
@@ -104,7 +132,7 @@ export default function ManageGroupsAndMembers() {
         <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: 8 }}>
           <option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option>
         </select>
-        <button className="primary" onClick={() => { setForm(EMPTY); setEditId(null); setErrors({}); }}>+ New Group</button>
+        <button className="primary" onClick={() => { setForm(EMPTY); setEditId(null); setOrigPhone(''); setPhoneWarn(null); setPhonePair(null); setErrors({}); }}>+ New Group</button>
       </div>
       {groups.loading && <p>Loading…</p>}
       {groups.error && <p role="alert" style={{ color: 'red' }}>Couldn't load groups: {groups.error}</p>}
@@ -121,7 +149,7 @@ export default function ManageGroupsAndMembers() {
                 <td>{g.status === 'active' ? '🟢 Active' : '⚪ Inactive'}</td>
                 <td style={{ display: 'flex', gap: 6 }}>
                   <button className="secondary" onClick={() => setView(g)}>View</button>
-                  <button className="secondary" onClick={() => { setForm({ ...g }); setEditId(g.id); setErrors({}); }}>Edit</button>
+                  <button className="secondary" onClick={() => { setForm({ ...g }); setEditId(g.id); setOrigPhone(g.treasurer_phone || ''); setPhoneWarn(null); setPhonePair(null); setErrors({}); }}>Edit</button>
                   <ConfirmButton className="secondary" label={g.status === 'active' ? 'Deactivate' : 'Activate'}
                     confirmMessage={g.status === 'active' ? 'Deactivate this group? Its Treasurer will not be able to add members.' : 'Activate this group?'}
                     onConfirm={async () => { await setGroupActive(g.id, g.status !== 'active'); refresh(); }} />
@@ -161,10 +189,18 @@ export default function ManageGroupsAndMembers() {
           <Field form={form} setForm={setForm} errors={errors} k="approved_slots" label="Number of Approved Member Slots" type="number" min="1" />
           <Field form={form} setForm={setForm} errors={errors} k="treasurer_name" label="Treasurer Name" maxLength={80} />
           <Field form={form} setForm={setForm} errors={errors} k="treasurer_phone" label="Treasurer Phone Number" placeholder="0712345678" />
+          {phoneWarn && (
+            <div role="alert" style={{ background: '#ffebee', border: '1px solid #d32f2f', color: '#b71c1c', padding: 8, borderRadius: 6, fontSize: 13, marginBottom: 10 }}>
+              🚫 {phoneWarn.message} Use a different number to save this group.
+            </div>)}
+          {phonePair && (
+            <div role="status" style={{ background: '#e8f5e9', border: '1px solid #43a047', color: '#1b5e20', padding: 8, borderRadius: 6, fontSize: 13, marginBottom: 10 }}>
+              🔗 {phonePair.message}
+            </div>)}
           <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>A rider is linked to a group by MOBILE NUMBER: when the Treasurer registers a rider's number, the rider sees the group after they set up their profile with that number.</div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="primary" onClick={save}>{editId ? 'Save Changes' : 'Create Group'}</button>
-            <button className="secondary" onClick={() => { setForm(null); setEditId(null); }}>Cancel</button>
+            <button className="primary" onClick={save} disabled={!!phoneWarn} title={phoneWarn ? 'This Treasurer number already has an account' : undefined}>{editId ? 'Save Changes' : 'Create Group'}</button>
+            <button className="secondary" onClick={() => { setForm(null); setEditId(null); setPhoneWarn(null); setPhonePair(null); }}>Cancel</button>
           </div>
         </div>)}
     </div>

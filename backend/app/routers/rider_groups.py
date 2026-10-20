@@ -18,7 +18,7 @@ from app.services.group_roles import phone_key
 from app.services.chama_finance_service import new_ref, ensure_config
 from app.services import slot_pool_service as POOL
 from app.services.group_roles import treasurer_group, treasurer_groups, same_phone
-import re
+import os, re
 from uuid import UUID                  # request bodies
 from uuid import UUID as RowId   # NOT "UUID": star-imports of the models bring SQLAlchemy's UUID column type into scope
 
@@ -26,6 +26,11 @@ from uuid import UUID as RowId   # NOT "UUID": star-imports of the models bring 
 router = APIRouter(prefix="/groups", tags=["rider-groups"])
 notif_router = APIRouter(prefix="/notifications", tags=["notifications"])
 PHONE_RE = re.compile(r"^(\+254|0)(7|1)[0-9]{8}$")
+
+# OPTIONAL name sync, OFF by default because it overwrites the rider's own name.
+# When switched on (environment variable SYNC_RIDER_NAME_FROM_GROUP=true), entering a valid Chama Code sets the
+# rider's full_name to the Treasurer name the administrator recorded on the group.
+SYNC_RIDER_NAME_FROM_GROUP = os.getenv("SYNC_RIDER_NAME_FROM_GROUP", "false").strip().lower() in ("1", "true", "yes", "on")
 
 class CodeIn(BaseModel):
     group_code: str = Field(min_length=4, max_length=12)
@@ -99,6 +104,8 @@ def validate_code(body: CodeIn, db: Session = Depends(get_db), rider: Rider = De
     pair = POOL.claim_pair(db, g, rider)                 # one code, once: the Treasurer's pair (or single group) is activated together
     for x in pair: ensure_config(db, x)
     rider.is_treasurer = True                            # mirror of the fact above, kept for older app versions
+    if SYNC_RIDER_NAME_FROM_GROUP and (g.treasurer_name or "").strip():
+        rider.full_name = g.treasurer_name.strip()[:80]  # optional, off by default: aligns the rider's name with the group record
     db.commit()
     return {**_payload(db, g), "groups": [_payload(db, x) for x in pair]}
 

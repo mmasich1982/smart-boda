@@ -14,7 +14,9 @@ from app.models.boda_group import BodaGroup, GroupSlotRequest, AppNotification, 
 from app.models.chama_finance import ChamaConfig, ChamaLedger, ChamaContribution, ChamaLoan, ChamaLoanPayment
 from app.models.location_models import County, SubCounty, Ward
 from app.services import slot_pool_service as POOL
-from app.services.group_roles import same_phone
+from app.services.group_roles import same_phone, phone_key
+from app.services.group_member_link_service import rider_mobile_key
+from app.models.rider import Rider
 
 # Same guard style as payment_admin.py: every route below needs a logged-in admin.
 router = APIRouter(prefix="/admin/groups", tags=["admin-groups"],
@@ -114,6 +116,7 @@ def list_groups(q: Optional[str] = None, status: Optional[str] = None,
 @router.post("", status_code=201)
 def create_group(body: GroupIn, db: Session = Depends(get_db), admin: AdminUser = Depends(require_admin)):
     _check_location(db, body)
+    _require_unused_phone(db, body.treasurer_phone, body.group_type)       # a new Treasurer number must be unique (no existing rider)
     POOL.require_free_type(db, body.treasurer_phone, body.group_type)      # one group of each type per Treasurer
     g = BodaGroup(**body.model_dump(), group_code=_new_code(db), status="active",
                   created_by_admin_id=admin.id)
@@ -128,6 +131,69 @@ def create_group(body: GroupIn, db: Session = Depends(get_db), admin: AdminUser 
         raise HTTPException(409, "A group with this name already exists in this ward.")
     db.refresh(g)
     return _row(db, g)
+
+# ---- Treasurer phone check (must be declared BEFORE /{group_id}) ----
+TYPE_NAME = {"mgr": "Merry-Go-Round", "tb": "Table Banking"}
+
+def _rider_with_phone(db: Session, phone):
+    """The rider account that already owns this number (matched on the last 9 digits), or None."""
+    k = phone_key(str(phone or "").replace(" ", ""))
+    if len(k) != 9:
+        return None
+    return db.query(Rider).filter(rider_mobile_key() == k).first()
+
+def _pair_partner(db: Session, phone, group_type, exclude_id=None):
+    """The ACTIVE group of the OTHER type already run by this Treasurer phone, or None. A new group of `group_type`
+    for the same Treasurer would form a Merry-Go-Round + Table Banking pair with it (same rule as slot_pool_service.relink_treasurer)."""
+    if group_type not in TYPE_NAME:
+        return None
+    q = db.query(BodaGroup).filter(BodaGroup.status == "active", BodaGroup.group_type != group_type,
+                                   BodaGroup.group_type.in_(tuple(TYPE_NAME)))
+    if exclude_id is not None:
+        q = q.filter(BodaGroup.id != exclude_id)
+    return next((x for x in q.all() if same_phone(x.treasurer_phone, phone)), None)
+
+def _phone_taken_message(r: Rider) -> str:
+    name = (r.full_name or "").strip() or "no name yet"
+    return (f"This number already has an account ({name}, status: {r.registration_status or 'pending'}). "
+            "The Treasurer will log in, not set up. Every new Treasurer must have a unique number, "
+            "unless this is the same Treasurer's second group of the other type (Merry-Go-Round + Table Banking).")
+
+def _require_unused_phone(db: Session, phone, group_type, exclude_id=None):
+    """BLOCKS saving: a newly assigned Treasurer phone must not already belong to a rider account.
+    The ONE exception is a pair: the same Treasurer already runs an active group of the OTHER type."""
+    r = _rider_with_phone(db, phone)
+    if not r:
+        return
+    if _pair_partner(db, phone, group_type, exclude_id):
+        return                                                         # allowed: completes a Merry-Go-Round + Table Banking pair
+    POOL.require_free_type(db, phone, group_type, exclude_id)          # clearer message when they already run a group of THIS type
+    raise HTTPException(409, _phone_taken_message(r))
+
+@router.get("/phone-check")
+def phone_check(phone: str, group_type: Optional[str] = None, exclude_group_id: Optional[RowId] = None,
+                db: Session = Depends(get_db)):
+    """Used by the form to show the result before the administrator presses Save. The same rule is enforced
+    again on create and update, so this check can never be bypassed."""
+    r = _rider_with_phone(db, phone)
+    if not r:
+        return {"has_account": False}
+    name = (r.full_name or "").strip() or "no name yet"
+    base = {"has_account": True, "rider_name": name, "status": r.registration_status or "pending"}
+    pt = _pair_partner(db, phone, group_type, exclude_group_id)
+    if pt:
+        same = POOL.same_type_conflict(db, phone, group_type, exclude_group_id)
+        if same:                                                       # already runs a group of this type: still blocked
+            return {**base, "pair_ok": False,
+                    "message": f"This Treasurer ({name}) already runs a {TYPE_NAME[group_type]} group ({same.group_name}). A Treasurer can run one group of each type."}
+        return {**base, "pair_ok": True, "pair_group_name": pt.group_name, "pair_group_type": pt.group_type,
+                "message": (f"This number belongs to {name}, who already runs the {TYPE_NAME[pt.group_type]} group "
+                            f"\u201c{pt.group_name}\u201d. This new group will be paired with it and share its member-slot pool.")}
+    same = POOL.same_type_conflict(db, phone, group_type, exclude_group_id)
+    if same:
+        return {**base, "pair_ok": False,
+                "message": f"This Treasurer ({name}) already runs a {TYPE_NAME[group_type]} group ({same.group_name}). A Treasurer can run one group of each type."}
+    return {**base, "pair_ok": False, "message": _phone_taken_message(r)}
 
 # ---- Slot-request queue (must be declared BEFORE /{group_id}) ----
 @router.get("/slot-requests")
@@ -215,6 +281,8 @@ def update_group(group_id: RowId, body: GroupIn, db: Session = Depends(get_db)):
     if body.group_type != g.group_type:
         POOL.require_free_type(db, body.treasurer_phone, body.group_type, exclude_id=g.id)
     old_phone = g.treasurer_phone
+    if not same_phone(body.treasurer_phone, old_phone):
+        _require_unused_phone(db, body.treasurer_phone, body.group_type, exclude_id=g.id)   # only when the number is being changed
     person_changed = (body.treasurer_name != g.treasurer_name) or not same_phone(body.treasurer_phone, old_phone)
     if body.group_type != g.group_type:
         POOL.unlink_all(db, g)                                           # a type change leaves the old pair
