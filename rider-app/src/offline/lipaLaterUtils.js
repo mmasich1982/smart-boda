@@ -596,8 +596,8 @@ export async function clearLipaLaterCacheForRider(riderId) {
     const customersKey = `lipa_later_customers_${riderId}`;
     const summaryKey = `lipa_later_summary_${riderId}`;
     
-    await indexedDbAdapter.delete(customersKey);
-    await indexedDbAdapter.delete(summaryKey);
+    await indexedDbAdapter.kvDelete(customersKey);
+    await indexedDbAdapter.kvDelete(summaryKey);
     
     console.log('✅ Lipa Later cache cleared for rider:', riderId);
     return true;

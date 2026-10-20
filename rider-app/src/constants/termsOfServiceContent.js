@@ -52,7 +52,7 @@ export const TERMS_SECTIONS = [
     </ul>
   `},
   { num:6, id:'tos-6', title:'Your Bike Profile', html:`
-    <p>Each Rider account is associated with a single motorcycle that the Rider personally owns and operates. Bike Profile fields (such as plate number and fuel type) are entered and maintained solely by you and can be edited on your account at any time.</p>
+    <p>Each Rider account is associated with a single motorcycle that the Rider personally owns and operates. Your profile is created from the mobile number your Group Treasurer registered; fields such as your fuel type are entered and maintained by you and can be edited on your account at any time.</p>
     <p>Financial records you personally enter (earnings, expenses, savings, goals) remain private to your account unless you choose to share a generated statement.</p>
   `},
   { num:7, id:'tos-7', title:'Subscription Plans, Trials & Fees', html:`
@@ -75,7 +75,7 @@ export const TERMS_SECTIONS = [
   { num:9, id:'tos-9', title:'Account Locking, Suspension & Reactivation', html:`
     <p>If your Subscription lapses, we may lock access to trip logging and other paid features until payment resumes. A locked account does not lose its stored history.</p>
     <div class="legal-callout green"><b>Your data is always yours:</b> even while an account is locked for non-payment, you may always request a full export of your data — this is never gated behind payment.</div>
-    <p>We may also suspend or restrict an account where we reasonably suspect fraud, abuse, breach of these Terms, duplicate or fraudulent plate registration, or a legal or regulatory requirement to do so, with notice where practicable.</p>
+    <p>We may also suspend or restrict an account where we reasonably suspect fraud, abuse, breach of these Terms, fraudulent registration, or a legal or regulatory requirement to do so, with notice where practicable.</p>
   `},
   { num:10, id:'tos-10', title:'Your Data, Records & Self-Reported Information', html:`
     <p>Trip earnings, fuel and charging costs, maintenance entries, expenses, savings, goals, and remittance records are <b>self-reported by you</b>. We do not independently verify, audit, or guarantee the accuracy of this information.</p>
@@ -96,7 +96,7 @@ export const TERMS_SECTIONS = [
   { num:13, id:'tos-13', title:'Acceptable Use', html:`
     <p>You agree not to:</p>
     <ul>
-      <li>Provide false information, including false payment confirmation codes, false plate numbers, or impersonating another rider;</li>
+      <li>Provide false information, including false payment confirmation codes, or impersonating another rider;</li>
       <li>Create or attempt to create more than one account per person to evade Subscription fees, lockouts, or trial limits;</li>
       <li>Attempt to reverse-engineer, tamper with, probe, or disrupt the App, its USSD gateway, or its underlying systems;</li>
       <li>Use the App for any unlawful purpose, or in a way that infringes the rights of other riders or third parties; or</li>

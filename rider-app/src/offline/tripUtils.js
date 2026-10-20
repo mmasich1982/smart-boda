@@ -323,7 +323,7 @@ export function isEditableTrip(tripTimestamp, correctionWindowHours = 24) {
 export async function clearTripCacheForRider(riderId) {
   try {
     const cacheKey = `trip_history_${riderId}`;
-    await indexedDbAdapter.delete(cacheKey);
+    await indexedDbAdapter.kvDelete(cacheKey);
     console.log('✅ Trip history cache cleared for rider:', riderId);
     return true;
   } catch (err) {

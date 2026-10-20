@@ -2,7 +2,7 @@
 import React from 'react';
 import { Text, StyleSheet } from 'react-native';
 
-// e.g. "Number plate is required." shown directly below the offending field
+// e.g. "Mobile number is required." shown directly below the offending field
 export default function InlineWarning({ message }) {
   return <Text style={styles.text} accessibilityRole="alert">⚠️ {message}</Text>;
 }

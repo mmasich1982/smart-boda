@@ -9,9 +9,9 @@ import { useTranslation } from '../../i18n/LocalizationProvider';
 import api from '../../api/client';
 import { getLocalLanguage } from '../../offline/db';
 
-// SB-01-B: display-only, no personal data captured. Onboarding step 1 of 6.
+// SB-01-B: display-only, no personal data captured. Onboarding step 1 of 3.
 // The illustrative income/cost/profit figures are Super Admin master data (value_preview_config),
-// never hardcoded here — MobileNumberScreen and every screen after this reads live rider data instead.
+// never hardcoded here — Setup My Profile and every screen after this reads live rider data instead.
 export default function ValuePreviewScreen({ navigation }) {
   const [preview, setPreview] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -67,7 +67,7 @@ export default function ValuePreviewScreen({ navigation }) {
         onBack={handleBack} 
         eyebrow={t('preview.eyebrow') || '✨ A peek at what\'s waiting for you'}
         title={t('preview.title') || 'This Could Be Your Week 💰'}
-        subtitle={t('preview.subtitle') || 'This is what riders see every week, once their bike is set up.'} 
+        subtitle={t('preview.subtitle') || 'This is what riders see every week, once their profile is set up.'} 
       />
 
       <View style={styles.contentContainer}>
@@ -86,9 +86,9 @@ export default function ValuePreviewScreen({ navigation }) {
       </View>
 
       <PrimaryButton 
-        label={t('preview.cta') || 'Set Up My Bike Now →'}
+        label={t('preview.cta') || 'Setup My Profile Now →'}
         glow 
-        onPress={() => navigation.navigate('BikeProfile')} 
+        onPress={() => navigation.navigate('SetupProfile')} 
       />
       <CustomerCareFooter />
     </View>

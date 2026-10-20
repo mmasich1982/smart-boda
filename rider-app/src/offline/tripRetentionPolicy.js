@@ -27,7 +27,7 @@
  * • Retention Period: 6 months (180 days)
  * • Calculation: Based on trip timestamp (ts or timestamp field)
  * • Automatic Cleanup: Runs weekly (can be triggered on app startup)
- * • Rider Onboarding: Used as reference point for older trips
+ * • Rider Onboarding: NOT used for the window (the window rolls: today minus 6 months)
  * • Data Safety: All trips synced to PostgreSQL before deletion
  *
  * RATIONALE:
@@ -67,7 +67,7 @@
  * TRIGGER: Automatic weekly cleanup OR on app startup
  *
  * PROCEDURE:
- * 1. Get rider onboarding date from account data
+ * 1. Work out the cutoff: today minus 6 months (rolling window)
  * 2. Calculate 6-month retention window
  * 3. Query trip cache (trip_history_${riderId})
  * 4. Identify trips older than retention window
@@ -130,24 +130,25 @@ export const RETENTION_CONFIG = {
 };
 
 /**
- * Calculate retention cutoff date
- * Trips created before this date can be deleted from IndexedDB
- * 
- * @param {string|Date} onboardingDate - Rider's onboarding date
+ * Calculate retention cutoff date: a ROLLING window, today minus 6 calendar months.
+ * Trips created before this date can be deleted from IndexedDB (once they are synced).
+ *
+ * FIXED: this used to take the rider's ONBOARDING date and ADD 6 months to it. That gives a date in the
+ * future for any rider onboarded in the last 6 months (so every trip looked "expired") and a stale fixed date
+ * for everyone else. A rolling window does not depend on when the rider joined.
+ *
+ * @param {string|number|Date} [now] - reference time (defaults to now; injectable for tests)
  * @returns {Date} - Cutoff date (trips older than this can be deleted)
  */
-export function getRetentionCutoffDate(onboardingDate) {
+export function getRetentionCutoffDate(now = new Date()) {
   try {
-    const onboarded = new Date(onboardingDate);
-    const cutoff = new Date(onboarded);
-    
-    // Add 6 months to onboarding date
-    cutoff.setMonth(cutoff.getMonth() + 6);
-    
+    const cutoff = new Date(now);
+    if (Number.isNaN(cutoff.getTime())) throw new Error('invalid reference date');
+    cutoff.setMonth(cutoff.getMonth() - 6);
     return cutoff;
   } catch (err) {
     console.error('❌ Error calculating retention cutoff:', err);
-    // Default to 6 months from today if error
+    // Default to 6 months before today if error
     const today = new Date();
     today.setMonth(today.getMonth() - 6);
     return today;
@@ -181,10 +182,10 @@ export function isWithinRetentionWindow(tripTimestamp, cutoffDate) {
 export function getDaysUntilDeletion(tripTimestamp, cutoffDate) {
   try {
     const tripDate = new Date(tripTimestamp);
-    const now = new Date();
-    const daysOld = Math.floor((now - tripDate) / (1000 * 60 * 60 * 24));
-    const daysUntilCutoff = Math.floor((cutoffDate - tripDate) / (1000 * 60 * 60 * 24));
-    
+    // FIXED: the measure was reversed ((cutoff - trip)), so every retained trip reported "-1" days left.
+    // A trip has (trip date - cutoff) days before it ages out of the window; negative means already expired.
+    const daysUntilCutoff = Math.floor((tripDate - cutoffDate) / (1000 * 60 * 60 * 24));
+
     return Math.max(-1, daysUntilCutoff);
   } catch (err) {
     console.error('❌ Error calculating days until deletion:', err);

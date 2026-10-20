@@ -319,31 +319,6 @@ export async function clearSession() {
   }
 }
 
-// ========== PLATE CACHE ==========
-
-export async function checkLocalPlateCache(plateNumber) {
-  try {
-    const cache = (await indexedDbAdapter.kvGet('plate_check_cache')) || {};
-    return cache[plateNumber] || null;
-  } catch (err) {
-    console.error('❌ checkLocalPlateCache error:', err);
-    return null;
-  }
-}
-
-export async function saveLocalPlateCache(plateNumber, data) {
-  try {
-    const cache = (await indexedDbAdapter.kvGet('plate_check_cache')) || {};
-    cache[plateNumber] = data;
-    await indexedDbAdapter.kvSet('plate_check_cache', cache);
-    console.log('✅ Saved plate cache:', plateNumber);
-    return true;
-  } catch (err) {
-    console.error('❌ saveLocalPlateCache error:', err);
-    return false;
-  }
-}
-
 // ========== TRIP RULE CONFIG CACHE ==========
 
 export async function getCachedTripRuleConfig() {
@@ -733,6 +708,14 @@ export async function getBatteryHistoryFromCache(riderId) {
 // Lipa Later transactions are retained for 1 year (as per requirements)
 
 /**
+ * A row that is still waiting to reach the server must never be removed by retention cleanup, however old it is.
+ */
+function isUnsyncedRow(row) {
+  const s = row && (row.syncStatus || row.sync_status);
+  return s === 'pending' || s === 'syncing' || s === 'failed';
+}
+
+/**
  * Clean up data older than 6 months
  * Called periodically (e.g., weekly) to maintain storage cycle
  * ✅ CORRECTED: Using proper store names
@@ -763,7 +746,7 @@ export async function cleanupOldData() {
     try {
       const trips = await indexedDbAdapter.queryRows('trips');
       for (const trip of trips) {
-        if (trip.created_at && trip.created_at < sixMonthsAgoIso) {
+        if (trip.created_at && trip.created_at < sixMonthsAgoIso && !isUnsyncedRow(trip)) {
           await indexedDbAdapter.deleteRow('trips', trip.id);
           tripsCleaned++;
         }
@@ -777,7 +760,7 @@ export async function cleanupOldData() {
     try {
       const fuelEntries = await indexedDbAdapter.queryRows('fuelEntry');
       for (const entry of fuelEntries) {
-        if (entry.created_at && entry.created_at < sixMonthsAgoIso) {
+        if (entry.created_at && entry.created_at < sixMonthsAgoIso && !isUnsyncedRow(entry)) {
           await indexedDbAdapter.deleteRow('fuelEntry', entry.id);
           entriesCleaned++;
         }
@@ -791,7 +774,7 @@ export async function cleanupOldData() {
     try {
       const batteryEntries = await indexedDbAdapter.queryRows('batteryEntry');
       for (const entry of batteryEntries) {
-        if (entry.created_at && entry.created_at < sixMonthsAgoIso) {
+        if (entry.created_at && entry.created_at < sixMonthsAgoIso && !isUnsyncedRow(entry)) {
           await indexedDbAdapter.deleteRow('batteryEntry', entry.id);
           entriesCleaned++;
         }
@@ -805,7 +788,7 @@ export async function cleanupOldData() {
     try {
       const statements = await indexedDbAdapter.queryRows('statements');
       for (const stmt of statements) {
-        if (stmt.created_at && stmt.created_at < sixMonthsAgoIso) {
+        if (stmt.created_at && stmt.created_at < sixMonthsAgoIso && !isUnsyncedRow(stmt)) {
           await indexedDbAdapter.deleteRow('statements', stmt.id);
           statementsCleaned++;
         }
@@ -818,7 +801,7 @@ export async function cleanupOldData() {
     try {
       const lipaLaterRecords = await indexedDbAdapter.queryRows('lipaLater');
       for (const record of lipaLaterRecords) {
-        if (record.created_at && record.created_at < oneYearAgoIso) {
+        if (record.created_at && record.created_at < oneYearAgoIso && !isUnsyncedRow(record)) {
           await indexedDbAdapter.deleteRow('lipaLater', record.id);
           lipaLaterCleaned++;
         }
@@ -884,10 +867,6 @@ export default {
   getLocalAuthToken,
   saveLocalAuthToken,
   clearSession,
-  
-  // Plate cache
-  checkLocalPlateCache,
-  saveLocalPlateCache,
   
   // Trip rules
   getCachedTripRuleConfig,

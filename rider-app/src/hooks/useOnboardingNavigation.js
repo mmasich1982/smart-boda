@@ -10,9 +10,7 @@ const OnboardingContext = createContext();
 export function OnboardingProvider({ children }) {
   const [formState, setFormState] = useState({
     language: null,
-    bikeProfile: null,
-    mobileNumber: null,
-    fullName: null,
+    profile: null,
   });
 
   const updateFormState = (key, value) => {
@@ -50,37 +48,15 @@ export function useOnboardingNavigation(navigation) {
     navigation.goBack();
   };
 
-  const navigateToMobileNumber = (bikeData) => {
-    // Preserve bike profile data before navigating
-    updateFormState('bikeProfile', bikeData);
-    navigateToScreen('MobileNumber', { bikeData });
-  };
-
-  const navigateToProfileConfirmation = (mobileData, riderId) => {
-    // Preserve mobile number data before navigating
-    updateFormState('mobileNumber', mobileData);
-    // Use navigate() instead of replace() to allow back navigation
-    navigateToScreen('ProfileConfirmation', { 
-      mobileData,
-      riderId 
-    });
-  };
-
   const navigateToCreatePin = (profileData, riderId) => {
-    // Preserve profile data before navigating
-    updateFormState('fullName', profileData);
-    // Final step - use navigate() to maintain navigation stack
-    navigateToScreen('CreatePin', { 
-      profileData,
-      riderId 
-    });
+    // Setup My Profile -> Create Your Login PIN. The rider_id is what CreatePin and Home use.
+    updateFormState('profile', profileData);
+    navigateToScreen('CreatePin', { riderId });
   };
 
   return {
     navigateToScreen,
     navigateBack,
-    navigateToMobileNumber,
-    navigateToProfileConfirmation,
     navigateToCreatePin,
     formState,
   };

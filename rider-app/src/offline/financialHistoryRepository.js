@@ -10,8 +10,8 @@
  * - Net profit calculations
  * 
  * DATA RETENTION POLICY:
- * ✅ 6-month rolling retention window from rider's onboarding date
- * ✅ Auto-deletion of oldest month at end of each 6-month cycle
+ * ✅ 6-month ROLLING retention window (today minus 6 months), independent of the onboarding date
+ * ✅ Weekly cleanup removes synced rows older than 6 months (never anything newer, never unsynced rows)
  * ✅ All queries within 6-month bracket served from IndexedDB
  * ⚠️ Queries beyond 6 months routed to Smart Boda Admin (Phase 2)
  * 
@@ -19,7 +19,7 @@
  * ✅ Transitioned from LocalStorage to IndexedDB via indexedDbAdapter
  * ✅ ❌ NO LocalStore - completely removed
  * ✅ All operations are fully async/await
- * ✅ Structured queries with indexes on type, date, timestamp, riderId
+ * ✅ Structured queries with indexes on type, date, timestamp, rider_id
  * ✅ Transaction queue prevents concurrent access conflicts
  * ✅ Maintains backward compatibility with existing financial logic
  */
@@ -35,57 +35,69 @@ const RETENTION_CONFIG_KEY = 'financial_retention_config';
  */
 
 /**
- * Calculate if transaction falls within rider's 6-month retention window
+ * RETENTION WINDOW: 6 months, ROLLING (today minus 6 calendar months).
+ *
+ * FIXED: the window used to run from the rider's onboarding date to onboarding + 6 months. Once a rider had been on
+ * the app for 6 months the window "ended" and every query was refused, and the cleanup then deleted the oldest 5
+ * months of the NEW cycle (including records still inside the last six months) and moved the onboarding date to
+ * "now". A rolling window has no end date and never removes anything that is less than six months old.
  */
-export function isWithinRetentionWindow(transactionTimestamp, riderOnboardingDate) {
-  const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
-  const windowEndDate = riderOnboardingDate + SIX_MONTHS_MS;
-  return transactionTimestamp >= riderOnboardingDate && transactionTimestamp <= windowEndDate;
+const RETENTION_MONTHS = 6;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function addMonthsMs(ms, months) {
+  const d = new Date(ms);
+  d.setMonth(d.getMonth() + months);
+  return d.getTime();
+}
+
+/** Oldest moment still kept on the phone, in ms (today minus 6 months). */
+export function getRetentionCutoffMs(now = Date.now()) {
+  return addMonthsMs(now, -RETENTION_MONTHS);
 }
 
 /**
- * Get current retention window for rider
+ * Is a transaction inside the rolling 6-month window?
+ * The second argument is accepted and ignored so existing callers keep working.
+ */
+export function isWithinRetentionWindow(transactionTimestamp, _riderOnboardingDate) {
+  const ts = typeof transactionTimestamp === 'number' ? transactionTimestamp : new Date(transactionTimestamp).getTime();
+  if (!Number.isFinite(ts)) return true; // a record we cannot date is kept, never dropped
+  return ts >= getRetentionCutoffMs();
+}
+
+/**
+ * Current retention window for a rider.
+ *   startDate     : oldest moment kept (the later of onboarding and today minus 6 months)
+ *   endDate       : now
+ *   daysRemaining : days until the rider's OLDEST data starts rolling off (0 once the rider is past 6 months)
+ *   isActive      : always true (a rolling window never closes)
  */
 export async function getRetentionWindowInfo(riderId) {
+  const now = Date.now();
+  const cutoff = getRetentionCutoffMs(now);
   try {
     const config = await indexedDbAdapter.kvGet(`${RETENTION_CONFIG_KEY}_${riderId}`);
-    
-    if (!config || !config.onboardingDate) {
-      console.warn('⚠️ No onboarding date found for rider:', riderId);
-      return {
-        startDate: null,
-        endDate: null,
-        daysRemaining: 0,
-        isActive: false
-      };
-    }
-
-    const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
-    const onboardingDate = config.onboardingDate;
-    const endDate = onboardingDate + SIX_MONTHS_MS;
-    const now = Date.now();
-    const daysRemaining = Math.max(0, Math.ceil((endDate - now) / (24 * 60 * 60 * 1000)));
-    
+    const onboarding = config && config.onboardingDate ? Number(config.onboardingDate) : null;
+    const rollsOffAt = onboarding ? addMonthsMs(onboarding, RETENTION_MONTHS) : null;
     return {
-      startDate: onboardingDate,
-      endDate,
-      daysRemaining,
-      isActive: now <= endDate,
-      progressPercentage: ((now - onboardingDate) / SIX_MONTHS_MS) * 100
+      startDate: onboarding ? Math.max(onboarding, cutoff) : cutoff,
+      endDate: now,
+      daysRemaining: rollsOffAt ? Math.max(0, Math.ceil((rollsOffAt - now) / DAY_MS)) : 0,
+      isActive: true,
+      rolling: true,
+      progressPercentage: onboarding ? Math.min(100, ((now - onboarding) / (rollsOffAt - onboarding)) * 100) : 100
     };
   } catch (err) {
     console.error('[getRetentionWindowInfo] error:', err);
-    return {
-      startDate: null,
-      endDate: null,
-      daysRemaining: 0,
-      isActive: false
-    };
+    return { startDate: cutoff, endDate: now, daysRemaining: 0, isActive: true, rolling: true, progressPercentage: 100 };
   }
 }
 
 /**
- * Initialize retention configuration for rider
+ * Initialize retention configuration for rider.
+ * onboardingDate is the rider's real onboarding date; it is informational and is never moved.
  */
 export async function initializeRetentionConfig(riderId, onboardingDate = Date.now()) {
   try {
@@ -94,7 +106,7 @@ export async function initializeRetentionConfig(riderId, onboardingDate = Date.n
       onboardingDate,
       createdAt: Date.now(),
       lastCycleCleanupDate: null,
-      nextCleanupDate: onboardingDate + (6 * 30 * 24 * 60 * 60 * 1000)
+      nextCleanupDate: Date.now() + WEEK_MS   // cleanup is weekly
     };
 
     await indexedDbAdapter.kvSet(`${RETENTION_CONFIG_KEY}_${riderId}`, config);
@@ -106,46 +118,52 @@ export async function initializeRetentionConfig(riderId, onboardingDate = Date.n
   }
 }
 
+/** Rows that are still waiting to reach the server must never be removed, however old. */
+const isUnsynced = (r) => ['pending', 'syncing', 'failed'].includes(r && (r.syncStatus || r.sync_status));
+
+/** Rows of a store whose ts lies in [from, to] (the adapter has no range query, so this filters on the ts field). */
+async function queryByTsRange(store, from, to) {
+  return indexedDbAdapter.queryRows(store, (r) => {
+    const ts = r.ts || r.timestamp || 0;
+    return ts >= from && ts <= to;
+  });
+}
+
 /**
- * Cleanup oldest month data when retention window completes
+ * Remove financial history and statement rows older than 6 months (rolling).
+ * Never removes anything less than 6 months old, and never removes rows still waiting to sync.
+ * Safe to run any time; weekly is enough. All data stays archived in PostgreSQL.
  */
 export async function performRetentionCycleCleanup(riderId) {
   try {
     console.log(`🗑️ performRetentionCycleCleanup: Starting cleanup for rider ${riderId}`);
 
-    const config = await indexedDbAdapter.kvGet(`${RETENTION_CONFIG_KEY}_${riderId}`);
-    if (!config) {
-      throw new Error(`No retention config for rider ${riderId}`);
-    }
+    const config = (await indexedDbAdapter.kvGet(`${RETENTION_CONFIG_KEY}_${riderId}`)) || (await initializeRetentionConfig(riderId));
 
     const now = Date.now();
-    const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
-    const windowStart = config.onboardingDate;
-    const ONE_MONTH_MS = 30 * 24 * 60 * 60 * 1000;
-    const deleteOlderThan = windowStart + (5 * ONE_MONTH_MS);
+    const deleteOlderThan = getRetentionCutoffMs(now);
+    const rowTs = (r) => r.ts || r.timestamp || 0;
 
-    const allRecords = await indexedDbAdapter.queryByIndex(FINANCIAL_STORE, 'riderId', riderId);
-    
+    const allRecords = await indexedDbAdapter.queryRowsByIndex(FINANCIAL_STORE, 'rider_id', riderId);
+    const recordsToDelete = allRecords.filter((r) => rowTs(r) > 0 && rowTs(r) < deleteOlderThan && !isUnsynced(r));
+
     let deletedRecords = 0;
-    const recordsToDelete = allRecords.filter(r => r.ts < deleteOlderThan || r.timestamp < deleteOlderThan);
-
     for (const record of recordsToDelete) {
       await indexedDbAdapter.deleteRow(FINANCIAL_STORE, record.id);
       deletedRecords++;
     }
 
-    const allStatements = await indexedDbAdapter.queryByIndex(STATEMENTS_STORE, 'riderId', riderId);
-    let deletedStmt = 0;
-    const stmtsToDelete = allStatements.filter(s => (s.ts || s.timestamp || 0) < deleteOlderThan);
+    const allStatements = await indexedDbAdapter.queryRowsByIndex(STATEMENTS_STORE, 'rider_id', riderId);
+    const stmtsToDelete = allStatements.filter((s) => rowTs(s) > 0 && rowTs(s) < deleteOlderThan && !isUnsynced(s));
 
+    let deletedStmt = 0;
     for (const stmt of stmtsToDelete) {
       await indexedDbAdapter.deleteRow(STATEMENTS_STORE, stmt.id);
       deletedStmt++;
     }
 
-    config.lastCycleCleanupDate = now;
-    config.onboardingDate = now;
-    config.nextCleanupDate = now + SIX_MONTHS_MS;
+    config.lastCycleCleanupDate = now;   // onboardingDate is NOT touched any more
+    config.nextCleanupDate = now + WEEK_MS;
 
     await indexedDbAdapter.kvSet(`${RETENTION_CONFIG_KEY}_${riderId}`, config);
 
@@ -295,7 +313,7 @@ export async function getEarliestTransactionDate(riderId) {
       return null;
     }
 
-    const allTransactions = await indexedDbAdapter.queryByIndex(FINANCIAL_STORE, 'riderId', riderId);
+    const allTransactions = await indexedDbAdapter.queryRowsByIndex(FINANCIAL_STORE, 'rider_id', riderId);
     
     if (allTransactions.length === 0) {
       return null;
@@ -369,7 +387,7 @@ export async function syncFinancialDataFromAPI(riderId, timeRange = 'all_time') 
 
 export async function getAllTransactions(riderId, limit = 1000, offset = 0) {
   try {
-    const allTransactions = await indexedDbAdapter.queryByIndex(FINANCIAL_STORE, 'riderId', riderId);
+    const allTransactions = await indexedDbAdapter.queryRowsByIndex(FINANCIAL_STORE, 'rider_id', riderId);
     const windowInfo = await getRetentionWindowInfo(riderId);
     
     if (!windowInfo.isActive) {
@@ -411,7 +429,7 @@ export async function getTransactionsByType(riderId, type, limit = 1000) {
       return { transactions: [], count: 0, isWithinRetention: false };
     }
 
-    const allByType = await indexedDbAdapter.queryByIndex(FINANCIAL_STORE, 'type', type);
+    const allByType = await indexedDbAdapter.queryRowsByIndex(FINANCIAL_STORE, 'type', type);
     const filtered = allByType.filter(t => 
       t.rider_id === riderId && 
       isWithinRetentionWindow(t.ts || t.timestamp || 0, windowInfo.startDate)
@@ -451,7 +469,7 @@ export async function getTransactionsByDateRange(riderId, startTime, endTime) {
       };
     }
 
-    const allInRange = await indexedDbAdapter.queryByRange(FINANCIAL_STORE, 'ts', adjustedStart, adjustedEnd);
+    const allInRange = await queryByTsRange(FINANCIAL_STORE, adjustedStart, adjustedEnd);
     const filtered = allInRange.filter(t => t.rider_id === riderId);
     
     filtered.sort((a, b) => (b.ts || b.timestamp) - (a.ts || a.timestamp));
@@ -792,7 +810,8 @@ export async function batchImportTransactions(riderId, transactions) {
 
 export async function getFinancialStoreStats() {
   try {
-    const stats = await indexedDbAdapter.getStoreStats(FINANCIAL_STORE);
+    const recordCount = await indexedDbAdapter.countRows(FINANCIAL_STORE);
+    const stats = { recordCount };
     console.log('✅ getFinancialStoreStats:', stats);
     return stats;
   } catch (err) {

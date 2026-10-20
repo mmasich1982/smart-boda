@@ -1,9 +1,10 @@
+// rider-app/src/ofline/adapters/indexedDbAdapter.js
 /**
  * ============================================================================
  * IndexedDB Adapter - CONSOLIDATED & PRODUCTION-READY
  * ============================================================================
  * 
- * Version: 3.1 (DB_VERSION = 4 - CRITICAL FIX)
+ * Version: 3.2 (DB_VERSION = 5 - adds the chamaRecords store for My Savings / My Loans / My Chama history)
  * Status: ✅ PRODUCTION-READY WITH AUDIT FIXES
  * 
  * AUDIT FIXES (24 AUG 2026):
@@ -44,7 +45,7 @@
  */
 
 const DB_NAME = 'SmartBodaOfflineDB';
-const DB_VERSION = 4; // Incremented: schema fix for riderId index consistency
+const DB_VERSION = 5; // v5: added chamaRecords store (Chama history cache, 6-month retention). v4: riderId index consistency fix
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 100; // milliseconds
 
@@ -157,6 +158,22 @@ const STORES = {
     ]
   },
   
+  // Chama history cache (contributions, repayments, deposits, ledger entries). Six-month retention:
+  // see chamaRetentionPolicy.js / chamaRepository.js. Only rows the server already has are ever removed.
+  chamaRecords: {
+    keyPath: 'id',
+    description: 'Chama / SACCO / Loans history cache (server-sourced, 6-month rolling window)',
+    indexes: [
+      { name: 'ts', keyPath: 'ts' },
+      { name: 'timestamp', keyPath: 'timestamp' },
+      { name: 'rider_id', keyPath: 'rider_id' },
+      { name: 'collection', keyPath: 'collection' },
+      { name: 'date', keyPath: 'date' },
+      { name: 'createdAt', keyPath: 'createdAt' },
+      { name: 'syncStatus', keyPath: 'syncStatus' }
+    ]
+  },
+
   // Lipa Later transactions
   // ✅ AUDIT FIX: Consistent rider_id index naming
   lipaLater: {

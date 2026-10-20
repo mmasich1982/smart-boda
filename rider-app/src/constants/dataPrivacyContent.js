@@ -25,7 +25,7 @@ export const PRIVACY_SECTIONS = [
     <p class="subhead">Account & security data</p>
     <ul><li>Your 4-digit login PIN (stored in hashed/encrypted form — not visible as plain text, even to our staff).</li></ul>
     <p class="subhead">Motorcycle data</p>
-    <ul><li>Plate number, fuel type, and odometer readings you record for the single motorcycle you own and operate.</li></ul>
+    <ul><li>Your mobile number, fuel type, and odometer readings you record for the single motorcycle you own and operate.</li></ul>
     <p class="subhead">Trip & earnings data</p>
     <ul><li>Trip counts and fares you manually enter. <b>We do not collect continuous or background GPS location data</b> — trips are self-logged, not tracked in real time.</li></ul>
     <p class="subhead">Fuel, charging & maintenance data</p>

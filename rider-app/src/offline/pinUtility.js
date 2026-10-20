@@ -96,7 +96,7 @@ export async function verifyPinLocally(riderId, enteredPin) {
         };
       } else {
         // Lockout expired, clear it
-        await indexedDbAdapter.delete(lockedUntilKey);
+        await indexedDbAdapter.kvDelete(lockedUntilKey);
         console.log('✅ Lockout expired, cleared');
       }
     }
@@ -250,9 +250,9 @@ export async function clearPinData(riderId) {
     const attemptsKey = `pin_attempts_${riderId}`;
     const lockedUntilKey = `pin_locked_until_${riderId}`;
 
-    await indexedDbAdapter.delete(pinKey);
-    await indexedDbAdapter.delete(attemptsKey);
-    await indexedDbAdapter.delete(lockedUntilKey);
+    await indexedDbAdapter.kvDelete(pinKey);
+    await indexedDbAdapter.kvDelete(attemptsKey);
+    await indexedDbAdapter.kvDelete(lockedUntilKey);
 
     console.log(`✅ Cleared PIN data for rider ${riderId}`);
     return true;
@@ -285,7 +285,7 @@ export async function resetLoginAttempts(riderId) {
     const lockedUntilKey = `pin_locked_until_${riderId}`;
 
     await indexedDbAdapter.kvSet(attemptsKey, JSON.stringify({ attempts: 0, timestamp: Date.now() }));
-    await indexedDbAdapter.delete(lockedUntilKey);
+    await indexedDbAdapter.kvDelete(lockedUntilKey);
 
     console.log(`✅ Reset login attempts for rider ${riderId}`);
     return true;

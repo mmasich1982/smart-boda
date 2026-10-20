@@ -116,7 +116,7 @@ export async function getAllStatements(riderId, limit = 100, offset = 0) {
       };
     }
 
-    const allStatements = await indexedDbAdapter.queryByIndex(STATEMENTS_STORE, 'riderId', riderId);
+    const allStatements = await indexedDbAdapter.queryRowsByIndex(STATEMENTS_STORE, 'rider_id', riderId);
     
     const filtered = allStatements.filter(s => 
       isWithinRetentionWindow(s.ts || s.generatedAt || 0, windowInfo.startDate)
@@ -253,7 +253,7 @@ export async function getAllDetailedStatementRequests(riderId) {
       };
     }
 
-    const allRequests = await indexedDbAdapter.queryByIndex(STATEMENT_REQUESTS_STORE, 'riderId', riderId);
+    const allRequests = await indexedDbAdapter.queryRowsByIndex(STATEMENT_REQUESTS_STORE, 'rider_id', riderId);
     
     const filtered = allRequests.filter(r => 
       isWithinRetentionWindow(r.ts || r.requestedAt || 0, windowInfo.startDate)
@@ -429,7 +429,7 @@ export async function getStatementsByDateRange(riderId, startTime, endTime) {
     const adjustedStart = Math.max(startTime, windowInfo.startDate);
     const adjustedEnd = Math.min(endTime, windowInfo.endDate);
 
-    const allStatements = await indexedDbAdapter.queryByRange(STATEMENTS_STORE, 'ts', adjustedStart, adjustedEnd);
+    const allStatements = await indexedDbAdapter.queryRows(STATEMENTS_STORE, (s) => { const ts = s.ts || s.timestamp || 0; return ts >= adjustedStart && ts <= adjustedEnd; });
     
     const filtered = allStatements.filter(s => s.rider_id === riderId);
 

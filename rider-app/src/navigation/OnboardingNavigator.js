@@ -17,9 +17,7 @@ import { View, Text } from 'react-native';
 // ✅ ORIGINAL ONBOARDING SCREENS (correct paths)
 import LanguageSelectionScreen from '../screens/onboarding/LanguageSelectionScreen';
 import ValuePreviewScreen from '../screens/onboarding/ValuePreviewScreen';
-import BikeProfileScreen from '../screens/onboarding/BikeProfileScreen';
-import MobileNumberScreen from '../screens/onboarding/MobileNumberScreen';
-import ProfileConfirmationScreen from '../screens/onboarding/ProfileConfirmationScreen';
+import SetupMyProfileScreen from '../screens/onboarding/SetupMyProfileScreen';
 import CreatePinScreen from '../screens/onboarding/CreatePinScreen';
 
 
@@ -70,9 +68,7 @@ function useInitialRoute() {
         // Mid-onboarding - resume at exact step
         const stepToScreen = {
           valuePreview: 'ValuePreview',
-          bikeProfile: 'BikeProfile',
-          number: 'MobileNumber',
-          profileConfirm: 'ProfileConfirmation',
+          setupProfile: 'SetupProfile',
           createPin: 'CreatePin',
         };
         
@@ -221,16 +217,8 @@ export default function OnboardingNavigator() {
           component={ValuePreviewScreen} 
         />
         <Stack.Screen 
-          name="BikeProfile" 
-          component={BikeProfileScreen} 
-        />
-        <Stack.Screen 
-          name="MobileNumber" 
-          component={MobileNumberScreen} 
-        />
-        <Stack.Screen 
-          name="ProfileConfirmation" 
-          component={ProfileConfirmationScreen} 
+          name="SetupProfile" 
+          component={SetupMyProfileScreen} 
         />
         <Stack.Screen 
           name="CreatePin" 
@@ -272,10 +260,8 @@ export default function OnboardingNavigator() {
  * Screen Names Available:
  * - "LanguageSelection" → First time user picks language
  * - "ValuePreview" → Onboarding step 1
- * - "BikeProfile" → Onboarding step 2
- * - "MobileNumber" → Onboarding step 3
- * - "ProfileConfirmation" → Onboarding step 4
- * - "CreatePin" → Onboarding step 5
+ * - "SetupProfile" → Onboarding step 2 (Setup My Profile)
+ * - "CreatePin" → Onboarding step 3 (Create Your Login PIN, then Confirm Your Login PIN)
  * - "PinLogin" → Registered user login
  * - "ForgotPin" → Forgot PIN flow
  * - "ForgotPinConfirmation" → Confirmation screen

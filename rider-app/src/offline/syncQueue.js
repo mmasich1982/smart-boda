@@ -139,6 +139,14 @@ const RECORD_TYPE_VALIDATORS = {
     requiredEndpointParams: ['rider_id'],
     description: 'Motorcycle Service/Maintenance Entry',
   },
+  // ✅ CHAMA: "I have seen this notice" acknowledgement. Harmless to repeat (the endpoint is idempotent), so LOW priority.
+  // Money-moving Chama actions are deliberately NOT queued: My Savings / My Loans / My Chama require a live connection.
+  chama_notification_ack: {
+    priority: PRIORITY_LEVELS.LOW,
+    requiredFields: ['rider_id'],
+    requiredEndpointParams: [],
+    description: 'Chama Notification Acknowledgement',
+  },
   // ✅ CRITICAL FIX: Added missing other_expense_entry validator
   other_expense_entry: {
     priority: PRIORITY_LEVELS.NORMAL,
@@ -274,7 +282,7 @@ export async function enqueue(type, data) {
     let endpoint = '/api/sync'; // Default fallback
     
     // ✅ Bike profile: Match BikeProfileRequest schema exactly
-    // Backend schema requires: device_id, number_plate, fuel_type_code
+    // Backend schema: device_id, fuel_type_code (+ mobile_number, the rider's identifier).
     if (type === 'bike_profile') {
       // Get device_id from local context or generate one
       let deviceId = null;
@@ -289,8 +297,8 @@ export async function enqueue(type, data) {
       
       normalizedData = {
         device_id: deviceId,  // ✅ REQUIRED: Backend BikeProfileRequest needs this
-        number_plate: data?.number_plate?.toUpperCase(),
         fuel_type_code: data?.fuel_type_code,
+        mobile_number: data?.mobile_number,
         // Note: submitted_at is NOT in BikeProfileRequest schema, backend doesn't expect it
       };
       
@@ -300,7 +308,7 @@ export async function enqueue(type, data) {
       
       console.log('✅ [enqueue] Bike profile normalized:', {
         device_id: normalizedData.device_id ? '***' : 'MISSING',
-        number_plate: normalizedData.number_plate,
+        mobile_number: normalizedData.mobile_number ? '***' : 'MISSING',
         fuel_type_code: normalizedData.fuel_type_code,
         endpoint: endpoint,
       });
@@ -437,7 +445,7 @@ export async function processPendingSync() {
           
           console.log(`📤 Syncing ${item.type} (${item.id}) to ${syncEndpoint}`);
           console.log(`   Payload: ${JSON.stringify(item.data, null, 2)}`);
-          console.log(`   Expected Schema: BikeProfileRequest { device_id, number_plate, fuel_type_code }`);
+          console.log(`   Expected Schema: BikeProfileRequest { device_id, fuel_type_code, mobile_number }`);
         }
         // ✅ CRITICAL FIX: Maintenance Entry - proper validation and endpoint construction
         else if (item.type === 'maintenance_entry') {
@@ -841,14 +849,10 @@ export async function addToSyncQueue(record) {
     }
 
     // ✅ VALIDATE BIKE PROFILE SPECIFIC PARAMETERS
-    // Backend BikeProfileRequest schema requires: device_id, number_plate, fuel_type_code
+    // Backend BikeProfileRequest schema: device_id, fuel_type_code, mobile_number (optional)
     if (record.type === 'bike_profile') {
       if (!record.data.device_id || !record.data.device_id.toString().trim()) {
         throw new Error('Bike profile: Missing device_id (REQUIRED by backend BikeProfileRequest schema)');
-      }
-
-      if (!record.data.number_plate || !record.data.number_plate.toString().trim()) {
-        throw new Error('Bike profile: Missing number_plate');
       }
 
       if (!record.data.fuel_type_code || !record.data.fuel_type_code.toString().trim()) {
@@ -858,7 +862,7 @@ export async function addToSyncQueue(record) {
       console.log('✅ Bike profile validated for queue:', {
         id: record.id,
         device_id: record.data.device_id ? '✓' : '✗ MISSING',
-        number_plate: record.data.number_plate,
+        mobile_number: record.data.mobile_number ? '✓' : '(none)',
         fuel_type_code: record.data.fuel_type_code
       });
     }
@@ -1854,10 +1858,10 @@ export async function checkQueueHealth() {
  */
 export async function resetQueueCompletely() {
   try {
-    await indexedDbAdapter.delete(SYNC_QUEUE_KEY);
-    await indexedDbAdapter.delete(SYNC_PRIORITY_QUEUE_KEY);
-    await indexedDbAdapter.delete(SYNC_BATCH_KEY);
-    await indexedDbAdapter.delete(SYNC_STATS_KEY);
+    await indexedDbAdapter.kvDelete(SYNC_QUEUE_KEY);
+    await indexedDbAdapter.kvDelete(SYNC_PRIORITY_QUEUE_KEY);
+    await indexedDbAdapter.kvDelete(SYNC_BATCH_KEY);
+    await indexedDbAdapter.kvDelete(SYNC_STATS_KEY);
     
     console.log('🗑️  Completely reset sync queue and all related data');
     return true;

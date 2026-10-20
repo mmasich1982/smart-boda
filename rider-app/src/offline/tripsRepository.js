@@ -9,8 +9,8 @@
  * KEY MIGRATION CHANGES:
  * ✅ Migrated from LocalStore to IndexedDBAdapter
  * ✅ All operations now use IndexedDB 'trips' store with proper indexing
- * ✅ Implements 6-month data retention window (from rider onboarding date)
- * ✅ Automatic cleanup of data older than 6-month retention window
+ * ✅ Implements a ROLLING 6-month data retention window (today minus 6 months)
+ * ✅ Cleanup of synced data older than 6 months (run weekly by retentionScheduler.js)
  * ✅ Proper timestamp handling with both 'ts' and 'timestamp' support
  * ✅ Supports both 'method' and 'paymentMethod' for backward compatibility
  * ✅ Lipa Later payment tracking with proper date attribution
@@ -43,7 +43,7 @@ import indexedDbAdapter from './adapters/indexedDbAdapter';
 // ========== CONSTANTS ==========
 
 const TRADING_DAY_START_HOUR = 4; // 4 AM local time
-const DATA_RETENTION_MONTHS = 6; // 6-month retention window from rider onboarding
+const DATA_RETENTION_MONTHS = 6; // rolling 6-month retention window (today minus 6 months)
 
 // ========== RETENTION WINDOW HELPERS ==========
 
@@ -116,8 +116,8 @@ export async function getRiderOnboardingDate(riderId) {
 }
 
 /**
- * Calculate the retention window end date for a rider
- * Returns: onboarding_date + 6 months
+ * LEGACY helper, kept so existing imports keep working: onboarding date + 6 months.
+ * It is NO LONGER used to decide which trips are inside the retention window (see isWithinRetentionWindow).
  */
 export function getRetentionWindowEnd(onboardingDate) {
   const date = new Date(onboardingDate);
@@ -126,21 +126,26 @@ export function getRetentionWindowEnd(onboardingDate) {
 }
 
 /**
- * Check if a date falls within the retention window
+ * Oldest moment kept on the phone: today minus 6 calendar months (rolling window).
  */
-export function isWithinRetentionWindow(recordDate, onboardingDate) {
+export function getRetentionCutoff(now = new Date()) {
+  const cutoff = new Date(now);
+  cutoff.setMonth(cutoff.getMonth() - DATA_RETENTION_MONTHS);
+  return cutoff;
+}
+
+/**
+ * Check if a date falls within the rolling 6-month retention window.
+ *
+ * FIXED: this used to require  onboarding date <= record <= onboarding date + 6 months. For a rider onboarded
+ * more than 6 months ago, every NEW trip is later than that end date, so today's trip was reported as "outside the
+ * window". The window now rolls with today's date and has no upper limit. The second argument is accepted and
+ * ignored so existing callers keep working.
+ */
+export function isWithinRetentionWindow(recordDate, _onboardingDate) {
   const record = new Date(recordDate);
-  const onboarded = new Date(onboardingDate);
-  const windowEnd = getRetentionWindowEnd(onboarded);
-  
-  const isWithin = record >= onboarded && record <= windowEnd;
-  if (!isWithin) {
-    console.log('[isWithinRetentionWindow] ❌ Outside retention window');
-    console.log('  - record:', record.toISOString());
-    console.log('  - onboarded:', onboarded.toISOString());
-    console.log('  - windowEnd:', windowEnd.toISOString());
-  }
-  return isWithin;
+  if (Number.isNaN(record.getTime())) return true;   // a record we cannot date is kept, never dropped
+  return record >= getRetentionCutoff();
 }
 
 /**
@@ -592,35 +597,34 @@ export async function getTripById(tripId) {
 // ========== DATA RETENTION & CLEANUP ==========
 
 /**
- * Delete trips outside the retention window
- * This runs periodically (e.g., at startup or daily) to clean up old data
- * 
- * ✅ NEW: Automatic cleanup of data older than 6-month retention window
- * Called when retention window expires for a rider
+ * Delete trips older than the rolling 6-month window.
+ * Called weekly by retentionScheduler.js.
+ *
+ * Safe by design: a trip that is still waiting in the sync queue (or marked pending / syncing / failed) is NEVER
+ * deleted, however old. Every trip is archived in PostgreSQL once synced, so only the phone's copy is removed.
+ *
+ * @param {string} riderId
+ * @param {{unsyncedIds?: Set<string>}} [opts] ids of records still in the sync queue (the scheduler passes them in)
+ * @returns {Promise<number>} number of trips deleted
  */
-export async function cleanupOldTrips(riderId) {
+export async function cleanupOldTrips(riderId, opts = {}) {
   try {
-    const onboardingDate = await getRiderOnboardingDate(riderId);
-    const windowEnd = getRetentionWindowEnd(onboardingDate);
-    const now = Date.now();
-    
-    // Only clean if window has expired
-    if (now <= windowEnd) {
-      console.log('[cleanupOldTrips] retention window still active, skipping cleanup');
-      return 0;
-    }
-    
-    // Query trips outside retention window
-    const allTrips = await indexedDbAdapter.queryRows('trips', (t) => {
+    const cutoff = getRetentionCutoff().getTime();
+    const unsynced = opts.unsyncedIds || new Set();
+    const protectedStatus = ['pending', 'syncing', 'failed'];
+
+    const oldTrips = await indexedDbAdapter.queryRows('trips', (t) => {
+      if (riderId && t.rider_id !== riderId) return false;
       const ts = t.ts || t.timestamp;
-      return !isWithinRetentionWindow(ts, onboardingDate);
+      if (!ts || ts >= cutoff) return false;
+      if (protectedStatus.includes(t.syncStatus) || unsynced.has(t.id)) return false;
+      return true;
     });
-    
-    console.log('[cleanupOldTrips] found', allTrips.length, 'trips outside retention window');
-    
-    // Delete each trip
+
+    console.log('[cleanupOldTrips] found', oldTrips.length, 'synced trips older than 6 months');
+
     let deletedCount = 0;
-    for (const trip of allTrips) {
+    for (const trip of oldTrips) {
       try {
         await deleteTrip(trip.id);
         deletedCount++;
@@ -628,7 +632,7 @@ export async function cleanupOldTrips(riderId) {
         console.warn('[cleanupOldTrips] failed to delete trip', trip.id, err);
       }
     }
-    
+
     console.log('[cleanupOldTrips] deleted', deletedCount, 'old trips');
     return deletedCount;
   } catch (err) {
@@ -648,35 +652,38 @@ export function summarizeTrips(trips) {
 }
 
 /**
- * Check if rider's data is within retention window
- * Returns: {isWithinWindow, daysRemaining, oldestEntryDate}
- * 
+ * Retention status for a rider (rolling 6-month window).
+ * Returns: {isWithinRetentionWindow, daysRemaining, retentionWindowEnd, oldestEntryDate, hasDataBeyondWindow}
+ *   daysRemaining       : days until the OLDEST stored trip ages out of the window (the full window if there are none)
+ *   retentionWindowEnd  : the moment that oldest trip ages out (null if there are no trips)
+ *
  * ✅ Phase 2 planning function
  */
 export async function checkRetentionStatus(riderId) {
   try {
-    const onboardingDate = await getRiderOnboardingDate(riderId);
-    const windowEnd = getRetentionWindowEnd(onboardingDate);
     const now = new Date();
-    
-    const daysRemaining = Math.max(0, Math.floor((windowEnd - now) / (24 * 60 * 60 * 1000)));
-    
-    // Get oldest trip
     const allTrips = await getAllTrips(riderId);
-    const oldestTrip = allTrips.length > 0 
-      ? allTrips.reduce((min, t) => {
-          const ts = t.ts || t.timestamp;
-          return ts < (min.ts || min.timestamp) ? t : min;
-        })
+    const dated = allTrips.filter((t) => t.ts || t.timestamp);
+    const oldestTrip = dated.length > 0
+      ? dated.reduce((min, t) => ((t.ts || t.timestamp) < (min.ts || min.timestamp) ? t : min))
       : null;
-    
+
+    let daysRemaining = DATA_RETENTION_MONTHS * 30;
+    let retentionWindowEnd = null;
+    if (oldestTrip) {
+      const agesOutAt = new Date(oldestTrip.ts || oldestTrip.timestamp);
+      agesOutAt.setMonth(agesOutAt.getMonth() + DATA_RETENTION_MONTHS);
+      retentionWindowEnd = agesOutAt.toISOString();
+      daysRemaining = Math.max(0, Math.floor((agesOutAt - now) / (24 * 60 * 60 * 1000)));
+    }
+
     return {
       riderId,
-      isWithinRetentionWindow: now <= windowEnd,
+      isWithinRetentionWindow: true,   // a rolling window never closes
       daysRemaining,
-      retentionWindowEnd: windowEnd.toISOString(),
+      retentionWindowEnd,
       oldestEntryDate: oldestTrip ? new Date(oldestTrip.ts || oldestTrip.timestamp).toISOString() : null,
-      hasDataBeyondWindow: allTrips.some(t => !isWithinRetentionWindow(t.ts || t.timestamp, onboardingDate))
+      hasDataBeyondWindow: dated.some((t) => !isWithinRetentionWindow(t.ts || t.timestamp))
     };
   } catch (err) {
     console.error('[checkRetentionStatus] error:', err);

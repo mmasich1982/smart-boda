@@ -338,4 +338,5 @@ const styles = StyleSheet.create({
   },
 });
 
-export { setupNotificationHandler };
+// (Removed the module-level `export { setupNotificationHandler }`: that function only exists inside the component,
+//  so the export referred to an undefined name and failed to compile. Nothing imports it.)

@@ -35,6 +35,10 @@ import { processPendingSync, getLastSyncReport } from './syncQueue';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import NetInfo from '@react-native-community/netinfo';
 import { db } from './db';
+// ✅ CHAMA: refresh group membership (Home tiles) and run the weekly 6-month retention cleanup after each sync check
+import { runChamaSyncCycle } from './chamaSyncService';
+// ✅ RETENTION: weekly six-month cleanup of trips, fuel, battery, maintenance, expenses, caches and daily summaries
+import { runScheduledRetention } from './retentionScheduler';
 
 // Configuration constants
 let SYNC_CHECK_INTERVAL = 1 * 60 * 1000; // 1 minute in milliseconds (changed from 5 minutes)
@@ -110,6 +114,12 @@ export async function performSyncCheck() {
     
     // ✅ NEW: Store the report for later retrieval
     lastSyncReport = report;
+
+    // ✅ CHAMA: membership refresh + six-month retention cleanup. Never throws, never blocks the sync result.
+    runChamaSyncCycle().catch((e) => console.warn('⚠️ [SyncOrchestrator] Chama cycle skipped:', e?.message));
+
+    // ✅ RETENTION: runs at most once a week (returns at once when not due). Records still in the sync queue are never deleted.
+    runScheduledRetention().catch((e) => console.warn('⚠️ [SyncOrchestrator] Retention cleanup skipped:', e?.message));
     
     console.log('✅ [SyncOrchestrator] Sync check complete:', {
       status: report?.status || 'unknown',

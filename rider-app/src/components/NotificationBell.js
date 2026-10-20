@@ -3,15 +3,19 @@ import React from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import colors from '../theme/colors';
 import useUrgentAlerts from '../hooks/useUrgentAlerts';
+import useServerNotifications from '../hooks/useServerNotifications';
+
 
 export default function NotificationBell({ navigation }) {
   const [open, setOpen] = React.useState(false);  // mirrors state._notifPanelOpen / toggleNotifPanel()
-  const alerts = useUrgentAlerts();  // aggregates every module's urgent alerts, sorted critical-first
+  const local = useUrgentAlerts();
+  const { items: server, refresh } = useServerNotifications();
+  const alerts = [...server, ...local];  // replaces: const alerts = useUrgentAlerts();
   const hasCritical = alerts.some(a => a.urgency === 'critical');
 
   function handleAlertPress(alert) {
     setOpen(false);
-    navigation.navigate(alert.screen);  // e.g. 'MaintenanceHub' or 'FuelHub' for this module's alerts
+    navigation.navigate(alert.screen, alert.params);  // e.g. 'MaintenanceHub' or 'FuelHub' for this module's alerts
   }
 
   return (

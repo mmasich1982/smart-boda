@@ -27,6 +27,31 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import HomeScreen from '../screens/HomeScreen';
 
 // ============================================================================
+// CHAMA SCREENS (My Savings, My Loans, My Chama / Treasurer screens)
+// These are the ONLY screens that require an internet connection. Each one is wrapped in ChamaOnlineGate
+// inside its own file, which shows a professional "internet connection required" message while offline.
+// ============================================================================
+import ManageChamaScreen from '../screens/chama/ManageChamaScreen';
+import AddChamaMemberScreen from '../screens/chama/AddChamaMemberScreen';
+import RequestChamaSlotsScreen from '../screens/chama/RequestChamaSlotsScreen';
+import ManageChamaHubScreen from '../screens/chama/ManageChamaHubScreen';
+import ChamaLoansScreen from '../screens/chama/ChamaLoansScreen';
+import ChamaQueueScreen from '../screens/chama/ChamaQueueScreen';
+import MySavingsScreen from '../screens/chama/MySavingsScreen';
+import MyLoansScreen from '../screens/chama/MyLoansScreen';
+import LoanApplyScreen from '../screens/chama/LoanApplyScreen';
+import ChamaPayScreen from '../screens/chama/ChamaPayScreen';
+import GroupFinanceHistoryScreen from '../screens/chama/GroupFinanceHistoryScreen';
+import MgrCircleScreen from '../screens/chama/MgrCircleScreen';
+import MgrActivityScreen from '../screens/chama/MgrActivityScreen';
+import GuaranteeRequestsScreen from '../screens/chama/GuaranteeRequestsScreen';
+import GroupLoansScreen from '../screens/chama/GroupLoansScreen';
+import TbSecurityRulesScreen from '../screens/chama/TbSecurityRulesScreen';
+import SecurityHeldScreen from '../screens/chama/SecurityHeldScreen';
+import SwapRequestScreen from '../screens/chama/SwapRequestScreen';
+import MgrSwapsScreen from '../screens/chama/MgrSwapsScreen';
+
+// ============================================================================
 // TILE 1: FUEL / CHARGE BATTERY
 // ============================================================================
 import FuelHubScreen from '../screens/energyHub/FuelHubScreen';
@@ -453,6 +478,27 @@ export const MainNavigator = () => {
           animationEnabled: true,
         }}
       />
+
+      {/* ===== CHAMA: group savings, loans, Merry-Go-Round (online required) ===== */}
+      <Stack.Screen name="ManageChama" component={ManageChamaHubScreen} />
+      <Stack.Screen name="ChamaSetup" component={ManageChamaScreen} />
+      <Stack.Screen name="AddChamaMember" component={AddChamaMemberScreen} />
+      <Stack.Screen name="RequestChamaSlots" component={RequestChamaSlotsScreen} />
+      <Stack.Screen name="ChamaLoans" component={ChamaLoansScreen} />
+      <Stack.Screen name="ChamaQueue" component={ChamaQueueScreen} />
+      <Stack.Screen name="MySavings" component={MySavingsScreen} />
+      <Stack.Screen name="MyLoans" component={MyLoansScreen} />
+      <Stack.Screen name="LoanApply" component={LoanApplyScreen} />
+      <Stack.Screen name="ChamaPay" component={ChamaPayScreen} />
+      <Stack.Screen name="GroupFinanceHistory" component={GroupFinanceHistoryScreen} />
+      <Stack.Screen name="MgrHub" component={MgrCircleScreen} />
+      <Stack.Screen name="MgrActivity" component={MgrActivityScreen} />
+      <Stack.Screen name="GuaranteeRequests" component={GuaranteeRequestsScreen} />
+      <Stack.Screen name="GroupLoans" component={GroupLoansScreen} />
+      <Stack.Screen name="TbSecurityRules" component={TbSecurityRulesScreen} />
+      <Stack.Screen name="SecurityHeld" component={SecurityHeldScreen} />
+      <Stack.Screen name="SwapRequest" component={SwapRequestScreen} />
+      <Stack.Screen name="MgrSwaps" component={MgrSwapsScreen} />
 
       {/* ===== SUPPORTING SCREENS ===== */}
       {/* ✅ DetailedStatementPreviewScreen: Primary detailed statement view (RA-18-C) */}

@@ -9,7 +9,7 @@
  * - ✅ Better performance
  * - ✅ Native PDF rendering
  */
-
+// rider-app/src/utils/pdfGenerator.js
 import * as Print from 'expo-print';
 
 /**
@@ -474,6 +474,92 @@ function generateBreakdownHTML(summary) {
  * Check if PDF library is loaded
  * Note: expo-print is always available in Expo environment
  */
+// ---------- Group statement (Treasurer: Group Finance History & Statements) ----------
+const esc = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const kes = (n) => 'KSh ' + Math.round(Number(n || 0)).toLocaleString();
+
+/**
+ * @param {Object} st - the statement returned by GET /chama/manage/statement
+ */
+export async function generateGroupStatementPDF(st) {
+  try {
+    if (!st || !Array.isArray(st.members)) throw new Error('No group statement data provided');
+    await Print.printAsync({ html: generateGroupStatementHTML(st) });
+  } catch (err) {
+    console.error('Group statement PDF error:', err);
+    throw err;
+  }
+}
+
+function generateGroupStatementHTML(st) {
+  const hasReceived = Number(st.totals?.received || 0) > 0;          // Merry-Go-Round payouts
+  const rows = st.members.map((m, i) => `
+    <tr class="${i % 2 ? 'odd' : 'even'}">
+      <td>${esc(m.member)}<div class="sub">${esc(m.phone)}</div></td>
+      <td class="num">${kes(m.contributions)}</td>
+      <td class="num">${kes(m.loans_taken)}</td>
+      <td class="num">${kes(m.repaid)}</td>
+      ${hasReceived ? `<td class="num">${kes(m.received)}</td>` : ''}
+    </tr>`).join('');
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Smart Boda Group Statement</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Roboto, sans-serif;
+                 padding: 40px 20px; background: white; color: #333; font-size: 12px; }
+          .container { max-width: 700px; margin: 0 auto; }
+          h1 { font-size: 20px; font-weight: 700; margin-bottom: 16px; color: #1a1a1a; }
+          .metadata { color: #666; font-size: 11px; line-height: 1.8; margin-bottom: 20px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+          thead { background: #f0f0f0; }
+          th { padding: 10px 8px; text-align: left; border: 1px solid #ddd; font-size: 11px; }
+          td { padding: 8px; border: 1px solid #eee; font-size: 11px; }
+          .num { text-align: right; font-weight: 600; }
+          .sub { font-size: 10px; color: #888; font-weight: 400; }
+          .odd { background: #fafafa; }
+          .totals td { background: #f9f9f9; font-weight: 700; border-top: 2px solid #ddd; }
+          .fund { margin-top: 16px; padding: 12px; background: #f9f9f9; border-radius: 6px; display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; }
+          .verification { margin-top: 20px; padding-top: 14px; border-top: 1px solid #eee; font-size: 10px; color: #999; }
+          .footer { margin-top: 30px; font-size: 9px; color: #aaa; text-align: center; line-height: 1.6; }
+          @media print { body { padding: 0; } }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>Smart Boda Digital — Group Statement</h1>
+          <div class="metadata">
+            <div>🏷️ ${esc(st.group)} · Code ${esc(st.group_code)}</div>
+            <div>📅 Period: ${esc(st.from)} to ${esc(st.to)}</div>
+            <div>🕐 Generated: ${new Date().toLocaleString()}</div>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Member</th><th style="text-align:right">Saved</th><th style="text-align:right">Borrowed</th>
+                  <th style="text-align:right">Repaid</th>${hasReceived ? '<th style="text-align:right">Received</th>' : ''}</tr>
+            </thead>
+            <tbody>
+              ${rows}
+              <tr class="totals"><td>Totals</td><td class="num">${kes(st.totals?.contributions)}</td>
+                <td class="num">${kes(st.totals?.loans_taken)}</td><td class="num">${kes(st.totals?.repaid)}</td>
+                ${hasReceived ? `<td class="num">${kes(st.totals?.received)}</td>` : ''}</tr>
+            </tbody>
+          </table>
+          <div class="fund"><span>Group fund now</span><span>${kes(st.pool_now)}</span></div>
+          <div class="verification"><strong>Statement reference:</strong> ${esc(st.reference)}</div>
+          <div class="footer">
+            <p>This is an automatically generated statement.</p>
+            <p>For inquiries or support, contact Smart Boda customer service.</p>
+          </div>
+        </div>
+      </body>
+    </html>`;
+}
+
 export function isPDFLibraryLoaded() {
   return true; // expo-print is always available
 }

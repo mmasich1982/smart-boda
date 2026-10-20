@@ -6,6 +6,7 @@
 // ✅ NETWORK AWARE: Graceful fallback when offline
 // ✅ UI/UX: 100% preserved from original
 // ✅ FIXED: View Yesterday button now navigates to YesterdayNetProfit screen
+// ✅ PART 5: Tiles by membership and role (hasGroup / isTreasurer)
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
@@ -21,6 +22,10 @@ import HeroFareCard from '../components/HeroFareCard';
 import SubscriptionBanners from '../components/SubscriptionBanners';
 // ✅ CRITICAL: Account lock enforcement
 import { checkAndEnforceLock, ensureFreeTrial } from '../offline/subscriptionUtils';
+// ✅ CHAMA: system-driven membership (IndexedDB copy first, server is the authority) + logout cleanup
+import useChamaMembership from '../hooks/useChamaMembership';
+import { useGroupText } from './chama/groupText';
+import { clearChamaOnLogout } from '../offline/chamaSyncService';
 
 const ENERGY_TILE_BY_FUEL = {
   petrol: { emoji: '⛽', label: 'home.tile_fuel_motorcycle', route: 'FuelHub' },
@@ -38,9 +43,6 @@ const HOME_TILES = [
   { emoji: '🏆', label: 'home.tile_my_goals', route: 'Goals' },
   { emoji: '💡', label: 'home.tile_suggestions_feedback', route: 'SuggestionsFeedback' },
   { emoji: '📲', label: 'home.tile_my_subscription', route: 'Subscription' },
-  
-  
-  
 ];
 
 function LoadingSkeleton() {
@@ -147,6 +149,13 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   const [isAccountLocked, setIsAccountLocked] = useState(false);
   const [lockCheckInProgress, setLockCheckInProgress] = useState(true);
 
+  // ✅ CHAMA: Role flags come from the rider's ACTIVE Chama membership only. There is nothing for the rider to switch on.
+  //   My Savings / My Loans appear once the Treasurer adds the rider to a group and disappear if the rider is no longer in one.
+  //   Works offline from the saved copy; refreshes on focus, app resume, reconnect, every 45s, and on membership notices.
+  const chamaMembership = useChamaMembership();
+  const gt = useGroupText();   // English fallback when a translation is missing
+  const role = { isTreasurer: chamaMembership.isTreasurer, hasGroup: chamaMembership.hasGroup };
+
   // ✅ Load riderId on mount
   useEffect(() => {
     const loadRiderId = async () => {
@@ -172,7 +181,8 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     loadRiderId();
   }, []);
 
-  // ========================================================================
+  // ✅ CHAMA: role flags are loaded by useChamaMembership() above (replaces the old inline loader).
+
   // ========================================================================
   // ✅ CRITICAL: LOCK ENFORCEMENT GATE ON SCREEN FOCUS
   // ========================================================================
@@ -190,7 +200,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
         try {
           console.log('[HomeScreen] 🔒 MAIN GATE: Checking account lock status...');
           setLockCheckInProgress(true);
-          
+
           // ✅ CRITICAL: Initialize free trial for newly onboarded riders BEFORE checking lock
           // This ensures new riders get their 2-hour trial before any lock enforcement
           console.log('[HomeScreen] ✨ Ensuring free trial initialized for rider...');
@@ -200,7 +210,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             trialEndDate: trialState?.trialEndDate,
             hoursLeft: trialState?.trialStarted ? 'calculating...' : 'N/A',
           });
-          
+
           // ✅ NOW check lock status - trial will prevent lock if active
           const lockStatus = await checkAndEnforceLock(riderId);
 
@@ -209,9 +219,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               reason: lockStatus.reason,
               justLocked: lockStatus.justLocked,
             });
-            
+
             setIsAccountLocked(true);
-            
+
             // ✅ ENFORCE LOCK: Navigate to AccountLockedScreen before rendering home
             navigation.reset({
               index: 0,
@@ -434,8 +444,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
       navigation.navigate('NewTrip');
     }
   }, [navigation]);
-  
-  
+
   const handleDailyTradeSummary = useCallback(() => {
     if (navigation && navigation.navigate) {
       navigation.navigate('DailyTradeSummary');
@@ -460,6 +469,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
         text: 'Logout',
         onPress: async () => {
           try {
+            await clearChamaOnLogout();   // remove this rider's Chama data from the phone
             await clearSession();
             if (navigation && navigation.reset) {
               navigation.reset({
@@ -562,7 +572,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   const handleViewFinancialHistory = () => {
     navigation.navigate('FinancialHistory');
   };
-  
+
   const energyTile = bike?.fuel_type_code ? ENERGY_TILE_BY_FUEL[bike.fuel_type_code] : null;
 
   return (
@@ -639,7 +649,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               </TouchableOpacity>
             )}
 
-          <TouchableOpacity
+            <TouchableOpacity
               style={styles.homeTile}
               onPress={() => {
                 console.log('[HomeScreen] Navigating to MaintenanceHub');
@@ -665,7 +675,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.tileEmoji}>💰</Text>
               <Text style={styles.tileLabel}>{t('home.tile_financial_performance')}</Text>
             </TouchableOpacity>
-          
+
             <TouchableOpacity
               style={styles.homeTile}
               onPress={() => navigation.navigate('Subscription')}
@@ -674,9 +684,62 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.tileLabel}>{t('home.tile_my_subscription')}</Text>
             </TouchableOpacity>
           </View>
-		  
-		  {/* Row 3: Lipa Later*/}
-		  <View style={styles.tileRow}>
+
+          {/* ✅ PART 5 - Row 3: My Savings + My Loans (only for members of a group) */}
+          {role.hasGroup && (
+            <View style={styles.tileRow}>
+              <TouchableOpacity style={styles.homeTile} onPress={() => navigation.navigate('MySavings')}>
+                <Text style={styles.tileEmoji}>🏦</Text>
+                <Text style={styles.tileLabel}>{t('home.tile_my_savings') || 'My Savings'}</Text>
+              </TouchableOpacity>
+              {/* My Loans is only for Table Banking: a rider who is only in a Merry-Go-Round has no loans */}
+              {chamaMembership.hasTb ? (
+                <TouchableOpacity style={styles.homeTile} onPress={() => navigation.navigate('MyLoans')}>
+                  <Text style={styles.tileEmoji}>📋</Text>
+                  <Text style={styles.tileLabel}>{t('home.tile_my_loans') || 'My Loans'}</Text>
+                </TouchableOpacity>
+              ) : <View style={[styles.homeTile, { opacity: 0 }]} />}
+            </View>
+          )}
+
+          {/* ✅ CHAMA: "Enter your Chama Code" card. Shown ONLY to the rider the Smart Boda Administrator named as a group's
+              Treasurer (their verified phone matches the group's Treasurer phone) until they enter the code. Ordinary riders
+              never see it. Once the code is accepted the card disappears and Manage Chama appears below. */}
+          {chamaMembership.treasurerInvite && (
+            <TouchableOpacity
+              testID="treasurer-invite-card"
+              activeOpacity={0.85}
+              onPress={() => navigation.navigate('ChamaSetup')}
+              style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff6ee', borderColor: '#ff7a1a', borderWidth: 1.5, borderRadius: 14, padding: 14, marginBottom: 12 }}
+            >
+              <Text style={{ fontSize: 30, marginRight: 12 }}>🔑</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '800', fontSize: 15, color: '#1b1b1b' }}>
+                  {gt('home.treasurer_invite_title', 'Click here to Enter your Chama Code')}
+                </Text>
+                <Text style={{ fontSize: 12.5, color: '#4a4a4a', marginTop: 2, lineHeight: 18 }}>
+                  {gt('home.treasurer_invite_body',
+                    'You are the Treasurer of {group}. Enter the Chama Code you were given to start managing it.',
+                    { group: chamaMembership.treasurerInviteGroup || 'your group' })}
+                </Text>
+              </View>
+              <Text style={{ fontSize: 22, color: '#ff7a1a', marginLeft: 8 }}>›</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Row 4: Manage Chama (Treasurer only) */}
+          {role.isTreasurer && (
+            <View style={styles.tileRow}>
+              <TouchableOpacity style={styles.homeTile} onPress={() => navigation.navigate('ManageChama')}>
+                <Text style={styles.tileEmoji}>⚙️</Text>
+                <Text style={styles.tileLabel}>{t('home.tile_manage_chama') || 'Manage Chama'}</Text>
+              </TouchableOpacity>
+              <View style={[styles.homeTile, { opacity: 0 }]} />
+            </View>
+          )}
+
+          {/* Lipa Later Report */}
+          <View style={styles.tileRow}>
             <TouchableOpacity
               style={styles.homeTile}
               onPress={() => navigation.navigate('LipaLaterCustomersScreen')}
@@ -696,7 +759,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
 
           {/* Settings List Items */}
           <View style={styles.settingsListContainer}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.settingsListItem}
               onPress={handleDailyTradeSummary}
             >
@@ -704,7 +767,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.settingsListItem}
               onPress={handleViewFinancialHistory}
             >
@@ -712,7 +775,15 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity 
+            {/* ✅ PART 5: Treasurer-only item (stray `)}` removed) */}
+            {role.isTreasurer && (
+              <TouchableOpacity style={styles.settingsListItem} onPress={() => navigation.navigate('GroupFinanceHistory')}>
+                <Text style={styles.settingsListLabel}>🏦 {t('home.group_finance_history') || 'Group Finance History & Statements'}</Text>
+                <Text style={styles.settingsListArrow}>›</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
               style={[styles.settingsListItem, styles.logoutListItem]}
               onPress={() => navigation.navigate('PinLogin')}
             >
@@ -720,8 +791,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
           </View>
-  
-          
+
         </View>
       </ScrollView>
     </HomeScreenErrorBoundary>
@@ -1054,6 +1124,8 @@ const styles = StyleSheet.create({
     borderColor: '#e7e4db',
     padding: 16,
   },
+  // NOTE: kvRow and kvValue are defined twice in this StyleSheet (also above).
+  // The later definitions below win. Left unchanged to preserve current look.
   kvRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

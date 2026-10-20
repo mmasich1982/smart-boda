@@ -241,7 +241,7 @@ export default function CreatePinScreen({ route, navigation }) {
     }
   }
 
-  const title = stage === 'enter' ? t('pin.create_title') : t('pin.confirm_title');
+  const title = stage === 'enter' ? (t('pin.create_title') || 'Create Your Login PIN') : (t('pin.confirm_title') || 'Confirm Your Login PIN');
   const subtitle = stage === 'enter' ? t('pin.create_subtitle') : t('pin.confirm_subtitle');
   const value = stage === 'enter' ? draft : confirmDraft;
   const setValue = stage === 'enter' ? setDraft : setConfirmDraft;
