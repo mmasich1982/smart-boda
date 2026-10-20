@@ -13,7 +13,7 @@
 // ============================================================================
 
 import { addToSyncQueue } from './syncQueue';
-import { getLocalRiderId } from './db';
+import { getLocalRiderId, getLocalAuthToken } from './db';
 import { isOnlineNow } from './chamaConnectivity';
 import { saveMembership, getMembership, runRetentionCleanup, clearChamaData } from './chamaRepository';
 
@@ -48,6 +48,9 @@ export function refreshMembership() {
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
+      // Nobody is signed in yet (language selection, value preview, Setup My Profile, PIN creation): there is no membership to ask
+      // about, and the call would only produce a 401. Skip it quietly.
+      if (!(await getLocalRiderId()) || !(await getLocalAuthToken())) return { ok: false, changed: false, membership: await getMembership(), signedOut: true };
       if (!(await isOnlineNow())) return { ok: false, changed: false, membership: await getMembership() };
       // groupsClient imports this file's siblings, so load it lazily to avoid an import cycle
       const { groupProfile } = require('../api/groupsClient');
@@ -95,6 +98,7 @@ export async function queueNotificationAck(notificationId) {
 // ---------------------------------------------------------------------------
 export async function runChamaSyncCycle() {
   try {
+    if (!(await getLocalRiderId()) || !(await getLocalAuthToken())) return { online: false, signedOut: true };
     const online = await isOnlineNow();
     if (!online) return { online: false };
     const refreshed = await refreshMembership();
