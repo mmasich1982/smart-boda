@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, Query, Depends, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 import os
 import logging
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
@@ -18,6 +19,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.routers import sb08_financial_history, sb19_financial_history
 from app.routers import admin_groups
+from app.routers import chama_treasurer, chama_member
+from app.routers import chama_mgr
+from app.routers import rider_groups
 
 # Configure logging
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -113,9 +117,13 @@ async def ensure_cors_headers(request: Request, call_next):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    # With pydantic v2 a validator's `raise ValueError(...)` puts the exception object inside
+    # exc.errors() (ctx.error). json.dumps cannot encode that, so the plain version of this handler
+    # turned every such 422 (bad phone, bad amount...) into a 500.
+    # jsonable_encoder with a custom encoder keeps the message and returns a proper 422.
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content={"detail": jsonable_encoder(exc.errors(), custom_encoder={Exception: str})},
     )
 
 @app.exception_handler(SQLAlchemyError)
@@ -201,10 +209,11 @@ from app.routers import admin_auth
 app.include_router(admin_auth.router, prefix="/admin/auth", tags=["admin-auth"])
 
 # ---- Module A routers ----
-from app.routers import master_data_admin, language, bike_profile, mobile_number, pin
+from app.routers import master_data_admin, language, bike_profile, mobile_number, pin, setup_profile
 app.include_router(master_data_admin.router)
 app.include_router(language.router)
 app.include_router(bike_profile.router)
+app.include_router(setup_profile.router)
 app.include_router(mobile_number.router)
 app.include_router(pin.router)
 
@@ -250,6 +259,11 @@ app.include_router(payment_admin.router)
 
 # ---- Manage Groups ----
 app.include_router(admin_groups.router)
+app.include_router(rider_groups.router)
+app.include_router(rider_groups.notif_router)
+app.include_router(chama_treasurer.router)
+app.include_router(chama_member.router)
+app.include_router(chama_mgr.router)
 
 # ---- Subscriptions Payment Router Registration ----
 from app.routers import subscriptions_payment

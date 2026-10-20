@@ -16,7 +16,7 @@ from app.models.subscription import RiderSubscription, SubscriptionPlan
 from app.models.payment import Payment
 from app.models.trip import Trip
 from app.models.pin_recovery_request import PinRecoveryRequest
-from app.models.bike_profile import DuplicatePlateCase, BikeProfile
+from app.models.bike_profile import BikeProfile
 from app.models.data_export_request import DataExportRequest
 from app.models.legal_content import LegalContent
 
@@ -64,55 +64,6 @@ def update_legal_content(key: str, payload: dict, db: Session = Depends(get_db))
         row.content = content
     db.commit()
     return {"key": key, "content": row.content}
-
-
-# ---------------------------------------------------------------
-# Duplicate Plate Queue -- backs api/riderSupport.js's listDuplicatePlateCases/
-# resolveDuplicatePlateCase, which RiderAccountSupport.jsx already calls.
-# ---------------------------------------------------------------
-@router.get("/rider-support/duplicate-plate-cases")
-def duplicate_plate_cases(status: str = "pending_review", db: Session = Depends(get_db)):
-    """Get duplicate plate cases by status"""
-    rows = db.query(DuplicatePlateCase).filter(DuplicatePlateCase.status == status).all()
-    result = []
-    for c in rows:
-        rider_a = db.query(Rider).get(c.rider_a_id) if c.rider_a_id else None
-        rider_b = db.query(Rider).get(c.rider_b_id) if c.rider_b_id else None
-        bike_a = db.query(BikeProfile).filter_by(rider_id=c.rider_a_id).first() if c.rider_a_id else None
-        bike_b = db.query(BikeProfile).filter_by(rider_id=c.rider_b_id).first() if c.rider_b_id else None
-        # BUG FIX: the admin-console page has always expected rider_a_masked_phone /
-        # rider_a_submitted_at (and the _b equivalents) -- neither was ever returned by this
-        # endpoint, so the queue rendered with blank rider info for every case.
-        result.append({
-            "id": c.id,
-            "number_plate": c.number_plate,
-            "rider_a_id": str(c.rider_a_id) if c.rider_a_id else None,
-            "rider_a_masked_phone": rider_a.mobile_number if rider_a else None,
-            "rider_a_submitted_at": bike_a.submitted_at if bike_a else None,
-            "rider_b_id": str(c.rider_b_id) if c.rider_b_id else None,
-            "rider_b_masked_phone": rider_b.mobile_number if rider_b else None,
-            "rider_b_submitted_at": bike_b.submitted_at if bike_b else None,
-            "status": c.status,
-        })
-    return result
-
-
-@router.patch("/rider-support/duplicate-plate-cases/{case_id}/resolve")
-def resolve_duplicate_plate_case(case_id: str, payload: dict, db: Session = Depends(get_db)):
-    """Resolve a duplicate plate case"""
-    decision = payload.get("decision")
-    admin_id = payload.get("admin_id", "admin")
-    case = db.query(DuplicatePlateCase).get(case_id)
-    if not case:
-        raise HTTPException(404, "Duplicate-plate case not found.")
-    if decision not in ("confirm_a", "confirm_b", "request_correction_both"):
-        raise HTTPException(422, "decision must be one of: confirm_a, confirm_b, request_correction_both")
-    case.status = "resolved"
-    case.resolution_decision = decision
-    case.reviewed_by_admin_id = admin_id
-    case.reviewed_at = datetime.now(timezone.utc)
-    db.commit()
-    return {"id": case.id, "status": case.status, "resolution_decision": case.resolution_decision}
 
 
 # ---------------------------------------------------------------

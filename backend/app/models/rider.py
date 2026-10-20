@@ -21,6 +21,7 @@ class Rider(Base):
     pin_locked_until = Column(DateTime(timezone=True))
     onboarding_step = Column(String(30), default="valuePreview")
     registration_status = Column(String(20), default="pending")
+    is_treasurer = Column(Boolean, nullable=False, default=False)   # set at Profile Confirmation
     
     # ✅ ENHANCED: Location fields for rider's operating location (County, Sub-County, Ward)
     # Added in migration 0023 for better location-based services and analytics

@@ -36,7 +36,6 @@ def get_rider_details(rider_id: str, db: Session = Depends(get_db)):
             },
             "bike_profile": {
                 "id": uuid,
-                "number_plate": string,
                 "fuel_type_code": string
             },
             "account": {
@@ -61,12 +60,12 @@ def get_rider_details(rider_id: str, db: Session = Depends(get_db)):
             "rider": {
                 "rider_id": str(rider.id),
                 "mobile_number": rider.mobile_number,
+                "full_name": rider.full_name,
                 "registration_status": rider.registration_status,
                 "onboarding_step": rider.onboarding_step or "createPin"
             },
             "bike_profile": {
                 "id": str(bike.id) if bike else None,
-                "number_plate": bike.number_plate if bike else None,
                 "fuel_type_code": bike.fuel_type_code if bike else None
             } if bike else None,
             "account": {
@@ -86,7 +85,7 @@ def pin_login(payload: PinLoginRequest, db: Session = Depends(get_db)):
     return verify_pin_login(db, payload.rider_id, payload.pin)
 
 # BR-SB04-007: recovery ALWAYS requires manual Super Admin verification against the registered number —
-# same Rider Account Support queue used for mobile-number verification and duplicate-plate cases.
+# same Rider Account Support queue used for mobile-number verification cases.
 @router.post("/pin/recovery/start")
 def pin_recovery_start(rider_id: str = Query(...), db: Session = Depends(get_db)):
     rider = db.query(Rider).get(rider_id)

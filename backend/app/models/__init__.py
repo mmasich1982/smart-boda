@@ -4,7 +4,7 @@
 # subscription_enhanced.py is DEPRECATED - all models moved to subscription.py
 
 from app.models.admin_user import AdminUser
-from app.models.bike_profile import BikeProfile, DuplicatePlateCase
+from app.models.bike_profile import BikeProfile
 from app.models.compliance_document import ComplianceDocument
 from app.models.compliance_master_data import (
     DocumentTypeMaster,
@@ -63,7 +63,14 @@ from app.models.suggestion_category_master import SuggestionCategoryMaster
 from app.models.swap_partner_master import SwapPartnerMaster
 from app.models.target_streak import TargetStreak
 from app.models.trip import Trip
-from app.models.boda_group import BodaGroup, GroupSlotRequest, AppNotification
+from app.models.boda_group import (BodaGroup, GroupSlotRequest, AppNotification, GroupMember)
+from app.models.chama_finance import (
+    ChamaConfig, ChamaCategory, ChamaContribution,
+    ChamaLoanApplication, ChamaLoan, ChamaLoanPayment,
+    ChamaLedger, ChamaStatementLog,
+    ChamaMgrRound, ChamaMgrSwap, ChamaMgrCircle, ChamaMgrHand, ChamaMgrException,
+    ChamaTbSecurity, ChamaLoanSecurity,
+)
 from app.models.trip_master_data import (
     PaymentChannelMaster,
     CorrectionReasonMaster,
@@ -75,7 +82,6 @@ OutOfWindowCorrectionRequest = OutOfWindowRequest
 __all__ = [
     "AdminUser",
     "BikeProfile",
-    "DuplicatePlateCase",
     "ComplianceDocument",
     "BodaGroup",
     "GroupSlotRequest",
