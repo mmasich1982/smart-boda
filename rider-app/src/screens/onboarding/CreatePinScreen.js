@@ -9,7 +9,7 @@
 // ✅ CRITICAL FIX (25 AUG 2026): Now syncs created_at from rider data to fix retention window
 // ✅ NEW (26 AUG 2026): Saves PIN to IndexedDB locally for offline-first login
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import OnboardingProgressBar from '../../components/OnboardingProgressBar';
 import DigitBoxInput from '../../components/DigitBoxInput';
@@ -17,17 +17,14 @@ import PrimaryButton from '../../components/PrimaryButton';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import api from '../../api/client';
-import { saveRiderAccountSummary, saveLocalBikeProfile, saveLocalRiderStatus, saveLocalRiderId, getLocalRiderId } from '../../offline/db';
+import { saveRiderAccountSummary, saveLocalBikeProfile, saveLocalRiderStatus, saveLocalRiderId } from '../../offline/db';
 import { updateRiderOnboardingDate } from '../../offline/tripsRepository';
 import { savePinLocally } from '../../offline/pinUtility';
+import { ensureRiderSession } from '../../offline/sessionToken';
+import { refreshMembership } from '../../offline/chamaSyncService';
 
 export default function CreatePinScreen({ route, navigation }) {
-  // ✅ FIX (20 OCT 2026): riderId can be MISSING from route.params when this screen is opened
-  // without navigation params (browser refresh on web, onboarding resume at 'createPin', or the
-  // change-PIN flow). Without it axios drops `rider_id` from the query string and FastAPI answers
-  // 422 "Field required". We now fall back to the rider_id stored locally.
-  const routeRiderId = route?.params?.riderId;
-  const [riderId, setRiderId] = useState(routeRiderId || null);
+  const { riderId } = route.params || {};
   const { t } = useTranslation();
   const { showToast } = useToast();
   const [stage, setStage] = useState('enter'); // 'enter' | 'confirm'
@@ -37,34 +34,6 @@ export default function CreatePinScreen({ route, navigation }) {
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [initializingHome, setInitializingHome] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (routeRiderId) {
-      setRiderId(routeRiderId);
-      return undefined;
-    }
-    (async () => {
-      try {
-        const stored = await getLocalRiderId();
-        if (!cancelled && stored) {
-          console.log('[CreatePin] riderId missing from route params, using stored rider_id:', stored);
-          setRiderId(stored);
-        }
-      } catch (e) {
-        console.error('[CreatePin] Could not read stored rider_id:', e);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [routeRiderId]);
-
-  // Turns a FastAPI 422 `detail` array into a readable message
-  function describe422(detail) {
-    if (!Array.isArray(detail) || detail.length === 0) return null;
-    return detail
-      .map((d) => `${Array.isArray(d.loc) ? d.loc.join('.') : ''}: ${d.msg}`)
-      .join('; ');
-  }
 
   // ✅ UPDATED: Allow all 4-digit PINs - no weak PIN validation
   // Users can choose any PIN they prefer, from simple (1111, 2222) to complex (9876, 5847)
@@ -202,25 +171,11 @@ export default function CreatePinScreen({ route, navigation }) {
       setIsLoading(true);
       setError(null);
 
-      // ✅ FIX: resolve the rider id (route param -> state -> local storage) BEFORE calling the API
-      let effectiveRiderId = riderId || routeRiderId;
-      if (!effectiveRiderId) {
-        effectiveRiderId = await getLocalRiderId();
-        if (effectiveRiderId) setRiderId(effectiveRiderId);
-      }
-      if (!effectiveRiderId) {
-        setError(
-          t('pin.error_no_rider') ||
-          'We could not find your profile. Please go back and complete "Setup My Profile" first.'
-        );
-        return;
-      }
-
       // FIXED: Improved request format and error handling
       const res = await api.post(
         '/onboarding/pin/create',
         { pin: draft, pin_confirm: confirmDraft },
-        { params: { rider_id: String(effectiveRiderId) } }
+        { params: { rider_id: riderId } }
       );
 
       console.log('[CreatePin] PIN creation response:', res?.data);
@@ -230,7 +185,7 @@ export default function CreatePinScreen({ route, navigation }) {
         
         // ✅ NEW (26 AUG 2026): Save PIN to IndexedDB for offline-first login
         console.log('[CreatePin] Saving PIN to IndexedDB locally...');
-        const pinSaved = await savePinLocally(effectiveRiderId, draft);
+        const pinSaved = await savePinLocally(riderId, draft);
         if (pinSaved) {
           console.log('[CreatePin] ✅ PIN saved locally for offline login');
         } else {
@@ -240,8 +195,14 @@ export default function CreatePinScreen({ route, navigation }) {
         
         // FIXED: Fetch and cache rider data before navigating
         setInitializingHome(true);
-        await initializeRiderData(effectiveRiderId);
-        
+        await initializeRiderData(riderId);
+
+        // FIX: PIN login is verified offline, so nothing ever asked the server for a Bearer token. Without it every
+        // /chama/me/* call (including the Treasurer "Enter your Chama Code" check) returned 401 and Home never saw the invite.
+        // Get the token now (we know the PIN), then pull Chama membership so the card is on Home the first time it opens.
+        await ensureRiderSession(riderId, draft);
+        await refreshMembership();
+
         // FIXED: Navigate to Home after data is cached
         navigation.replace('Home');
         return;
@@ -267,12 +228,7 @@ export default function CreatePinScreen({ route, navigation }) {
 
       let errorMsg = t('pin.error_connection') || 'Connection error. Please check your internet.';
       
-      if (err.response?.status === 422) {
-        const detailMsg = describe422(err.response?.data?.detail);
-        console.error('[CreatePin] 422 validation detail:', err.response?.data?.detail);
-        errorMsg = t('pin.error_invalid_format') || 'Invalid PIN request';
-        if (detailMsg) errorMsg = `${errorMsg} (${detailMsg})`;
-      } else if (err.response?.status === 400) {
+      if (err.response?.status === 400) {
         errorMsg = t('pin.error_invalid_format') || 'Invalid PIN format';
       } else if (err.response?.status === 409) {
         errorMsg = t('pin.error_already_exists') || 'PIN already exists';

@@ -19,13 +19,14 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput,
   ActivityIndicator, Alert, Animated, Dimensions
 } from 'react-native';
-import { getLocalRiderStatus } from '../../offline/db';
+import { getLocalRiderStatus, saveLocalAuthToken } from '../../offline/db';
 import BackLink from '../../components/BackLink';
 import PrimaryButton from '../../components/PrimaryButton';
 import { useToast } from '../../components/Toast';
 import colors from '../../theme/colors';
 import api from '../../api/client';
-import { verifyPinLocally, getLoginAttempts } from '../../offline/pinUtility';
+import { verifyPinLocally, getLoginAttempts, savePinLocally } from '../../offline/pinUtility';
+import { ensureRiderSession } from '../../offline/sessionToken';
 // ✅ REMOVED: checkAndEnforceLock, ensureFreeTrial imports - this is now HomeScreen's responsibility
 
 const { width } = Dimensions.get('window');
@@ -416,7 +417,10 @@ export default function PinLoginScreen({ navigation, route }) {
       if (localResult.success) {
         console.log('[PinLogin] ✅ PIN verified offline');
         showToast('✅ Logged in successfully', 'success');
-        
+
+        // FIX: get the server Bearer token (online only, never throws) so /chama/me/* works and the Treasurer card can show.
+        await ensureRiderSession(riderId, pin);
+
         // ✅ SIMPLIFIED: Just navigate to Home - let HomeScreen handle subscription checks
         // HomeScreen.useFocusEffect() will automatically check for account lock
         // and redirect to AccountLockedScreen if needed
@@ -439,19 +443,25 @@ export default function PinLoginScreen({ navigation, route }) {
       // Local validation failed but account not locked - try API as fallback
       console.log('[PinLogin] Local validation failed, attempting API fallback...');
       try {
+        // FIX: the old '/auth/pin/verify' route does not exist in the backend (always 404). The real server check is
+        // POST /onboarding/pin/login, which returns HTTP 200 for BOTH right and wrong PINs, so success is judged ONLY by
+        // { ok: true, token } - never by the HTTP status.
         const apiResponse = await api.post(
-          '/auth/pin/verify',
-          { pin },
-          { params: { rider_id: riderId } }
+          '/onboarding/pin/login',
+          { rider_id: String(riderId), pin: String(pin) },
+          { timeout: 8000 }
         );
+        const apiData = apiResponse?.data;
 
-        if (apiResponse?.data?.ok || apiResponse?.status === 200) {
+        if (apiData?.ok && apiData?.token) {
           console.log('[PinLogin] ✅ PIN verified via API');
+          await saveLocalAuthToken(apiData.token);           // Bearer token for /chama/me/* (Treasurer card, tiles)
+          await savePinLocally(riderId, pin).catch(() => {}); // server accepted it: refresh the phone copy (e.g. PIN reset elsewhere)
           showToast('✅ Logged in successfully', 'success');
-          
+
           // Reset local attempts on successful API verification
           await loadAttempts();
-          
+
           // ✅ SIMPLIFIED: Navigate to Home immediately
           // Let HomeScreen handle subscription lock checks via useFocusEffect
           setTimeout(() => {
@@ -459,6 +469,9 @@ export default function PinLoginScreen({ navigation, route }) {
             navigation.replace('Home');
           }, 600);
           return;
+        }
+        if (apiData?.error === 'locked') {
+          showToast('Too many wrong attempts. Please try again later.', 'error');
         }
       } catch (apiErr) {
         console.warn('[PinLogin] API fallback also failed:', apiErr.message);
