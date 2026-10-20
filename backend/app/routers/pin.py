@@ -16,6 +16,9 @@ router = APIRouter(prefix="/onboarding", tags=["sb-04"])
 
 @router.post("/pin/create")
 def pin_create(payload: PinCreateRequest, rider_id: str = Query(...), db: Session = Depends(get_db)):
+    # Clear 404 instead of a 500 (AttributeError on None) when the rider does not exist
+    if not db.query(Rider).get(rider_id):
+        raise HTTPException(status_code=404, detail="Rider not found")
     return create_pin(db, rider_id, payload.pin, payload.pin_confirm)
 
 
