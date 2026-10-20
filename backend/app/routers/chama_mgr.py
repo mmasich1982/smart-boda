@@ -7,7 +7,7 @@ from uuid import UUID                  # request bodies
 from uuid import UUID as RowId   # NOT "UUID": star-imports of the models bring SQLAlchemy's UUID column type into scope
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -27,8 +27,15 @@ GID = Query(None, description="Which group, when the rider runs or belongs to se
 # ───────────────────────────── bodies ─────────────────────────────
 class CircleIn(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=40)
-    amount: Optional[Decimal] = Field(default=None, ge=0, le=1000000, decimal_places=2)
+    amount: Optional[Decimal] = Field(default=None, ge=0, le=1000000)   # (decimal_places on an Optional breaks pydantic 2.5, so it is checked below)
     sched: Optional[dict] = None
+
+    @field_validator("amount")
+    @classmethod
+    def _two_places(cls, v):
+        if v is not None and v != v.quantize(Decimal("0.01")):
+            raise ValueError("Use at most 2 decimal places.")
+        return v
 
 class PersonIn(BaseModel):
     hands: Literal[1, 2] = 1                                  # 2 = double turn
