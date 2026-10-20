@@ -1,18 +1,41 @@
 // admin-console/src/pages/IncomingGroupMemberAdditions.jsx
-import React from 'react';
+// Slot requests: a Treasurer whose group reached its approved member limit asks for more slots.
+// Approving raises the group's approved_slots on the server and notifies the Treasurer;
+// declining needs a reason, which the Treasurer sees.
+import React, { useState } from 'react';
 import { listSlotRequests, approveSlotRequest, declineSlotRequest } from '../api/groups';
 import { useApiResource } from '../hooks/useApiResource';
 import ConfirmButton from '../components/ConfirmButton';
 
+const whyFailed = (e) => {
+  const d = e?.response?.data?.detail;      // a string for our errors, a LIST for a 422
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d) && d[0]?.msg) return String(d[0].msg).replace(/^Value error,\s*/, '');
+  return e?.message || 'Something went wrong.';
+};
+
 export default function IncomingGroupMemberAdditions() {
   const { data, loading, error, refresh } = useApiResource(() => listSlotRequests('pending'), []);
+  const [actionError, setActionError] = useState(null);
+
+  // Another admin may have decided the request first (the server answers 409). Show the reason
+  // and reload the list instead of letting the rejection go unhandled.
+  async function act(fn) {
+    setActionError(null);
+    try { await fn(); }
+    catch (e) { setActionError(whyFailed(e)); }
+    finally { refresh(); }
+  }
+
+  const rows = data || [];
   return (
     <div className="page">
       <h1>Incoming Group Member Additions</h1>
       <p className="muted">Treasurers whose groups reached their approved member limit ask for more slots here.</p>
       {loading && <p>Loading…</p>}
       {error && <p role="alert" style={{ color: 'red' }}>Couldn't load requests: {error}</p>}
-      {(data || []).map((r) => (
+      {actionError && <p role="alert" style={{ color: 'red' }}>Couldn't complete that: {actionError}</p>}
+      {rows.map((r) => (
         <div className="case-card card" key={r.id} style={{ marginBottom: 12 }}>
           <h3>{r.group_name} · {r.group_code}</h3>
           <p>Stage: {r.stage_name} · Treasurer: {r.treasurer_name}<br />
@@ -21,13 +44,13 @@ export default function IncomingGroupMemberAdditions() {
           <div style={{ display: 'flex', gap: 8 }}>
             <ConfirmButton label={`Approve +${r.requested_slots}`}
               confirmMessage={`Approve ${r.requested_slots} extra slots for ${r.group_name}? The Treasurer is told immediately.`}
-              onConfirm={async () => { await approveSlotRequest(r.id, r.requested_slots, null); refresh(); }} />
+              onConfirm={() => act(() => approveSlotRequest(r.id, r.requested_slots, null))} />
             <ConfirmButton label="Decline" className="secondary" requireReason
-              confirmMessage="Decline this request? The Treasurer will see your reason."
-              onConfirm={async (reason) => { await declineSlotRequest(r.id, reason); refresh(); }} />
+              confirmMessage="Decline this request? The Treasurer will see your reason (at least 5 characters)."
+              onConfirm={(reason) => act(() => declineSlotRequest(r.id, reason))} />
           </div>
         </div>))}
-      {!loading && (data || []).length === 0 && <p className="muted">No pending requests. 🎉</p>}
+      {!loading && !error && rows.length === 0 && <p className="muted">No pending requests. 🎉</p>}
     </div>
   );
 }

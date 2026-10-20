@@ -1,6 +1,6 @@
 // admin-console/src/components/ConfirmButton.jsx
 // AUDIT FIX (Admin Console, High): "Consequential actions (re-lock an account, approve a
-// PIN reset, resolve a duplicate-plate case) fire immediately on click, with no
+// PIN reset, resolve a mobile-verification case) fire immediately on click, with no
 // confirmation step and no way to record why." This wraps any action button with a
 // lightweight native-confirm gate plus an optional reason capture, so every call site
 // gets the same guarantee without re-implementing it.

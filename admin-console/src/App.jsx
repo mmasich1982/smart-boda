@@ -21,7 +21,6 @@ import MasterDataLegalContent from './pages/MasterDataLegalContent';
 import PaymentChannelMasterData from './pages/PaymentChannelMasterData';
 import MobileVerificationQueue from './pages/MobileVerificationQueue';
 import PinRecoveryQueue from './pages/PinRecoveryQueue';
-import DuplicatePlateQueue from './pages/DuplicatePlateQueue';
 import DataExportRequestsQueue from './pages/DataExportRequestsQueue';
 import OutOfWindowCorrectionQueue from './pages/OutOfWindowCorrectionQueue';
 import PaymentHistory from './pages/PaymentHistory';
@@ -349,7 +348,6 @@ function AppRoutes() {
       {/* RIDER SUPPORT ROUTES */}
       <Route path="/rider-support/mobile-verification" element={<RequireAuth><Shell><MobileVerificationQueue /></Shell></RequireAuth>} />
       <Route path="/rider-support/pin-recovery" element={<RequireAuth><Shell><PinRecoveryQueue /></Shell></RequireAuth>} />
-      <Route path="/rider-support/duplicate-plate" element={<RequireAuth><Shell><DuplicatePlateQueue /></Shell></RequireAuth>} />
       <Route path="/rider-support/data-export" element={<RequireAuth><Shell><DataExportRequestsQueue /></Shell></RequireAuth>} />
       <Route path="/rider-support/out-of-window" element={<RequireAuth><Shell><OutOfWindowCorrectionQueue /></Shell></RequireAuth>} />
 
@@ -372,12 +370,12 @@ function AppRoutes() {
       <Route path="/reporting/daily-revenue" element={<RequireAuth><Shell><DailyRevenueReport /></Shell></RequireAuth>} />
       <Route path="/reporting/engagement" element={<RequireAuth><Shell><UserEngagementMetrics /></Shell></RequireAuth>} />
       <Route path="/reporting/system-health" element={<RequireAuth><Shell><SystemHealth /></Shell></RequireAuth>} />
-	  
-	  {/* GROUP MANAGEMENT ROUTES */}
+
+      {/* CATCH-ALL - Redirect to dashboard if logged in, login otherwise */}
+      {/* GROUP MANAGEMENT ROUTES */}
       <Route path="/groups/manage" element={<RequireAuth><Shell><ManageGroupsAndMembers /></Shell></RequireAuth>} />
       <Route path="/groups/incoming-additions" element={<RequireAuth><Shell><IncomingGroupMemberAdditions /></Shell></RequireAuth>} />
 
-      {/* CATCH-ALL - Redirect to dashboard if logged in, login otherwise */}
       <Route path="*" element={<Navigate to={isLoggedIn() ? "/dashboard" : "/login"} replace />} />
     </Routes>
   );

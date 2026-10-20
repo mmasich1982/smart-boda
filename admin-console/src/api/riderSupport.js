@@ -31,7 +31,6 @@ export async function listPinRecoveryQueue() {
  *   full_name: string,
  *   mobile_number: string,
  *   email: string,
- *   bike_plate: string,
  *   bike_model: string,
  *   registration_status: string,
  *   recent_trips: [{completed_at, fare_amount, payment_method, status}, ...]
@@ -270,7 +269,6 @@ export async function fulfilDataExportRequest(requestId) {
  *   rider_name: string,
  *   mobile_number: string,
  *   email: string,
- *   bike_plate: string,
  *   requested_at: timestamp,
  *   status: 'pending' | 'verified' | 'rejected'
  * }
@@ -317,70 +315,6 @@ export async function resolveMobileVerification(requestId, status, reason, notes
     return response.data;
   } catch (error) {
     console.error('Error resolving mobile verification:', error);
-    throw error;
-  }
-}
-
-/**
- * List all duplicate plate cases
- * GET /admin/duplicate-plate/queue
- * 
- * Returns array of:
- * {
- *   id: string,
- *   rider_id: UUID,
- *   rider_name: string,
- *   mobile_number: string,
- *   bike_plate: string,
- *   duplicate_plate: string,
- *   reported_at: timestamp,
- *   status: 'pending' | 'resolved' | 'rejected'
- * }
- */
-export async function listDuplicatePlateCases() {
-  try {
-    const response = await client.get('/admin/duplicate-plate/queue');
-    return response.data || [];
-  } catch (error) {
-    console.error('Error fetching duplicate plate cases:', error);
-    throw error;
-  }
-}
-
-/**
- * Resolve a duplicate plate case
- * POST /admin/duplicate-plate/resolve
- * 
- * Sends:
- * {
- *   case_id: string,
- *   resolution: 'corrected' | 'rejected',
- *   reason?: string,
- *   new_plate?: string (if corrected),
- *   admin_notes?: string
- * }
- * 
- * Returns:
- * {
- *   success: boolean,
- *   message: string,
- *   error?: string
- * }
- */
-export async function resolveDuplicatePlateCase(caseId, resolution, reason, newPlate, notes) {
-  try {
-    const payload = {
-      case_id: caseId,
-      resolution: resolution
-    };
-    if (reason) payload.reason = reason;
-    if (newPlate) payload.new_plate = newPlate;
-    if (notes) payload.admin_notes = notes;
-
-    const response = await client.post('/admin/duplicate-plate/resolve', payload);
-    return response.data;
-  } catch (error) {
-    console.error('Error resolving duplicate plate case:', error);
     throw error;
   }
 }

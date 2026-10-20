@@ -50,7 +50,6 @@ export async function getSubscriptionDetails(riderId) {
  *   full_name: string,
  *   mobile_number: string,
  *   email: string,
- *   bike_plate: string,
  *   bike_model: string
  * }
  */

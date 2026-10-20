@@ -22,7 +22,6 @@ const SECTIONS = [
     items: [
       { to: '/rider-support/mobile-verification', label: 'Mobile Verification Queue' },
       { to: '/rider-support/pin-recovery', label: 'PIN Recovery Queue' },
-      { to: '/rider-support/duplicate-plate', label: 'Duplicate Plate Queue' },
       { to: '/rider-support/data-export', label: 'Data Export Requests Queue' },
       // AUDIT FIX: same as above -- fully coded, unreachable until now.
       { to: '/rider-support/out-of-window', label: 'Out-of-Window Correction Requests' },

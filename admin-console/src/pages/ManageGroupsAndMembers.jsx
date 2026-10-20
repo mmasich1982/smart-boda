@@ -1,13 +1,56 @@
 // admin-console/src/pages/ManageGroupsAndMembers.jsx
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { listGroups, getGroupStats, createGroup, updateGroup, setGroupActive } from '../api/groups';
+import { getGroupFinance } from '../api/groups';   // add to the existing groups.js import
 import { useApiResource } from '../hooks/useApiResource';
 import ConfirmButton from '../components/ConfirmButton';
 import MaskedPhone from '../components/MaskedPhone';
 import LocationCascade from '../components/LocationCascade';
 
-const EMPTY = { group_name: '', county_id: null, sub_county_id: null, ward_id: null, stage_name: '',
-  approved_slots: 10, chair_name: '', chair_phone: '', treasurer_name: '', treasurer_phone: '' };
+const errText = (e, fallback) => {            // detail is a string for our errors, a LIST for a 422
+  const d = e?.response?.data?.detail;
+  if (!d) return fallback;
+  if (typeof d === 'string') return d;
+  const x = Array.isArray(d) ? d[0] || {} : {};
+  return String(x.msg || fallback).replace(/^Value error,\s*/, '');
+};
+
+const EMPTY = { group_name: '', group_type: '', county_id: null, sub_county_id: null, ward_id: null, stage_name: '',
+  approved_slots: 10, treasurer_name: '', treasurer_phone: '',
+ };
+
+function GroupFinance({ id }) {
+  const [f, setF] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    setF(null); setErr(null);
+    getGroupFinance(id).then(setF).catch(() => setErr('Could not load finance figures.'));
+  }, [id]);
+  const kes = (n) => 'KSh ' + Math.round(Number(n || 0)).toLocaleString();
+  if (err) return <p role="alert" style={{ color: 'red' }}>{err}</p>;
+  if (!f) return <p className="muted">Loading finance…</p>;
+  if (!f.configured) return <p className="muted">This group has not finished Chama set-up yet.</p>;
+  return (
+    <p>
+      Money in: {kes(f.money_in)} · Money out: {kes(f.money_out)}<br />
+      Group fund (pool): <b>{kes(f.pool)}</b><br />
+      Active loans: {f.active_loans} · Pending confirmations: {f.pending_confirmations}
+    </p>
+  );
+}
+
+// Defined OUTSIDE the page component so React keeps the same component between renders.
+// (Defined inside, it is a new component on every keystroke and the input loses focus.)
+function Field({ k, label, form, setForm, errors, ...p }) {
+  return (
+    <label style={{ display: 'block', marginBottom: 10 }}>
+      <div style={{ fontWeight: 600, fontSize: 13 }}>{label} <span style={{ color: '#d32f2f' }}>*</span></div>
+      <input value={form[k] ?? ''} onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+        style={{ width: '100%', padding: 8, boxSizing: 'border-box' }} {...p} />
+      {errors[k] && <div role="alert" style={{ color: '#d32f2f', fontSize: 12 }}>⚠️ {errors[k]}</div>}
+    </label>
+  );
+}
 
 export default function ManageGroupsAndMembers() {
   const [q, setQ] = useState('');
@@ -24,16 +67,14 @@ export default function ManageGroupsAndMembers() {
   function validate(f) {
     const e = {};
     if (!f.group_name.trim()) e.group_name = 'Group name is required';
+    if (!f.group_type) e.group_type = 'Choose Merry-Go-Round or Table Banking';
     if (!f.county_id) e.county_id = 'Please select a county';
     if (!f.sub_county_id) e.sub_county_id = 'Please select a sub-county';
     if (!f.ward_id) e.ward_id = 'Please select a ward';
     if (!f.stage_name.trim()) e.stage_name = 'Stage name is required';
     if (!(Number(f.approved_slots) >= 1)) e.approved_slots = 'Enter at least 1 slot';
-    if (!f.chair_name.trim()) e.chair_name = 'Chairperson name is required';
     if (!f.treasurer_name.trim()) e.treasurer_name = 'Treasurer name is required';
-    ['chair_phone', 'treasurer_phone'].forEach((k) => {
-      if (!/^(\+254|0)(7|1)[0-9]{8}$/.test(f[k].replace(/ /g, ''))) e[k] = 'Enter a valid number, e.g. 0712345678';
-    });
+    if (!/^(\+254|0)(7|1)[0-9]{8}$/.test(f.treasurer_phone.replace(/ /g, ''))) e.treasurer_phone = 'Enter a valid number, e.g. 0712345678';
     return e;
   }
 
@@ -41,20 +82,12 @@ export default function ManageGroupsAndMembers() {
     const e = validate(form); setErrors(e);
     if (Object.keys(e).length) return;
     try {
-      const body = { ...form, approved_slots: Number(form.approved_slots) };
+      const body = { ...form, group_type: form.group_type || null, approved_slots: Number(form.approved_slots) };
       const saved = editId ? await updateGroup(editId, body) : await createGroup(body);
       setMsg(editId ? 'Group updated.' : `Group created. Group Code: ${saved.group_code}`);
       setForm(null); setEditId(null); refresh();
-    } catch (err) { setMsg(err?.response?.data?.detail || 'Could not save the group.'); }
+    } catch (err) { setMsg(errText(err, 'Could not save the group.')); }
   }
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  const T = ({ k, label, ...p }) => (
-    <label style={{ display: 'block', marginBottom: 10 }}>
-      <div style={{ fontWeight: 600, fontSize: 13 }}>{label} <span style={{ color: '#d32f2f' }}>*</span></div>
-      <input value={form[k]} onChange={set(k)} style={{ width: '100%', padding: 8, boxSizing: 'border-box' }} {...p} />
-      {errors[k] && <div role="alert" style={{ color: '#d32f2f', fontSize: 12 }}>⚠️ {errors[k]}</div>}
-    </label>
-  );
   const s = stats.data || {};
   const card = (t, v) => <div className="card" style={{ flex: 1, minWidth: 140 }}><div className="muted" style={{ fontSize: 12 }}>{t}</div><div style={{ fontSize: 26, fontWeight: 700 }}>{v ?? '—'}</div></div>;
 
@@ -77,13 +110,13 @@ export default function ManageGroupsAndMembers() {
       {groups.error && <p role="alert" style={{ color: 'red' }}>Couldn't load groups: {groups.error}</p>}
       <div className="card" style={{ overflowX: 'auto' }}>
         <table>
-          <thead><tr><th>Code</th><th>Group</th><th>Stage</th><th>Location</th><th>Slots (used/approved)</th><th>Treasurer</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Code</th><th>Group</th><th>Type</th><th>Stage</th><th>Location</th><th>Slots (used/approved)</th><th>Treasurer</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {(groups.data?.items || []).map((g) => (
               <tr key={g.id}>
-                <td><b>{g.group_code}</b></td><td>{g.group_name}</td><td>{g.stage_name}</td>
+                <td><b>{g.group_code}</b></td><td>{g.group_name}</td><td>{g.group_type === 'mgr' ? 'Merry-Go-Round' : g.group_type === 'tb' ? 'Table Banking' : '—'}</td><td>{g.stage_name}</td>
                 <td>{g.ward}, {g.sub_county}, {g.county}</td>
-                <td>{g.slots_used}/{g.approved_slots}</td>
+                <td>{g.slots_used}/{g.approved_slots}{g.shared_with ? <div className="muted" style={{ fontSize: 11 }}>🔗 shared with {g.shared_with}</div> : null}</td>
                 <td>{g.treasurer_name} · <MaskedPhone value={g.treasurer_phone} /></td>
                 <td>{g.status === 'active' ? '🟢 Active' : '⚪ Inactive'}</td>
                 <td style={{ display: 'flex', gap: 6 }}>
@@ -104,24 +137,31 @@ export default function ManageGroupsAndMembers() {
           <h3>{view.group_name} · {view.group_code}</h3>
           <p>Stage: {view.stage_name}<br />Location: {view.ward}, {view.sub_county}, {view.county}<br />
             Slots: {view.slots_used} used of {view.approved_slots} ({view.slots_available} available)<br />
-            Chairperson: {view.chair_name} ({view.chair_phone})<br />Treasurer: {view.treasurer_name} ({view.treasurer_phone})<br />
+            Treasurer: {view.treasurer_name} ({view.treasurer_phone})<br />
             Registered: {view.registered_at} · Status: {view.status}</p>
+          <GroupFinance id={view.id} />
           <button className="secondary" onClick={() => setView(null)}>Close</button>
         </div>)}
 
       {form && (
         <div className="card" style={{ marginTop: 12 }}>
           <h3>{editId ? 'Edit Group' : 'Create New Group'}</h3>
-          <T k="group_name" label="Group Name" maxLength={120} />
+          <Field form={form} setForm={setForm} errors={errors} k="group_name" label="Group Name" maxLength={120} />
+          <label style={{ display: 'block', margin: '8px 0' }}>Group Type *
+            <select value={form.group_type || ''} onChange={(e) => setForm({ ...form, group_type: e.target.value })} style={{ display: 'block' }}>
+              <option value="">Select…</option>
+              <option value="mgr">Merry-Go-Round</option>
+              <option value="tb">Table Banking</option>
+            </select>
+            {errors.group_type && <span role="alert" style={{ color: 'red' }}>{errors.group_type}</span>}
+          </label>
           <LocationCascade value={form} errors={errors}
             onChange={(loc) => setForm({ ...form, ...loc })} />
-          <T k="stage_name" label="Stage Name" maxLength={120} placeholder="Where riders wait for customers" />
-          <T k="approved_slots" label="Number of Approved Member Slots" type="number" min="1" />
-          <T k="chair_name" label="Group Chairperson Name" maxLength={80} />
-          <T k="chair_phone" label="Chairperson Phone Number" placeholder="0712345678" />
-          <T k="treasurer_name" label="Treasurer Name" maxLength={80} />
-          <T k="treasurer_phone" label="Treasurer Phone Number" placeholder="0712345678" />
-          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Phone numbers are contact details only. Riders are linked to groups by motorcycle plate number.</div>
+          <Field form={form} setForm={setForm} errors={errors} k="stage_name" label="Stage Name" maxLength={120} placeholder="Where riders wait for customers" />
+          <Field form={form} setForm={setForm} errors={errors} k="approved_slots" label="Number of Approved Member Slots" type="number" min="1" />
+          <Field form={form} setForm={setForm} errors={errors} k="treasurer_name" label="Treasurer Name" maxLength={80} />
+          <Field form={form} setForm={setForm} errors={errors} k="treasurer_phone" label="Treasurer Phone Number" placeholder="0712345678" />
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>A rider is linked to a group by MOBILE NUMBER: when the Treasurer registers a rider's number, the rider sees the group after they set up their profile with that number.</div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="primary" onClick={save}>{editId ? 'Save Changes' : 'Create Group'}</button>
             <button className="secondary" onClick={() => { setForm(null); setEditId(null); }}>Cancel</button>
