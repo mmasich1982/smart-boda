@@ -130,7 +130,7 @@ export default function MgrTurnsView({ group, c, st, navigation, reload, onBack 
             <View style={[ss.dot, { backgroundColor: DOT_BG[t.status] }]}><Text style={ss.dotTxt}>{t.turn}</Text></View>
             <View style={{ flex: 1 }}>
               <Text style={[ss.name, t.mine && { fontWeight: '800' }]}>{t.name}{t.mine ? ' ⭐' : ''}</Text>
-              <Text style={ss.when}>{t.status === 'paid' ? 'Received' : 'Scheduled'}{t.date ? ` · ${longDate(t.date)}` : ''}</Text>
+              <Text style={ss.when}>{t.status === 'paid' ? 'Received' : 'Scheduled'}{(t.status === 'paid' ? t.paid_at : t.date) ? ` · ${longDate(t.status === 'paid' ? t.paid_at : t.date)}` : ''}{t.self_paid ? ' · self-paid' : ''}</Text>
             </View>
           </View>
           <Badge tone={PILL[t.status][0]}>{PILL[t.status][1]}</Badge>

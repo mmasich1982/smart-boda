@@ -67,6 +67,7 @@ export const answerGuarantee = (id, yes) => api.post(`/chama/me/guarantee-reques
 export const mgrCircles = (groupId) => api.get('/chama/mgr/circles', G(groupId)).then(data);
 export const mgrCircle = (circleId, groupId) => api.get(`/chama/mgr/circles/${circleId}`, G(groupId)).then(data);
 export const mgrCreateCircle = (b, groupId) => api.post('/chama/mgr/circles', b, G(groupId)).then(data);
+export const mgrPreview = (b, groupId) => api.post('/chama/mgr/preview', b, G(groupId)).then(data);   // live summary on the circle form
 export const mgrUpdateCircle = (circleId, b, groupId) => api.put(`/chama/mgr/circles/${circleId}`, b, G(groupId)).then(data);
 export const mgrDeleteCircle = (circleId, groupId) => api.delete(`/chama/mgr/circles/${circleId}`, G(groupId)).then(data);
 export const mgrSetPerson = (circleId, memberId, hands, groupId) => api.put(`/chama/mgr/circles/${circleId}/people/${memberId}`, { hands }, G(groupId)).then(data);

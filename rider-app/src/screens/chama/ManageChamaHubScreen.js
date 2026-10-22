@@ -60,7 +60,7 @@ function ManageChamaHubScreen({ navigation }) {
               onPress={() => navigation.navigate('MgrHub', { groupId: gid, circleId: c.id })}>
               <View style={s.row}><Text style={{ fontWeight: '800', flex: 1 }}>{c.name} ›</Text>
                 <Text style={s.hint}>{c.status === 'draft' ? 'Not started' : c.needs_season_setup ? 'New season' : `Cycle ${c.cycle_no}`}</Text></View>
-              <Text style={s.hint}>{fmt(c.amount)} · {c.sched_label || 'Payout days not set'} · {c.people} people{c.hands > c.people ? ` (${c.hands} turns)` : ''}</Text>
+              <Text style={s.hint}>{fmt(c.amount)}{c.contrib_label ? ` · ${c.contrib_label}` : ''} · {c.contrib_label ? 'paid out ' : ''}{c.sched_label || 'Payout days not set'} · {c.people} people{c.hands > c.people ? ` (${c.hands} turns)` : ''}</Text>
               {c.round && <Text style={s.hint}>Turn {c.round.turn_no}: {c.round.recipient} · {c.round.paid_count} of {c.round.member_count} paid · pool {fmt(c.round.pot)} · due {niceDate(c.round.deadline)}</Text>}
               {c.needs_season_setup && <Text style={[s.hint, { color: colors.signalAmber }]}>⚠️ Give new people their turns, then start the new season.</Text>}
             </TouchableOpacity>))}

@@ -41,6 +41,7 @@ class ChamaContribution(Base):
     status = Column(String(10), nullable=False, default="pending"); reject_reason = Column(Text)
     submitted_at = Column(DateTime(timezone=True), server_default=func.now())
     decided_at = Column(DateTime(timezone=True)); decided_by_rider_id = _fk("rider.id")
+    self_confirmed = Column(Boolean, nullable=False, default=False)   # the Treasurer confirmed their OWN contribution
 
 class ChamaLoanApplication(Base):
     __tablename__ = "chama_loan_application"
@@ -106,6 +107,12 @@ class ChamaMgrRound(Base):
     amount_per_member = Column(M, nullable=False); deadline = Column(Date, nullable=False)
     status = Column(String(10), nullable=False, default="open")
     paid_out_amount = Column(M); paid_out_at = Column(DateTime(timezone=True)); paid_out_by_rider_id = _fk("rider.id")
+    # Stage 1: contributions can be more frequent than payouts.
+    #   amount_per_member = what each hand owes THIS round = unit_amount x contrib_count.
+    unit_amount = Column(M)                      # one contribution (null on rounds made before Stage 1)
+    contrib_count = Column(SmallInteger)         # contribution dates inside this round's period (null = 1)
+    period_start = Column(Date)                  # first day of this round's contribution period
+    self_paid = Column(Boolean, nullable=False, default=False)    # the Treasurer paid the pool out to THEMSELVES
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -131,6 +138,11 @@ class ChamaMgrCircle(Base):
     name = Column(String(40), nullable=False); amount = Column(M, nullable=False, default=0)
     sched = Column(JSONB, nullable=False, default=lambda: {"type": "weekly", "day": 6})
     status = Column(String(8), nullable=False, default="draft"); cycle_no = Column(SmallInteger, nullable=False, default=1)
+    # Stage 1. `sched` stays the PAYOUT schedule. contrib_sched is how often members contribute (null = once per payout, as before).
+    contrib_sched = Column(JSONB)
+    recipient_pays = Column(Boolean, nullable=False, default=False)     # does the person receiving the pool also contribute that round?
+    treasurer_joins = Column(Boolean, nullable=False, default=False)    # does the Treasurer also contribute and receive a payout?
+    pending_cfg = Column(JSONB)                                         # changes saved mid-cycle, applied when the next cycle starts
     started_at = Column(DateTime(timezone=True))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

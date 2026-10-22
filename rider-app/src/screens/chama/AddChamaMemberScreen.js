@@ -98,7 +98,7 @@ function AddChamaMemberScreen({ navigation, route }) {
           {circles.length === 0 && <Text style={s.hint}>No circle yet. You can add the person now and put them in a circle later.</Text>}
           {circles.map((c) => (
             <View key={c.id} style={{ marginBottom: 8 }}>
-              <Text style={{ fontWeight: '700' }}>{c.name} · KSh {Math.round(Number(c.amount)).toLocaleString()} · {c.sched_label || 'days not set'}</Text>
+              <Text style={{ fontWeight: '700' }}>{c.name} · KSh {Math.round(Number(c.amount)).toLocaleString()}{c.contrib_label ? ` · ${c.contrib_label}` : ''} · {c.contrib_label ? 'paid out ' : ''}{c.sched_label || 'days not set'}</Text>
               <View style={s.chipRow}>
                 {[[0, 'Not in it'], [1, 'One turn'], [2, 'Double turn ✌️']].map(([h, l]) => <Chip key={h} on={(seats[c.id] || 0) === h} label={l} onPress={() => setSeats({ ...seats, [c.id]: h })} />)}
               </View>

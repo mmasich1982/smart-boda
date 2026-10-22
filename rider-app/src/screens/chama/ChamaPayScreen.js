@@ -45,13 +45,16 @@ function ChamaPayScreen({ navigation, route }) {
   const [method, setMethod] = useState(null), [busy, setBusy] = useState(false);
 
   // Merry-Go-Round: KSh 100 minimum (lower only when that is all that is left to pay) and KSh 50,000 maximum.
-  const mgrMin = p.maxAmount > 0 ? Math.min(100, Math.round(p.maxAmount)) : 100;
+  // For a circle with its own contribution days the minimum is one contribution (less only when that is all that is left).
+  const base = p.minAmount > 0 ? Math.round(p.minAmount) : 100;
+  const mgrMin = p.maxAmount > 0 ? Math.min(base, Math.round(p.maxAmount)) : base;
+  const mgrMax = p.maxAmount > 0 ? Math.min(MGR_MAX, Math.round(p.maxAmount)) : MGR_MAX;
   const min = mgr ? mgrMin : k.min;
   const a = parseInt(amount, 10);
-  const ready = !!a && a >= min && (!mgr || a <= MGR_MAX) && !!method;
+  const ready = !!a && a >= min && (!mgr || a <= mgrMax) && !!method;
 
   async function submit() {
-    if (!ready) return showToast(mgr ? `Enter an amount (${fmt(min)}–${fmt(MGR_MAX)}) and choose Cash or M-Pesa.` : 'Enter the amount and choose Cash or M-Pesa.', 'warn');
+    if (!ready) return showToast(mgr ? `Enter an amount (${fmt(min)}–${fmt(mgrMax)}) and choose Cash or M-Pesa.` : 'Enter the amount and choose Cash or M-Pesa.', 'warn');
     if (mgr && p.maxAmount > 0 && a > p.maxAmount) return showToast(`The most you can pay this round is ${fmt(p.maxAmount)}.`, 'warn');
     setBusy(true);
     try {
@@ -81,7 +84,7 @@ function ChamaPayScreen({ navigation, route }) {
           <FormLabel required>Amount contributed (KSh)</FormLabel>
           <TextInput style={m.input} keyboardType="number-pad" value={amount} onChangeText={setAmount}
             placeholder={`e.g. ${p.amount ? Math.round(p.amount) : 500}`} />
-          <Text style={m.hint}>Minimum {fmt(min)} · Maximum {fmt(MGR_MAX)}</Text>
+          <Text style={m.hint}>Minimum {fmt(min)} · Maximum {fmt(mgrMax)}</Text>
         </Card>
         <Card>
           <Text style={m.cardTitle}>How did you pay?</Text>

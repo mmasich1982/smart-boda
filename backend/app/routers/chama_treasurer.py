@@ -139,6 +139,7 @@ def confirm_contribution(cid: RowId, group_id: Optional[RowId] = GID, db: Sessio
             raise HTTPException(409, "This round was already paid out. Reject this payment.")
         circle_id = rnd.circle_id
     c.status, c.decided_at, c.decided_by_rider_id = "confirmed", now(), rider.id
+    c.self_confirmed = bool(_member_rider(db, c.member_id) == rider.id)      # the Treasurer confirmed their OWN contribution
     post(db, g.id, c.member_id, rider.id, "mgr_contribution" if c.round_id else "contribution", "in",
          c.amount, "contribution", c.id, circle_id=circle_id)
     complete(db, "contribution", c.id, "decided", recipient_type="rider")
@@ -388,12 +389,18 @@ def history(date_from: Optional[date] = None, date_to: Optional[date] = None,
     total = q.count()
     rows = q.order_by(ChamaLedger.posted_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     sums = {d: sum(Decimal(l.amount) for l, _ in q.filter(ChamaLedger.direction == d).all()) for d in ("in", "out")}
+    # Stage 1: flag the Treasurer's own money so the group can see it (self-confirmed contributions, self-paid payouts)
+    cids = [l.ref_id for l, _ in rows if l.ref_type == "contribution"]
+    rids = [l.ref_id for l, _ in rows if l.ref_type == "mgr_round"]
+    self_conf = {i: f for i, f in db.query(ChamaContribution.id, ChamaContribution.self_confirmed).filter(ChamaContribution.id.in_(cids)).all()} if cids else {}
+    self_paid = {i: f for i, f in db.query(ChamaMgrRound.id, ChamaMgrRound.self_paid).filter(ChamaMgrRound.id.in_(rids)).all()} if rids else {}
+    flag = lambda l: "self-confirmed" if self_conf.get(l.ref_id) else "self-paid" if self_paid.get(l.ref_id) else None
     present = {t for (t,) in db.query(ChamaLedger.entry_type).filter(ChamaLedger.group_id == g.id).distinct()}
     models = [m for m, ts in (("tb", TB_TYPES), ("mgr", MGR_TYPES)) if present & set(ts)]   # which model chips make sense
     return {"total": total, "page": page, "page_size": page_size, "money_in": sums["in"], "money_out": sums["out"],
             "models": models,
             "items": [{"id": str(l.id), "type": l.entry_type, "direction": l.direction, "amount": l.amount,
-                       "member": m.full_name if m else None, "posted_at": l.posted_at.isoformat()} for l, m in rows]}
+                       "member": m.full_name if m else None, "posted_at": l.posted_at.isoformat(), "self_flag": flag(l)} for l, m in rows]}
 
 @router.get("/statement")
 def statement(date_from: date, date_to: date, group_id: Optional[RowId] = GID, db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):

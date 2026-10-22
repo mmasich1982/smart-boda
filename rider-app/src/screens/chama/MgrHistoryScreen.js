@@ -97,7 +97,7 @@ function MgrHistoryScreen({ navigation, route }) {
             <View key={e.id} style={[h.row, i === pageRecords.length - 1 && { borderBottomWidth: 0 }]}>
               <View style={{ flex: 1 }}>
                 <Text style={h.rowTitle}>Merry-go-round{multi && circleName(e.circle_id) ? ` · ${circleName(e.circle_id)}` : ''}</Text>
-                <Text style={h.rowSub}>{monthDay(e.at)} • {e.method === 'cash' ? '💵 Cash' : '📲 M-Pesa'}{tFirst ? ` • ✓ Approved by ${tFirst}` : ''}</Text>
+                <Text style={h.rowSub}>{monthDay(e.at)} • {e.method === 'cash' ? '💵 Cash' : '📲 M-Pesa'}{e.self_confirmed ? ' • 🧾 Self-confirmed by Treasurer' : tFirst ? ` • ✓ Approved by ${tFirst}` : ''}</Text>
               </View>
               <Text style={h.rowAmt}>+{fmt(e.amount)}</Text>
             </View>))}

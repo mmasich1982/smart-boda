@@ -41,15 +41,21 @@ export function monthDay(iso) {
 export function mgrTurns(c) {
   return (c?.schedule || []).map((x) => ({
     key: `${x.turn}-${x.hand_no}`, turn: x.turn, mine: !!x.mine, name: x.mine ? 'You' : x.name, date: x.date,
+    paid_at: x.paid_at || null, self_paid: !!x.self_paid,
     status: x.status === 'paid' ? 'paid' : x.status === 'current' ? 'next' : 'upcoming',
   }));
 }
+
+const days = (n) => `${n} ${n === 1 ? 'day' : 'days'}`;
 
 /**
  * Everything the screens need to know about the rider in ONE circle.
  *   kind: waiting | receive | nothing | paid | awaiting | due
  *   hero: { label, amount, split[] }       payoutRows: [[label, value], ...]
  *   left: what the rider can still pay this round (owed minus what already waits for the Treasurer)
+ *   unit / payDefault: one contribution, and what the Pay screen pre-fills (the missed days when behind)
+ * Circles whose members contribute more often than the pool is paid out (c.contrib_label) show today's / the next
+ * contribution, how much of the round is paid, and a "behind" warning. Older circles look as before.
  */
 export function mgrState(c) {
   const R = c?.round || null;
@@ -59,40 +65,53 @@ export function mgrState(c) {
   const owed = R ? Number(R.owed) : 0, pending = R ? Number(R.pending) : 0, owesTotal = R ? Number(R.owes_total) : 0;
   const left = R ? Math.max(0, owed - pending) : 0;
   const started = !!R && c.status !== 'draft';
+  const multi = !!c.contrib_label && !!R;                       // contributions are more frequent than payouts
+  const unit = R ? Number(R.unit_amount) || Number(c.amount) : Number(c.amount);
+  const behind = multi && !!R.behind;
 
   let kind = 'due';
   if (!started) kind = 'waiting';
   else if (R.i_receive) kind = 'receive';
   else if (owesTotal <= 0) kind = 'nothing';
   else if (owed <= 0) kind = 'paid';
-  else if (pending > 0) kind = 'awaiting';
+  else if (pending > 0 && left <= 0) kind = 'awaiting';          // everything owed has been sent and waits for the Treasurer
 
-  const next = [`Next contribution: ${fmt(c.amount)}`, c.sched_label].filter(Boolean);
+  const next = [`Next contribution: ${fmt(c.amount)}`, c.contrib_label || c.sched_label].filter(Boolean);
+  const paidSoFar = R ? Number(R.paid) + pending : 0;
+  const dueHero = multi
+    ? { label: behind ? 'Contribution due' : R.contribute_today ? "Today's contribution" : 'Next contribution',
+        amount: fmt(Math.min(left, behind ? Number(R.behind_amount) : unit)),
+        split: [`This round: ${fmt(paidSoFar)} of ${fmt(owesTotal)}`, `Payout ${longDate(R.deadline)}`, behind ? `⚠️ ${days(R.days_behind)} behind` : null].filter(Boolean) }
+    : { label: 'Contribution due', amount: fmt(owed), split: R ? [`Due ${longDate(R.deadline)}`, c.sched_label].filter(Boolean) : [] };
   const hero = {
     waiting: { label: 'Merry-Go-Round', amount: 'Not started', split: [c.joins_next_cycle ? 'You join from the next cycle.' : 'Waiting for your Treasurer to start this circle.'] },
     receive: { label: 'This round', amount: 'Your turn 🎉', split: ['Everyone else pays you this round.'] },
     nothing: { label: 'This round', amount: 'Nothing to pay', split: next },
     paid: { label: 'This round', amount: 'Paid ✓', split: next },
     awaiting: { label: 'Contribution sent', amount: fmt(pending), split: ['Waiting for Treasurer to confirm'] },
-    due: { label: 'Contribution due', amount: fmt(owed), split: R ? [`Due ${longDate(R.deadline)}`, c.sched_label].filter(Boolean) : [] },
+    due: dueHero,
   }[kind];
 
   const payoutRows = [];
   if (R) {
     payoutRows.push(['Members Contributions so far', `${fmt(R.pot)} of ${fmt(R.expected)}`]);
     payoutRows.push(['Members who have paid', `${R.paid_count} of ${R.member_count}`]);
+    if (multi && Number(R.contrib_count) > 1 && owesTotal > 0) payoutRows.push(['You pay this round', `${fmt(owesTotal)} (${R.contrib_count} × ${fmt(unit)})`]);
+    if (Number(R.treasurer_self_confirmed) > 0) payoutRows.push(["Treasurer's own payments (self-confirmed)", fmt(R.treasurer_self_confirmed)]);
   }
   if (me) {
     payoutRows.push(['You will receive money on', me.status === 'paid' ? 'Received ✓' : longDate(me.date)]);
     if (me.status !== 'paid') payoutRows.push(['You will receive', fmt(c.payout_estimate)]);
   }
-  return { R, kind, hero, payoutRows, me, turns, left, started, canPay: started && !R.i_receive && owesTotal > 0 };
+  const payDefault = multi ? Math.min(left, behind ? Number(R.behind_amount) : unit) : (left > 0 ? left : Number(c.amount));
+  return { R, kind, hero, payoutRows, me, turns, left, started, multi, behind, unit, payDefault,
+           canPay: started && !R.i_receive && owesTotal > 0 };
 }
 
 /** The params every "Pay contribution" button passes to the ChamaPay screen. */
 export function payParams(group, c, st) {
   return {
-    kind: 'contribution', model: 'mgr', amount: st.left > 0 ? st.left : Number(c.amount), maxAmount: st.left,
+    kind: 'contribution', model: 'mgr', amount: st.payDefault, maxAmount: st.left, minAmount: st.multi ? st.unit : 0,
     treasurer: group.treasurer, groupId: group.group_id, circleId: c.id, circleName: c.name,
   };
 }

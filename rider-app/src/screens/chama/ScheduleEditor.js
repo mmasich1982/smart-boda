@@ -1,5 +1,6 @@
 // rider-app/src/screens/chama/ScheduleEditor.js
-// Payout schedule picker for a Merry-Go-Round circle. Produces exactly the shapes the server validates
+// Schedule picker for a Merry-Go-Round circle. Used twice on the circle form: kind="contribution" (how often members
+// contribute) and kind="payout" (how often the pool is paid out, the default). Produces exactly the shapes the server validates
 // (services/mgr_schedule.py):  daily{days} | weekly{day} | twice{days:[2]} | biweekly{start} | monthly{dom, fix} | special{dates}
 // Weekdays: 0 = Sunday ... 6 = Saturday.
 import React from 'react';
@@ -35,9 +36,12 @@ const DayChips = ({ value, onToggle }) => (
 
 /**
  * sched: current schedule object, onChange(newSched). flags = monthly_flags from the server (short months for dom >= 29).
+ * kind: 'payout' (default) or 'contribution': only changes the wording.
  */
-export default function ScheduleEditor({ sched, onChange, flags = [] }) {
+export default function ScheduleEditor({ sched, onChange, flags = [], kind = 'payout' }) {
   const sc = sched || DEFAULT_SCHED;
+  const contrib = kind === 'contribution';
+  const noun = contrib ? 'contribution' : 'payout';
   const toggleMany = (i, max) => {
     const cur = sc.days || [];
     if (cur.includes(i)) return onChange({ ...sc, days: cur.filter((x) => x !== i) });
@@ -46,14 +50,14 @@ export default function ScheduleEditor({ sched, onChange, flags = [] }) {
   };
   return (
     <View>
-      <Text style={s.label}>HOW OFTEN IS THE POOL PAID OUT? *</Text>
+      <Text style={s.label}>{contrib ? 'HOW OFTEN DO MEMBERS CONTRIBUTE? *' : 'HOW OFTEN IS THE POOL PAID OUT? *'}</Text>
       <View style={s.chipRow}>{SCHEDULE_TYPES.map(([k, l]) => <Chip key={k} on={sc.type === k} label={l} onPress={() => onChange(switchType(sc, k))} />)}</View>
 
-      {sc.type === 'daily' && (<><Text style={s.hint}>Untick the days with no payout.</Text><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i)} /></>)}
+      {sc.type === 'daily' && (<><Text style={s.hint}>Untick the days with no {noun}, for example Sunday.</Text><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i)} /></>)}
       {sc.type === 'weekly' && (<><Text style={s.hint}>Which day?</Text>
         <View style={s.chipRow}>{DAYS.map((d, i) => <Chip key={d} on={sc.day === i} label={d} onPress={() => onChange({ ...sc, day: i })} />)}</View></>)}
       {sc.type === 'twice' && (<><Text style={s.hint}>Pick two days, for example Tue and Thu.</Text><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i, 2)} /></>)}
-      {sc.type === 'biweekly' && (<><Text style={s.label}>FIRST PAYOUT DATE *</Text>
+      {sc.type === 'biweekly' && (<><Text style={s.label}>{contrib ? 'FIRST CONTRIBUTION DATE *' : 'FIRST PAYOUT DATE *'}</Text>
         <MonthPicker selected={sc.start ? [sc.start] : []} onChange={(d) => onChange({ ...sc, start: d[0] })} />
         <Text style={s.hint}>{isoOk(sc.start || '') ? `${niceDate(sc.start)}, then every 2 weeks.` : 'Then it repeats every 2 weeks.'}</Text></>)}
       {sc.type === 'monthly' && (<><Text style={s.label}>DATE EACH MONTH (1 TO 31) *</Text>
@@ -72,11 +76,11 @@ export default function ScheduleEditor({ sched, onChange, flags = [] }) {
             </View>); })}
         </View></View>)}</>)}
       {sc.type === 'special' && (<>
-        <Text style={s.hint}>For exceptional cases. Add every payout date by hand.</Text>
+        <Text style={s.hint}>For exceptional cases. Add every {noun} date by hand.</Text>
         {(sc.dates || []).map((d) => (
           <View key={d} style={s.row}><Text style={s.k}>{niceDate(d)}</Text>
             <TouchableOpacity onPress={() => onChange({ ...sc, dates: sc.dates.filter((x) => x !== d) })}><Text style={{ color: colors.signalRed, fontWeight: '700' }}>Remove</Text></TouchableOpacity></View>))}
-        <Text style={s.hint}>Tap each payout date on the calendar. Tap again to remove it.</Text>
+        <Text style={s.hint}>Tap each {noun} date on the calendar. Tap again to remove it.</Text>
         <MonthPicker multi selected={sc.dates || []} onChange={(d) => onChange({ ...sc, dates: d })} />
 </>)}
     </View>);

@@ -34,7 +34,17 @@ function MgrRulesScreen({ navigation, route }) {
       {c && st && (<>
         <Hero {...st.hero} />
         {st.payoutRows.length > 0 && <Card><DetailRows rows={st.payoutRows} /></Card>}
-        <Card><DetailRows rows={[['Each contribution', fmt(c.amount)], ['How often', c.sched_label || '—']]} /></Card>
+        <Card><DetailRows rows={[
+          ...(c.contrib_label
+            ? [['Contribution', `${fmt(c.amount)} · ${c.contrib_label}`], ['Payout', c.payout_label || c.sched_label || '—']]
+            : [['Each contribution', fmt(c.amount)], ['How often', c.sched_label || '—']]),
+          ...(c.recipient_pays ? [['Recipient also contributes', 'Yes']] : []),
+          ...(c.treasurer_joins ? [['Treasurer also takes part', 'Yes']] : []),
+        ]} /></Card>
+        {st.behind && <Notice tone="amber" icon="⚠️" title={`You are ${st.R.days_behind} ${Number(st.R.days_behind) === 1 ? 'day' : 'days'} behind`} sub={`Pay ${fmt(st.R.behind_amount)} to catch up.`} />}
+        {c.next_cycle && (
+          <Notice tone="green" icon="🕒" title={`From cycle ${c.next_cycle.cycle_no}: ${fmt(c.next_cycle.amount)}${c.next_cycle.contrib_label ? ` · ${c.next_cycle.contrib_label}` : ''}, paid out ${String(c.next_cycle.payout_label).toLowerCase()}`}
+            sub="Your Treasurer changed the rules. They start with the next cycle." />)}
         {st.R && Number(st.R.pending) > 0 && <Notice tone="amber" icon="⏳" title={`${fmt(st.R.pending)} awaiting Treasurer approval`} />}
         {st.canPay && <Btn label="＋ Pay contribution" onPress={pay} testID="rules-pay" />}
       </>)}

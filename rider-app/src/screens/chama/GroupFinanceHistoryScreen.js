@@ -117,7 +117,7 @@ function GroupFinanceHistoryScreen({ navigation, route }) {
         {h.items.map((i) => (
           <View key={i.id} style={s.row}>
             <View style={{ flex: 1 }}>
-              <Text style={s.v}>{LABEL[i.type] || i.type}{i.member ? ' · ' + i.member : ''}</Text>
+              <Text style={s.v}>{LABEL[i.type] || i.type}{i.member ? ' · ' + i.member : ''}{i.self_flag ? ' · 🧾 ' + i.self_flag : ''}</Text>
               <Text style={s.hint}>{new Date(i.posted_at).toLocaleString()}</Text>
             </View>
             <Text style={{ fontWeight: '800', color: i.direction === 'in' ? colors.signalGreen : colors.signalRed }}>{i.direction === 'in' ? '+' : '−'}{fmt(i.amount)}</Text>

@@ -62,6 +62,9 @@ export default function MgrSavingsView({ navigation, group, reload }) {
       <Notice tone="amber" icon="⏳" onPress={() => go('MgrHistory')}
         title={`${fmt(st.R.pending)} ${waiting ? (waiting.method === 'cash' ? 'cash' : 'M-Pesa') + ' ' : ''}awaiting Treasurer approval`}
         sub={`Tap to view${waiting?.reference ? ` · Ref ${waiting.reference}` : ''}`} />) : null}
+    {st.behind && (
+      <Notice tone="amber" icon="⚠️" title={`You are ${st.R.days_behind} ${Number(st.R.days_behind) === 1 ? 'day' : 'days'} behind`}
+        sub={`Pay ${fmt(st.R.behind_amount)} to catch up. You can pay several days at once.`} />)}
     {st.kind === 'due' && lastRej && (
       <Notice tone="red" icon="❌" title={`Your ${fmt(lastRej.amount)} payment was not accepted${lastRej.reason ? `: “${lastRej.reason}”` : ''}. Please pay again.`} />)}
 

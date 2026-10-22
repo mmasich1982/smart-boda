@@ -1,5 +1,8 @@
 # backend/app/services/mgr_schedule.py
-"""Payout schedule of a Merry-Go-Round circle. Same shapes as the Smart Boda prototype (v30):
+"""Schedules of a Merry-Go-Round circle. A circle has TWO of them (Stage 1):
+    sched         when the pool is PAID OUT
+    contrib_sched when members CONTRIBUTE (optional; when missing, members contribute once per payout, as before)
+Both use the same shapes as the Smart Boda prototype (v30):
 
     {"type": "daily",    "days": [0..6]}                     every day except the unticked weekdays (0 = Sunday)
     {"type": "weekly",   "day": 0..6}
@@ -29,25 +32,27 @@ def _wd(d: date) -> int:
 def ordinal(n: int) -> str:
     return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
 
-def validate(s) -> dict:
-    """Return a clean copy of the schedule or raise ValueError with a rider-friendly message."""
+def validate(s, what: str = "payout") -> dict:
+    """Return a clean copy of the schedule or raise ValueError with a rider-friendly message.
+    what = "payout" or "contribution": only changes the wording of the messages."""
+    w = "contribution" if what == "contribution" else "payout"
     if not isinstance(s, dict) or s.get("type") not in TYPES:
-        raise ValueError("Choose how often the pool is paid out.")
+        raise ValueError("Choose how often members contribute." if w == "contribution" else "Choose how often the pool is paid out.")
     t = s["type"]
     days = sorted({int(x) for x in (s.get("days") or [])})
     if any(x < 0 or x > 6 for x in days): raise ValueError("Pick days between Sunday and Saturday.")
     if t == "daily":
-        if not days: raise ValueError("Tick at least one payout day.")
+        if not days: raise ValueError(f"Tick at least one {w} day.")
         return {"type": t, "days": days}
     if t == "weekly":
-        if s.get("day") is None or not 0 <= int(s["day"]) <= 6: raise ValueError("Pick the payout day.")
+        if s.get("day") is None or not 0 <= int(s["day"]) <= 6: raise ValueError(f"Pick the {w} day.")
         return {"type": t, "day": int(s["day"])}
     if t == "twice":
-        if len(days) != 2: raise ValueError("Pick exactly two payout days, for example Tuesday and Thursday.")
+        if len(days) != 2: raise ValueError(f"Pick exactly two {w} days, for example Tuesday and Thursday.")
         return {"type": t, "days": days}
     if t == "biweekly":
         try: return {"type": t, "start": _d(s.get("start")).isoformat()}
-        except Exception: raise ValueError("Pick the first payout date. It then repeats every 2 weeks.")
+        except Exception: raise ValueError(f"Pick the first {w} date. It then repeats every 2 weeks.")
     if t == "monthly":
         dom = int(s.get("dom") or 0)
         if not 1 <= dom <= 31: raise ValueError("Pick the date each month (1 to 31).")
@@ -58,8 +63,8 @@ def validate(s) -> dict:
             fix[f"{y}-{m}"] = int(v)
         return {"type": t, "dom": dom, "fix": fix}
     try: dates = sorted({_d(x).isoformat() for x in (s.get("dates") or [])})
-    except Exception: raise ValueError("Pick valid payout dates.")
-    if not dates: raise ValueError("Pick at least one payout date.")
+    except Exception: raise ValueError(f"Pick valid {w} dates.")
+    if not dates: raise ValueError(f"Pick at least one {w} date.")
     return {"type": t, "dates": dates}
 
 def generate(s: dict, a: date, b: date) -> list:
@@ -116,3 +121,31 @@ def monthly_flags(s: dict, today: Optional[date] = None) -> list:
         dim = monthrange(y, m)[1]
         if dim < s["dom"]: out.append({"key": f"{y}-{m}", "days_in_month": dim, "fix": (s.get("fix") or {}).get(f"{y}-{m}")})
     return out
+
+
+# ───────────────────────────── contributions vs payouts (Stage 1) ─────────────────────────────
+def count_between(s: dict, a: date, b: date) -> int:
+    """How many dates of schedule s fall from a to b inclusive."""
+    return len(generate(s, a, b)) if a <= b else 0
+
+def check_periods(payout: dict, contrib: dict, today: Optional[date] = None, upto: int = 24) -> None:
+    """Every payout period must hold at least one contribution date, otherwise members would have nothing to pay before
+    that payout (for example monthly contributions with a weekly payout). Checked on the real dates of the next payouts.
+    Raises ValueError with a message for the Treasurer."""
+    today = today or date.today()
+    start = today
+    for p in generate(payout, today, today + timedelta(days=1200))[:upto]:
+        if count_between(contrib, start, p) < 1:
+            raise ValueError(f"Members have no contribution day before the payout on {p.strftime('%a %d %b %Y')}. "
+                             "Contributions must happen at least as often as payouts.")
+        start = p + timedelta(days=1)
+
+def next_contribution(contrib: dict, today: Optional[date] = None) -> Optional[date]:
+    """The next contribution date from today (today included), or None."""
+    today = today or date.today()
+    for d in generate(contrib, today, today + timedelta(days=800)): return d
+    return None
+
+def is_contribution_day(contrib: dict, today: Optional[date] = None) -> bool:
+    today = today or date.today()
+    return count_between(contrib, today, today) > 0

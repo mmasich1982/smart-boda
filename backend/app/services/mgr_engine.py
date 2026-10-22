@@ -9,8 +9,15 @@ Vocabulary
           except in its own turn.
   round   one payout. The recipient is whoever holds the current turn.
 
-Money rules (unchanged from Phase 1): the pot is the confirmed contributions of the round; a round is paid out only once
-everyone who owes has paid (or the Treasurer has noted an exception); the recipient does not pay for the turn being received.
+Money rules: the pot is the confirmed contributions of the round; a round is paid out only once everyone who owes has paid
+(or the Treasurer has noted an exception). By default the recipient does not pay for the turn being received; a circle can
+switch that on (recipient_pays).
+
+Stage 1: a circle has TWO schedules. `sched` is when the pool is paid out. `contrib_sched` is when members contribute (optional;
+missing = once per payout, as before). A round covers the period since the previous payout and each hand owes
+unit amount x contribution dates in that period. Members are "behind" when they have paid (counting payments that wait for the
+Treasurer) less than the contribution dates that have already passed. Changes to amount, schedules and the two switches are
+locked for the cycle: they wait in `pending_cfg` and apply when the next cycle starts.
 
 Swap rules (new)
   1. Only turns that have not come yet can be swapped, and only between two different people.
@@ -70,10 +77,61 @@ def current_turn(db: Session, circle) -> Optional[int]:
 def deadline_after(circle, after_today=False) -> date:
     return sch.next_on_or_after(circle.sched, date.today(), after=after_today)
 
+def round_period_start(db, circle, deadline) -> date:
+    """First day of a new round's contribution period: the day after the previous round's payout date (today for the first round)."""
+    prev = db.query(func.max(ChamaMgrRound.deadline)).filter(ChamaMgrRound.circle_id == circle.id).scalar()
+    return prev + timedelta(days=1) if prev and prev < deadline else date.today()
+
+def round_amounts(circle, start, deadline) -> tuple:
+    """(contribution count, unit amount, target per hand) for a round whose period runs start..deadline."""
+    unit = Decimal(circle.amount)
+    if not circle.contrib_sched: return 1, unit, unit                     # one contribution per payout, as before Stage 1
+    n = max(1, sch.count_between(circle.contrib_sched, start, deadline))
+    return n, unit, unit * n
+
 def new_round(db, circle, turn_no, round_no, recipient_member_id, after_today=False):
+    deadline = deadline_after(circle, after_today)
+    start = round_period_start(db, circle, deadline)
+    n, unit, target = round_amounts(circle, start, deadline)
     db.add(ChamaMgrRound(group_id=circle.group_id, circle_id=circle.id, cycle_no=circle.cycle_no, round_no=round_no,
-                         turn_no=turn_no, recipient_member_id=recipient_member_id, amount_per_member=circle.amount,
-                         deadline=deadline_after(circle, after_today)))
+                         turn_no=turn_no, recipient_member_id=recipient_member_id, amount_per_member=target,
+                         unit_amount=unit, contrib_count=n, period_start=start, deadline=deadline))
+
+def refresh_open_round(db, circle, rnd):
+    """Re-work the open round after the circle's amount or schedules changed (only allowed while nobody has paid into it)."""
+    rnd.deadline = deadline_after(circle)
+    rnd.period_start = rnd.period_start if rnd.period_start and rnd.period_start < rnd.deadline else date.today()
+    rnd.contrib_count, rnd.unit_amount, rnd.amount_per_member = round_amounts(circle, rnd.period_start, rnd.deadline)
+
+CFG_KEYS = ("amount", "sched", "contrib_sched", "recipient_pays", "treasurer_joins")
+
+def cycle_locked(db, circle, rnd=None) -> bool:
+    """True while the circle is mid-cycle: money rules may not change now, they wait for the next cycle."""
+    if circle.status != "active": return False
+    rnd = rnd or open_round(db, circle)
+    return rnd is not None and not order_editable(db, circle, rnd)
+
+def apply_pending(circle):
+    """A new cycle begins: the changes the Treasurer saved mid-cycle take effect."""
+    for k, v in (circle.pending_cfg or {}).items():
+        if k in CFG_KEYS: setattr(circle, k, Decimal(str(v)) if k == "amount" else v)
+    circle.pending_cfg = None
+
+def effective(circle) -> dict:
+    """The rules that will apply from the next cycle (the saved changes laid over the current ones)."""
+    out = {k: getattr(circle, k) for k in CFG_KEYS}
+    for k, v in (circle.pending_cfg or {}).items():
+        if k in CFG_KEYS: out[k] = v
+    return out
+
+def treasurer_member_ids(db, g) -> set:
+    """Member rows of this group that are the Treasurer's own (the Treasurer added as a member of their own group)."""
+    if not g or not g.treasurer_rider_id: return set()
+    return {m.id for m in db.query(GroupMember).filter(GroupMember.group_id == g.id, GroupMember.linked_rider_id == g.treasurer_rider_id)}
+
+def pool_size(circle, per_member, hands) -> Decimal:
+    """What the recipient receives: every hand pays, except the recipient's own when recipient_pays is off."""
+    return Decimal(per_member) * (hands if circle.recipient_pays else max(0, hands - 1))
 
 def order_editable(db, circle, rnd) -> bool:
     """The turn order may be rewritten until the FIRST payout of a season: before the circle starts, or while the open round
@@ -84,11 +142,39 @@ def order_editable(db, circle, rnd) -> bool:
                                                   ChamaContribution.status != "rejected").first() is None
 
 def hands_owing(db, circle, rnd, member_id) -> int:
-    """How many hands of this member pay into this round: every hand with a turn except the one being paid out."""
-    return sum(1 for h, m in turn_hands(db, circle) if m.id == member_id and h.turn_no != rnd.turn_no)
+    """How many hands of this member pay into this round: every hand with a turn, except the one being paid out
+    (unless the circle says the recipient also contributes)."""
+    pay_all = bool(circle.recipient_pays)
+    return sum(1 for h, m in turn_hands(db, circle) if m.id == member_id and (pay_all or h.turn_no != rnd.turn_no))
 
 def member_owes(db, circle, rnd, member_id) -> Decimal:
     return Decimal(rnd.amount_per_member) * hands_owing(db, circle, rnd, member_id)
+
+def _treasurer_rider(db, circle):
+    g = getattr(circle, "_grp", None)
+    if g is None:
+        g = db.get(BodaGroup, circle.group_id); circle._grp = g
+    return g.treasurer_rider_id if g else None
+
+def pending_by_member(db, round_id) -> dict:
+    """Money each member has sent that still waits for the Treasurer."""
+    rows = db.query(ChamaContribution.member_id, func.sum(ChamaContribution.amount)).filter(
+        ChamaContribution.round_id == round_id, ChamaContribution.status == "pending").group_by(ChamaContribution.member_id).all()
+    return {mid: Decimal(t) for mid, t in rows}
+
+def behind_info(circle, rnd, hands, paid, pending, today=None) -> dict:
+    """Is this member behind on the contribution dates that have already passed this round?
+    Payments that wait for the Treasurer count as paid, so nobody is flagged while their money is on its way.
+    Circles without a contribution schedule (one payment per payout) are never "behind"."""
+    base = {"behind": False, "behind_amount": ZERO, "days_behind": 0, "due_to_date": ZERO}
+    if not circle.contrib_sched or not rnd.period_start or not rnd.unit_amount or hands <= 0: return base
+    today = today or date.today()
+    n = sch.count_between(circle.contrib_sched, rnd.period_start, min(today, rnd.deadline))
+    unit_all = Decimal(rnd.unit_amount) * hands
+    due = min(unit_all * n, Decimal(rnd.amount_per_member) * hands)
+    gap = max(ZERO, due - Decimal(paid) - Decimal(pending))
+    days = -int(-gap // unit_all) if gap > 0 and unit_all > 0 else 0          # ceiling
+    return {"behind": gap > 0, "behind_amount": gap, "days_behind": days, "due_to_date": due}
 
 def exceptions_of(db, rnd) -> dict:
     return {x.member_id: x for x in db.query(ChamaMgrException).filter_by(round_id=rnd.id)}
@@ -97,6 +183,8 @@ def plan(db: Session, circle, rnd) -> dict:
     """Who has paid, who still owes, and whether the pool can be paid out."""
     paid = mgr_paid_by_member(db, rnd.id)
     pending = db.query(func.count(ChamaContribution.id)).filter_by(round_id=rnd.id, status="pending").scalar()
+    sent = pending_by_member(db, rnd.id)
+    pay_all = bool(circle.recipient_pays)
     ex = exceptions_of(db, rnd)
     th = turn_hands(db, circle)
     per = defaultdict(list)
@@ -104,15 +192,18 @@ def plan(db: Session, circle, rnd) -> dict:
     amount, roster = Decimal(rnd.amount_per_member), []
     for mid, hs in sorted(per.items(), key=lambda kv: min(h.turn_no for h, _ in kv[1])):
         m = hs[0][1]; turns = sorted(h.turn_no for h, _ in hs)
-        owing = sum(1 for t in turns if t != rnd.turn_no); owed_total = amount * owing
+        owing = len(turns) if pay_all else sum(1 for t in turns if t != rnd.turn_no); owed_total = amount * owing
         p = paid.get(mid, ZERO); remaining = max(ZERO, owed_total - p)
         is_rec = rnd.turn_no in turns
         e = ex.get(mid)
+        bh = behind_info(circle, rnd, owing, p, sent.get(mid, ZERO))
         roster.append({"member_id": str(mid), "name": m.full_name, "phone": mask_phone(m.phone), "turns": turns,
                        "is_recipient": is_rec, "hands": len(turns), "owed_total": owed_total, "paid": p,
                        "owed": remaining, "complete": remaining == 0,
                        "noted": bool(e and remaining > 0), "note_reason": e.reason if e else None,
-                       "note_text": e.note if e else None})
+                       "note_text": e.note if e else None, "sent": sent.get(mid, ZERO),
+                       "behind": bh["behind"] and remaining > 0 and not bool(e), "behind_amount": bh["behind_amount"],
+                       "days_behind": bh["days_behind"], "is_treasurer": m.linked_rider_id is not None and m.linked_rider_id == _treasurer_rider(db, circle)})
     pot = sum(paid.values(), ZERO)
     unpaid = [r for r in roster if r["owed"] > 0 and not r["noted"]]
     excused = [r for r in roster if r["owed"] > 0 and r["noted"]]
@@ -123,7 +214,8 @@ def plan(db: Session, circle, rnd) -> dict:
     elif pending: block = f"{pending} contribution(s) still await your confirmation. Confirm them first."
     return {"roster": roster, "pot": pot, "can_pay": block is None, "block": block, "pending": pending,
             "unpaid": unpaid, "excused": excused, "short": short,
-            "expected": amount * max(0, len(th) - 1), "paid_count": sum(1 for r in roster if r["complete"] or r["noted"]),
+            "expected": pool_size(circle, amount, len(th)), "paid_count": sum(1 for r in roster if r["complete"] or r["noted"]),
+            "behind_count": sum(1 for r in roster if r["behind"]),
             "member_count": len(roster)}
 
 def turn_table(db, circle, rnd=None, me_member_id=None) -> list:
@@ -132,12 +224,17 @@ def turn_table(db, circle, rnd=None, me_member_id=None) -> list:
     th = turn_hands(db, circle)
     cur = rnd.turn_no if rnd else None
     dates = sch.turn_dates(circle.sched, rnd.deadline, max(1, len(th) - (cur or 1) + 1)) if rnd else []
+    cycle = rnd.cycle_no if rnd else circle.cycle_no
+    done = {r.turn_no: r for r in db.query(ChamaMgrRound).filter_by(circle_id=circle.id, cycle_no=cycle, status="paid_out")}
     out = []
     for h, m in th:
         d = dates[h.turn_no - cur] if rnd and h.turn_no >= cur and h.turn_no - cur < len(dates) else None
+        r = done.get(h.turn_no)
         out.append({"turn": h.turn_no, "hand_no": h.hand_no, "member_id": str(m.id), "name": m.full_name, "phone": mask_phone(m.phone),
                     "mine": bool(me_member_id and m.id == me_member_id),
                     "date": d.isoformat() if d else None,
+                    "paid_at": r.paid_out_at.date().isoformat() if r and r.paid_out_at else None,
+                    "self_paid": bool(r and r.self_paid),
                     "status": None if not rnd else "paid" if h.turn_no < cur else "current" if h.turn_no == cur else "upcoming"})
     return out
 
@@ -148,21 +245,32 @@ def circle_card(db, circle) -> dict:
     out = {"id": str(circle.id), "name": circle.name, "amount": circle.amount, "sched": circle.sched,
            "sched_label": sch.label(circle.sched), "status": circle.status,
            "cycle_no": circle.cycle_no, "people": len({m.id for _, m in hs}), "hands": len(hs), "turns": len(th),
-           "needs_season_setup": circle.status == "active" and rnd is None}
+           "needs_season_setup": circle.status == "active" and rnd is None,
+           "contrib_sched": circle.contrib_sched, "contrib_label": sch.label(circle.contrib_sched) if circle.contrib_sched else None,
+           "recipient_pays": bool(circle.recipient_pays), "treasurer_joins": bool(circle.treasurer_joins),
+           "pending_cfg": circle.pending_cfg, "locked": cycle_locked(db, circle, rnd)}
     if rnd:
         p = plan(db, circle, rnd); rec = db.get(GroupMember, rnd.recipient_member_id)
         out["round"] = {"round_no": rnd.round_no, "turn_no": rnd.turn_no, "deadline": rnd.deadline.isoformat(),
                         "recipient": rec.full_name, "pot": p["pot"], "expected": p["expected"],
-                        "paid_count": p["paid_count"], "member_count": p["member_count"], "can_pay": p["can_pay"]}
+                        "paid_count": p["paid_count"], "member_count": p["member_count"], "can_pay": p["can_pay"],
+                        "behind_count": p["behind_count"], "unit_amount": rnd.unit_amount, "contrib_count": rnd.contrib_count or 1,
+                        "amount_per_member": rnd.amount_per_member}
     return out
 
 # ───────────────────────────── starting and paying out ─────────────────────────────
 def check_ready(db, circle) -> list:
     hs = hands_of(db, circle)
     if circle.amount <= 0: raise HTTPException(409, "Set the contribution amount for this circle first.")
-    try: sch.validate(circle.sched)
+    try:
+        sch.validate(circle.sched)
+        if circle.contrib_sched:
+            sch.validate(circle.contrib_sched, "contribution"); sch.check_periods(circle.sched, circle.contrib_sched)
     except ValueError as e: raise HTTPException(409, str(e))
     if len({m.id for _, m in hs}) < 2: raise HTTPException(409, "Add at least 2 people to this circle first.")
+    tm = treasurer_member_ids(db, db.get(BodaGroup, circle.group_id))
+    if not circle.treasurer_joins and any(m.id in tm for _, m in hs):
+        raise HTTPException(409, "The Treasurer is in this circle, but \"Treasurer also takes part\" is switched off in the circle settings.")
     if sorted(h.turn_no or 0 for h, _ in hs) != list(range(1, len(hs) + 1)):
         raise HTTPException(409, "Give every turn a number first (1, 2, 3 ...).")
     return hs
@@ -180,11 +288,13 @@ def pay_out(db, circle, rnd, plan_, treasurer_id):
     """Close the round, post the payout and open the next one. Returns (recipient, pot, new_cycle, next_turn)."""
     rec = db.get(GroupMember, rnd.recipient_member_id); pot = plan_["pot"]
     rnd.status, rnd.paid_out_amount, rnd.paid_out_at, rnd.paid_out_by_rider_id = "paid_out", pot, now(), treasurer_id
+    rnd.self_paid = bool(rec.linked_rider_id and rec.linked_rider_id == treasurer_id)       # the Treasurer paid THEMSELVES
     post(db, circle.group_id, rec.id, treasurer_id, "mgr_payout", "out", pot, "mgr_round", rnd.id, circle_id=circle.id)
     hs = hands_of(db, circle); with_turn = [(h, m) for h, m in hs if h.turn_no is not None]
     nxt, new_cycle = rnd.turn_no + 1, False
     if nxt > len(with_turn):                                    # last turn done: a new cycle (season) begins
         nxt, new_cycle = 1, True; circle.cycle_no += 1
+        apply_pending(circle)                                   # changes saved mid-cycle take effect now
         if len(with_turn) == len(hs):                           # nobody joined meanwhile: same order, round opens straight away
             nm = with_turn[0][1]
             new_round(db, circle, 1, rnd.round_no + 1, nm.id, after_today=True)
