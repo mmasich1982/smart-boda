@@ -1,128 +1,83 @@
 // rider-app/src/screens/chama/MgrSavingsView.js
-// One Merry-Go-Round GROUP in My Savings. A group can run several circles (each with its own amount and schedule) and
-// a rider can hold one or two turns ("hands") in each. Circles are tabs. The numbers come from /chama/mgr/me (via /chama/me/savings).
-//
-// Swaps: the other rider can only AGREE. The rider who asked can CANCEL. There is no decline.
+// One Merry-Go-Round GROUP in My Savings, laid out like Smart_Boda_Prototype_v25:
+//   hero (contribution due / sent / paid) -> Pay contribution -> contributions summary -> Members Payout Turns
+//   -> "Group rules" and "My Contribution history" links.
+// A group can run several circles (each with its own amount and schedule); circles are tabs when there is more than one.
+// The numbers come from /chama/mgr/me (via /chama/me/savings).
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
-import PrimaryButton from '../../components/PrimaryButton';
+import { View, Text } from 'react-native';
 import { useToast } from '../../components/Toast';
-import { completeSeen, apiError, mgrSwapAgree, mgrSwapCancel, mgrMyActivity } from '../../api/groupsClient';
-import { s, fmt } from './chamaStyles';
-import { Tabs, niceDate, niceDateTime, swapStatus, TONE_BG, first } from './common';
+import { completeSeen, mgrMyActivity } from '../../api/groupsClient';
+import { fmt } from './chamaStyles';
+import { Tabs } from './common';
+import MgrTurnsView from './MgrTurnsView';
+import { Hero, Btn, TextLink, Card, DetailRows, Notice, mgrState, payParams } from './mgrUi';
 import colors from '../../theme/colors';
 
 const SEEN = ['mgr_payout_received', 'contribution_confirmed', 'contribution_rejected',
   'swap_result', 'swap_request_incoming', 'swap_needs_approval', 'swap_agreed'];
 
-function SwapCard({ x, onAgree, onCancel, waitDays }) {
-  const st = swapStatus(x);
-  const open = x.stage === 'member' || x.stage === 'treasurer';
-  const title = x.i_asked ? `🔁 Swap with ${first(x.b)}` : `🔁 ${first(x.a)} asks to swap with you`;
-  const head = x.needs_my_agreement ? `Do you agree? ${first(x.a)} wants your Turn ${x.turn_b}.` : st.head;
-  return (
-    <View style={[s.card, { backgroundColor: TONE_BG[x.needs_my_agreement ? 'amber' : st.tone] }]}>
-      <Text style={s.cardTitle}>{title}</Text>
-      <Text style={{ fontWeight: '700' }}>{x.needs_my_agreement ? '' : `${st.icon} `}{head}</Text>
-      <Text style={s.hint}>{x.effect?.text}</Text>
-      {(x.effect?.warnings || []).map((w) => <Text key={w.text} style={[s.hint, { color: colors.signalAmber, fontWeight: '700' }]}>⚠️ {w.text}</Text>)}
-      {!!x.reason && <Text style={s.hint}>“{x.reason}”</Text>}
-      {!x.needs_my_agreement && !!st.hint && x.stage !== 'done' && <Text style={s.hint}>{st.hint}</Text>}
-      {open && <Text style={s.hint}>Closes by itself if nobody answers within {waitDays || 7} days{x.expires_at ? ` (${niceDate(x.expires_at)})` : ''}.</Text>}
-      {x.needs_my_agreement && <View style={{ marginTop: 8 }}><PrimaryButton label="Agree" onPress={() => onAgree(x)} /></View>}
-      {x.i_asked && open && (
-        <TouchableOpacity onPress={() => onCancel(x)}><Text style={{ color: colors.signalRed, fontWeight: '700', marginTop: 6 }}>Cancel request</Text></TouchableOpacity>)}
-    </View>);
-}
-
 export default function MgrSavingsView({ navigation, group, reload }) {
   const { showToast } = useToast();
   const circles = group.circles || [];
   const [cid, setCid] = useState(null);
+  const [view, setView] = useState('mine');          // 'mine' | 'turns'  (Members Payout Turns)
   const [activity, setActivity] = useState([]);
   const c = circles.find((x) => x.id === cid) || circles[0];
-  useEffect(() => { completeSeen(SEEN); mgrMyActivity().then((a) => setActivity(a || [])).catch(() => {}); }, [group]);
+  useEffect(() => { completeSeen(SEEN); mgrMyActivity(group.group_id).then((a) => setActivity(a || [])).catch(() => {}); }, [group]);
 
-  const act = async (fn, ok, bad) => { try { await fn(); showToast(ok, 'success'); reload && reload(); } catch (e) { showToast(apiError(e, bad), 'warn'); } };
-
+  const nameLine = <Text style={s.groupName}>👥 {group.group_name}</Text>;
   if (circles.length === 0) {
-    return (<View style={s.card}>
-      <Text style={s.cardTitle}>{group.group_name}</Text>
-      <Text>Your Treasurer has not put you in a circle yet.</Text></View>);
+    return (<>
+      {nameLine}
+      <Card><Text style={s.cardTitle}>{group.group_name}</Text><Text>Your Treasurer has not put you in a circle yet.</Text></Card>
+    </>);
   }
-  const R = c.round;
+
+  const st = mgrState(c);
   const myPays = activity.filter((a) => a.kind === 'contribution' && a.circle_id === c.id);
+  const waiting = myPays.find((a) => a.status === 'pending');
   const lastRej = myPays[0] && myPays[0].status === 'rejected' ? myPays[0] : null;   // newest decision was a rejection
-  const banner = c.status === 'draft' || !R
-    ? ['⏳', c.joins_next_cycle ? 'You join from the next cycle.' : 'Waiting for your Treasurer to start this circle.']
-    : R.i_receive ? ['🎉', "It's your turn! Everyone else pays you this round."]
-    : R.owes_total <= 0 ? ['✅', 'Nothing to pay this round.']
-    : R.owed <= 0 ? ['✅', "You've paid for this round."]
-    : R.pending > 0 ? ['⏳', `${fmt(R.pending)} sent. Waiting for your Treasurer to confirm.`]
-    : lastRej && R.owed > 0 ? ['❌', `Your ${fmt(lastRej.amount)} payment was not accepted${lastRej.reason ? `: “${lastRej.reason}”` : ''}. Please pay again.`]
-    : ['💳', `Pay ${fmt(R.owed)} by ${niceDate(R.deadline)}.`];
-  const mySwaps = (c.swaps || []);
-  const history = activity.filter((a) => !c || a.circle_id === c.id).slice(0, 10);
+  const go = (screen) => navigation.navigate(screen, { groupId: group.group_id, circleId: c.id });
+  const pay = () => {
+    if (st.left <= 0) return showToast(st.kind === 'awaiting' ? 'Your payment is waiting for your Treasurer to confirm.' : 'You have already paid for this round.', 'warn');
+    navigation.navigate('ChamaPay', payParams(group, c, st));
+  };
+  const picker = circles.length > 1
+    ? <Tabs small tabs={circles.map((x) => ({ key: x.id, label: x.name }))} value={c.id} onChange={(k) => { setCid(k); setView('mine'); }} />
+    : null;
+
+  if (view === 'turns') {
+    return (<>
+      {nameLine}{picker}
+      <MgrTurnsView group={group} c={c} st={st} navigation={navigation} reload={reload} onBack={() => setView('mine')} />
+    </>);
+  }
+
   return (<>
-    <Text style={s.sub}>{group.group_name} · Treasurer {group.treasurer?.name}</Text>
-    <Tabs small tabs={circles.map((x) => ({ key: x.id, label: x.name }))} value={c.id} onChange={setCid} />
+    {nameLine}{picker}
+    <Hero {...st.hero} />
 
-    <View style={[s.card, { borderColor: colors.bodaOrange }]}>
-      <Text style={s.cardTitle}>{c.name} · Cycle {c.cycle_no}</Text>
-      <Text style={s.big}>{fmt(c.saved_this_cycle)}</Text>
-      <Text style={s.hint}>Saved this cycle · {fmt(c.amount)} · {c.sched_label}</Text>
-      <View style={s.row}><Text style={s.k}>My turn{c.my_hands > 1 ? 's' : ''}</Text>
-        <Text style={s.v}>{c.my_turns.length ? c.my_turns.map((t) => `Turn ${t.turn}`).join(' and ') : '—'} of {c.total_turns}</Text></View>
-      {c.my_hands > 1 && <Text style={s.hint}>🔁 You have a double turn: you receive twice in this cycle.</Text>}
-      <View style={[s.row, { borderBottomWidth: 0 }]}><Text style={s.k}>When I receive, I get about</Text><Text style={s.v}>{fmt(c.payout_estimate)}</Text></View>
-      {c.my_turns.map((t) => <Text key={t.turn} style={s.hint}>Turn {t.turn}: {t.status === 'paid' ? 'received' : t.status === 'current' ? 'now' : niceDate(t.date)}</Text>)}
-    </View>
+    {st.R && Number(st.R.pending) > 0 ? (
+      <Notice tone="amber" icon="⏳" onPress={() => go('MgrHistory')}
+        title={`${fmt(st.R.pending)} ${waiting ? (waiting.method === 'cash' ? 'cash' : 'M-Pesa') + ' ' : ''}awaiting Treasurer approval`}
+        sub={`Tap to view${waiting?.reference ? ` · Ref ${waiting.reference}` : ''}`} />) : null}
+    {st.kind === 'due' && lastRej && (
+      <Notice tone="red" icon="❌" title={`Your ${fmt(lastRej.amount)} payment was not accepted${lastRej.reason ? `: “${lastRej.reason}”` : ''}. Please pay again.`} />)}
 
-    <View style={[s.banner, { backgroundColor: '#fff6ee' }]}><Text>{banner[0]}</Text><Text style={{ flex: 1, fontWeight: '700' }}>{banner[1]}</Text></View>
-    {R && (
-      <View style={s.card}>
-        <Text style={s.label}>POOL THIS ROUND</Text><Text style={s.big}>{fmt(R.pot)}</Text>
-        <Text style={s.hint}>Round {R.round_no} · Turn {R.turn_no} goes to {R.recipient} · {R.paid_count} of {R.member_count} have paid · due {niceDate(R.deadline)}</Text>
-        {R.hands_owing > 1 && <Text style={s.hint}>You pay for {R.hands_owing} turns this round.</Text>}
-      </View>)}
+    {st.canPay && <Btn label={st.kind === 'paid' ? 'Pay another contribution' : '＋ Pay contribution'} ghost={st.kind === 'paid'} onPress={pay} testID="mgr-pay" />}
+
+    {st.payoutRows.length > 0 && <Card><DetailRows rows={st.payoutRows} /></Card>}
     {(c.notes || []).map((n) => (
-      <View key={n.name} style={s.banner}><Text>📝</Text><Text style={{ flex: 1 }}>{n.name}: {n.reason}{n.note ? ` · ${n.note}` : ''}. The group has agreed, so the pool is paid out without it.</Text></View>))}
-    {R && !R.i_receive && R.owed > 0 && R.pending <= 0 && (
-      <PrimaryButton label="Pay Contribution →" onPress={() => navigation.navigate('ChamaPay', {
-        kind: 'contribution', amount: R.owed, treasurer: group.treasurer, groupId: group.group_id, circleId: c.id })} />)}
+      <Notice key={n.name} tone="amber" icon="📝" title={`${n.name}: ${n.reason}${n.note ? ` · ${n.note}` : ''}. The group has agreed, so the pool is paid out without it.`} />))}
 
-
-    <Text style={[s.cardTitle, { marginTop: 14 }]}>Payout schedule</Text>
-    {c.schedule.length === 0 && <Text style={s.hint}>The order has not been set yet.</Text>}
-    {c.schedule.map((x) => (
-      <View key={`${x.turn}-${x.hand_no}`} style={[s.row, x.mine && { backgroundColor: '#fff6ee' }]}>
-        <Text style={s.k}>{x.turn}. {x.mine ? 'You' : x.name}{x.status === 'current' ? ' 🎁 now' : ''}{x.status === 'paid' ? ' ✓' : ''}</Text>
-        <Text style={s.v}>{x.status === 'paid' ? 'Received' : niceDate(x.date)}</Text></View>))}
-
-    {/* Turn swaps */}
-    <Text style={[s.cardTitle, { marginTop: 14 }]}>🔁 Turn swaps</Text>
-    {mySwaps.filter((x) => x.needs_my_agreement || ['member', 'treasurer'].includes(x.stage)).map((x) => (
-      <SwapCard key={x.id} x={x} waitDays={c.swap?.waiting_days}
-        onAgree={(y) => act(() => mgrSwapAgree(y.id), 'Agreed. Now waiting for the Treasurer.', 'Could not agree.')}
-        onCancel={(y) => act(() => mgrSwapCancel(y.id), 'Swap request cancelled.', 'Could not cancel.')} />))}
-    {c.swap?.can_request
-      ? <PrimaryButton label="🔁 Request a Turn Swap" onPress={() => navigation.navigate('SwapRequest', { circle: c, groupId: group.group_id })} />
-      : <Text style={s.hint}>{R ? 'You have no upcoming turn that can be swapped right now.' : 'Swaps open once the circle starts.'}</Text>}
-    {c.swap && <Text style={s.hint}>The other rider can only agree. A request nobody answers closes by itself after {c.swap.waiting_days} days, or when its turn arrives.</Text>}
-    {mySwaps.filter((x) => !(x.needs_my_agreement || ['member', 'treasurer'].includes(x.stage))).slice(0, 3).map((x) => (
-      <SwapCard key={x.id} x={x} waitDays={c.swap?.waiting_days} onAgree={() => {}} onCancel={() => {}} />))}
-
-    {history.length > 0 && (<>
-      <Text style={[s.cardTitle, { marginTop: 14 }]}>Activity history</Text>
-      {history.map((a, i) => (
-        <View key={`${a.kind}-${a.id || i}`} style={s.row}>
-          <View style={{ flex: 3 }}>
-            <Text style={s.k}>{a.kind === 'payout' ? `💸 ${a.to} received ${fmt(a.amount)} (Turn ${a.turn_no})`
-              : a.kind === 'contribution' ? `${a.status === 'confirmed' ? '✅' : a.status === 'rejected' ? '❌' : '⏳'} ${fmt(a.amount)} · ${a.method === 'cash' ? 'Cash' : 'M-Pesa'} · ${a.status === 'confirmed' ? 'Confirmed by your Treasurer' : a.status === 'rejected' ? 'Not accepted' : 'Waiting for your Treasurer'}`
-              : `🔁 ${swapStatus(a).head}: ${a.effect?.text || ''}`}</Text>
-            {a.kind === 'contribution' && a.status === 'rejected' && !!a.reason && <Text style={[s.hint, { color: colors.signalRed }]}>Reason: {a.reason}</Text>}
-          </View>
-          <Text style={[s.v, { flex: 1 }]}>{niceDateTime(a.at)}</Text></View>))}
-    </>)}
+    <Btn ghost label="Members Payout Turns" onPress={() => setView('turns')} testID="mgr-turns" />
+    <TextLink label="Group rules" onPress={() => go('MgrRules')} />
+    <TextLink label="My Contribution history" onPress={() => go('MgrHistory')} />
   </>);
 }
+
+const s = {
+  groupName: { fontSize: 12.5, fontWeight: '600', color: colors.inkSoft, marginBottom: 12 },
+  cardTitle: { fontWeight: '700', fontSize: 13.5, marginBottom: 4 },
+};

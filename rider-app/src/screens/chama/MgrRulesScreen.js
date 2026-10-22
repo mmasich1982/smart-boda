@@ -1,0 +1,45 @@
+// rider-app/src/screens/chama/MgrRulesScreen.js
+// "Group rules" for a Merry-Go-Round circle, as in Smart_Boda_Prototype_v25: the round summary, what each contribution is
+// and how often, and the Pay contribution button. route.params: { groupId, circleId }
+import React, { useCallback, useState } from 'react';
+import { withChamaOnlineGate } from '../../components/ChamaOnlineGate';
+import { ScrollView, Text } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import BackLink from '../../components/BackLink';
+import { useToast } from '../../components/Toast';
+import { mySavings, apiError } from '../../api/groupsClient';
+import { s, fmt } from './chamaStyles';
+import { Hero, Btn, Card, DetailRows, Notice, ScreenTitle, mgrState, payParams } from './mgrUi';
+
+function MgrRulesScreen({ navigation, route }) {
+  const { showToast } = useToast();
+  const { groupId, circleId } = route.params || {};
+  const [group, setGroup] = useState(null), [err, setErr] = useState(null);
+  useFocusEffect(useCallback(() => {
+    mySavings().then((r) => { setGroup((r.groups || []).find((g) => g.group_id === groupId) || null); setErr(null); })
+      .catch((e) => setErr(apiError(e, 'Could not load. Check your connection.')));
+  }, [groupId]));
+
+  const c = group && (group.circles || []).find((x) => x.id === circleId);
+  const st = c ? mgrState(c) : null;
+  const pay = () => {
+    if (st.left <= 0) return showToast(st.kind === 'awaiting' ? 'Your payment is waiting for your Treasurer to confirm.' : 'You have already paid for this round.', 'warn');
+    navigation.navigate('ChamaPay', payParams(group, c, st));
+  };
+  return (
+    <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
+      <BackLink onPress={() => navigation.goBack()} />
+      <ScreenTitle>Merry-Go-Round</ScreenTitle>
+      {!!err && <Card><Text>{err}</Text></Card>}
+      {c && st && (<>
+        <Hero {...st.hero} />
+        {st.payoutRows.length > 0 && <Card><DetailRows rows={st.payoutRows} /></Card>}
+        <Card><DetailRows rows={[['Each contribution', fmt(c.amount)], ['How often', c.sched_label || '—']]} /></Card>
+        {st.R && Number(st.R.pending) > 0 && <Notice tone="amber" icon="⏳" title={`${fmt(st.R.pending)} awaiting Treasurer approval`} />}
+        {st.canPay && <Btn label="＋ Pay contribution" onPress={pay} testID="rules-pay" />}
+      </>)}
+      {group && !c && <Card><Text>This circle is no longer available.</Text></Card>}
+    </ScrollView>);
+}
+
+export default withChamaOnlineGate(MgrRulesScreen, 'savings');

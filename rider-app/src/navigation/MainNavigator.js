@@ -50,6 +50,9 @@ import TbSecurityRulesScreen from '../screens/chama/TbSecurityRulesScreen';
 import SecurityHeldScreen from '../screens/chama/SecurityHeldScreen';
 import SwapRequestScreen from '../screens/chama/SwapRequestScreen';
 import MgrSwapsScreen from '../screens/chama/MgrSwapsScreen';
+import MgrRulesScreen from '../screens/chama/MgrRulesScreen';
+import MgrHistoryScreen from '../screens/chama/MgrHistoryScreen';
+import MgrPaySubmittedScreen from '../screens/chama/MgrPaySubmittedScreen';
 
 // ============================================================================
 // TILE 1: FUEL / CHARGE BATTERY
@@ -499,6 +502,9 @@ export const MainNavigator = () => {
       <Stack.Screen name="SecurityHeld" component={SecurityHeldScreen} />
       <Stack.Screen name="SwapRequest" component={SwapRequestScreen} />
       <Stack.Screen name="MgrSwaps" component={MgrSwapsScreen} />
+      <Stack.Screen name="MgrRules" component={MgrRulesScreen} />
+      <Stack.Screen name="MgrHistory" component={MgrHistoryScreen} />
+      <Stack.Screen name="MgrPaySubmitted" component={MgrPaySubmittedScreen} />
 
       {/* ===== SUPPORTING SCREENS ===== */}
       {/* ✅ DetailedStatementPreviewScreen: Primary detailed statement view (RA-18-C) */}
