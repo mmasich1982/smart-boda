@@ -90,10 +90,18 @@ function MgrSetupScreen({ navigation }) {
   const save = (patch, quiet) => run(() => mgrUpdateCircle(cid, patch, gid), quiet ? null : savedMsg);
   const saveName = () => { if (name.trim() && name.trim() !== d.name) save({ name: name.trim() }, true); };
   const saveAmount = () => {
+    if (!d) return;
     const a = num(amount);
     if (!(a >= 0)) return showToast('Enter the amount as a number.', 'warn');
     if (a !== Number(eff.amount ?? d.amount)) save({ amount: a });
   };
+  // Start: make sure the amount typed on screen is on the server before the circle is started (the field saves on blur,
+  // so a Treasurer who taps Start straight after typing must not be rejected with "Set the contribution amount first").
+  const startCircle = () => run(async () => {
+    const a = num(amount);
+    if (a > 0 && a !== Number(eff.amount ?? d.amount)) await mgrUpdateCircle(cid, { amount: a }, gid);
+    return mgrStart(cid, gid);
+  }, () => 'Started. Everyone can now see their turn.');
   const newCircle = () => run(
     () => mgrCreateCircle({ name: `Circle ${(m.circles || []).length + 1}`, amount: 0, sched: DEFAULT_SCHED, contrib_sched: { type: 'same' }, recipient_pays: false, treasurer_joins: false }, gid),
     () => 'Circle created. Now add the people.', (c) => m.setCircle(c.id));
@@ -140,8 +148,8 @@ function MgrSetupScreen({ navigation }) {
   // ---------- the editable rules (card 1) ----------
   const rulesCard = !!d && (
     <>
-      <FormInput label="Circle name" value={name} onChangeText={setName} onEndEditing={saveName} maxLength={40} />
-      <FormInput label={contribSched ? 'Each contribution (KSh)' : 'Amount per hand (KSh)'} required value={amount} onChangeText={setAmount} onEndEditing={saveAmount}
+      <FormInput label="Circle name" value={name} onChangeText={setName} onBlur={saveName} maxLength={40} />
+      <FormInput label={contribSched ? 'Each contribution (KSh)' : 'Amount per hand (KSh)'} required value={amount} onChangeText={setAmount} onBlur={saveAmount}
         keyboardType="number-pad" placeholder="e.g. 500" />
       <Text style={ui.label}>Payout schedule</Text>
       <View style={st.schedRow}>
@@ -309,7 +317,7 @@ function MgrSetupScreen({ navigation }) {
             {checks.map(([label, ok]) => <Text key={label} style={st.check}>{ok ? '✅' : '⬜'} {label}</Text>)}
             <MoreInfo>Everyone in the circle sees their turn once you start. Before that you can still change anything.</MoreInfo>
             <Btn glow label={d.needs_season_setup ? '🚀 Start new season' : '🚀 Start first round'} disabled={busy || !ready}
-              onPress={() => run(() => mgrStart(cid, gid), () => 'Started. Everyone can now see their turn.')} testID="start-round" />
+              onPress={startCircle} testID="start-round" />
           </Section>)}
 
         {!started && (
