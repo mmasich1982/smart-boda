@@ -4,7 +4,7 @@
 // (services/mgr_schedule.py):  daily{days} | weekly{day} | twice{days:[2]} | biweekly{start} | monthly{dom, fix} | special{dates}
 // Weekdays: 0 = Sunday ... 6 = Saturday.
 import React from 'react';
-import { View, Text, TextInput, TouchableOpacity } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet } from 'react-native';
 import { s, Chip } from './chamaStyles';
 import { niceDate } from './common';
 import MonthPicker from './MonthPicker';
@@ -31,14 +31,29 @@ export function switchType(prev, type) {
   }
 }
 
+// Chips in the prototype's look: one scrolling row, a tick inside the chosen one.
+const PChip = ({ on, label, onPress }) => (
+  <TouchableOpacity onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: !!on }} style={[pc.chip, on && pc.on]}>
+    <Text style={[pc.txt, on && pc.txtOn]}>{on ? '✓ ' : ''}{label}</Text>
+  </TouchableOpacity>);
+const ChipRow = ({ children }) => (
+  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0 }} contentContainerStyle={{ gap: 8, paddingVertical: 4, paddingRight: 8 }}>{children}</ScrollView>);
+const pc = StyleSheet.create({
+  chip: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1.5, borderColor: colors.line, backgroundColor: '#fff' },
+  on: { backgroundColor: colors.bodaOrange, borderColor: colors.bodaOrange },
+  txt: { fontSize: 13, fontWeight: '700', color: colors.ink },
+  txtOn: { color: '#fff' },
+  hint: { fontSize: 14, color: colors.inkSoft, lineHeight: 21, marginTop: 8 },
+});
+
 const DayChips = ({ value, onToggle }) => (
-  <View style={s.chipRow}>{DAYS.map((d, i) => <Chip key={d} on={value.includes(i)} label={d} onPress={() => onToggle(i)} />)}</View>);
+  <ChipRow>{DAYS.map((d, i) => <PChip key={d} on={value.includes(i)} label={d} onPress={() => onToggle(i)} />)}</ChipRow>);
 
 /**
  * sched: current schedule object, onChange(newSched). flags = monthly_flags from the server (short months for dom >= 29).
  * kind: 'payout' (default) or 'contribution': only changes the wording.
  */
-export default function ScheduleEditor({ sched, onChange, flags = [], kind = 'payout' }) {
+export default function ScheduleEditor({ sched, onChange, flags = [], kind = 'payout', title }) {
   const sc = sched || DEFAULT_SCHED;
   const contrib = kind === 'contribution';
   const noun = contrib ? 'contribution' : 'payout';
@@ -50,13 +65,16 @@ export default function ScheduleEditor({ sched, onChange, flags = [], kind = 'pa
   };
   return (
     <View>
-      <Text style={s.label}>{contrib ? 'HOW OFTEN DO MEMBERS CONTRIBUTE? *' : 'HOW OFTEN IS THE POOL PAID OUT? *'}</Text>
-      <View style={s.chipRow}>{SCHEDULE_TYPES.map(([k, l]) => <Chip key={k} on={sc.type === k} label={l} onPress={() => onChange(switchType(sc, k))} />)}</View>
+      {title
+        ? <Text style={{ fontWeight: '800', fontSize: 15, color: colors.ink, marginBottom: 8 }}>{title}</Text>
+        : <Text style={s.label}>{contrib ? 'HOW OFTEN DO MEMBERS CONTRIBUTE? *' : 'HOW OFTEN IS THE POOL PAID OUT? *'}</Text>}
+      <ChipRow>{SCHEDULE_TYPES.map(([k, l]) => <PChip key={k} on={sc.type === k} label={l} onPress={() => onChange(switchType(sc, k))} />)}</ChipRow>
 
-      {sc.type === 'daily' && (<><Text style={s.hint}>Untick the days with no {noun}, for example Sunday.</Text><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i)} /></>)}
-      {sc.type === 'weekly' && (<><Text style={s.hint}>Which day?</Text>
-        <View style={s.chipRow}>{DAYS.map((d, i) => <Chip key={d} on={sc.day === i} label={d} onPress={() => onChange({ ...sc, day: i })} />)}</View></>)}
-      {sc.type === 'twice' && (<><Text style={s.hint}>Pick two days, for example Tue and Thu.</Text><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i, 2)} /></>)}
+      {sc.type === 'daily' && (<><View style={{ height: 6 }} /><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i)} /><Text style={pc.hint}>Untick the days with no {noun}, for example Sunday. You can also tap a date on the calendar.</Text></>)}
+      {sc.type === 'weekly' && (<><View style={{ height: 6 }} />
+        <ChipRow>{DAYS.map((d, i) => <PChip key={d} on={sc.day === i} label={d} onPress={() => onChange({ ...sc, day: i })} />)}</ChipRow>
+        <Text style={pc.hint}>Pick the {noun} day, or tap a date on the calendar.</Text></>)}
+      {sc.type === 'twice' && (<><View style={{ height: 6 }} /><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i, 2)} /><Text style={pc.hint}>Pick two days, for example Tue and Thu, or tap dates on the calendar.</Text></>)}
       {sc.type === 'biweekly' && (<><Text style={s.label}>{contrib ? 'FIRST CONTRIBUTION DATE *' : 'FIRST PAYOUT DATE *'}</Text>
         <MonthPicker selected={sc.start ? [sc.start] : []} onChange={(d) => onChange({ ...sc, start: d[0] })} />
         <Text style={s.hint}>{isoOk(sc.start || '') ? `${niceDate(sc.start)}, then every 2 weeks.` : 'Then it repeats every 2 weeks.'}</Text></>)}

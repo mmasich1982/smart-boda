@@ -131,12 +131,13 @@ export function Hero({ label, amount, split }) {
 }
 
 /** Orange primary button, or an outlined (ghost) one. small = the compact inline button. */
-export function Btn({ label, onPress, ghost, small, disabled, style, testID }) {
-  return (
+export function Btn({ label, onPress, ghost, small, disabled, glow, style, testID }) {
+  const btn = (
     <TouchableOpacity testID={testID} accessibilityRole="button" disabled={disabled} onPress={onPress} activeOpacity={0.8}
-      style={[u.btn, ghost ? u.btnGhost : u.btnPrimary, small && u.btnSmall, disabled && u.btnDisabled, style]}>
+      style={[u.btn, ghost ? u.btnGhost : u.btnPrimary, small && u.btnSmall, disabled && u.btnDisabled, style, glow && { marginBottom: 0 }]}>
       <Text style={[u.btnTxt, ghost ? u.btnGhostTxt : u.btnPrimaryTxt, small && u.btnSmallTxt, disabled && u.btnDisabledTxt]}>{label}</Text>
     </TouchableOpacity>);
+  return glow ? <View style={u.glow}>{btn}</View> : btn;       // glow = the soft orange ring round the main action
 }
 
 /** Centred orange text link, e.g. "Group rules →". */
@@ -259,6 +260,7 @@ export const u = StyleSheet.create({
   btnGhostTxt: { color: colors.bodaOrange, fontWeight: '600' },
   btnSmallTxt: { fontSize: 12.5 },
   btnDisabledTxt: { color: '#b3a48f' },
+  glow: { backgroundColor: 'rgba(255,122,26,0.14)', borderRadius: 18, padding: 5, marginBottom: 10 },
   link: { alignItems: 'center', marginTop: 6, marginBottom: 14 },
   linkTxt: { color: colors.bodaOrangeDark, fontWeight: '700', fontSize: 14 },
   card: { backgroundColor: '#fff', borderWidth: 1, borderColor: colors.line, borderRadius: 16, padding: 14, marginBottom: 14 },

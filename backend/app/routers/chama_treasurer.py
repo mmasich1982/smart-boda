@@ -116,9 +116,17 @@ def _rows(db, g, M, status):
 @router.get("/contributions")
 def list_contributions(status: str = "pending", group_id: Optional[RowId] = GID, db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
     g, role = actor_group(db, rider, group_id=group_id)
+    rows = _rows(db, g, ChamaContribution, status)
+    # Merry-Go-Round payments belong to a round, and a round to a circle: tell the app which circle each one is for.
+    rids = {c.round_id for c, _ in rows if c.round_id}
+    circle_of = {r.id: r.circle_id for r in db.query(ChamaMgrRound).filter(ChamaMgrRound.id.in_(rids)).all()} if rids else {}
+    names = {c.id: c.name for c in db.query(ChamaMgrCircle).filter(ChamaMgrCircle.group_id == g.id).all()}
     return [{"id": str(c.id), "reference": c.reference, "member": m.full_name, "phone": mask_phone(m.phone),
              "amount": c.amount, "method": c.method, "channel": c.channel,
-             "submitted_at": c.submitted_at.isoformat()} for c, m in _rows(db, g, ChamaContribution, status)]
+             "submitted_at": c.submitted_at.isoformat(), "model": "mgr" if c.round_id else "tb",
+             "circle_id": str(circle_of[c.round_id]) if c.round_id in circle_of else None,
+             "circle_name": names.get(circle_of[c.round_id]) if c.round_id in circle_of else None}
+            for c, m in rows]
 
 def _lock(db, M, rid, g):
     x = db.query(M).filter(M.id == rid, M.group_id == g.id).with_for_update().first()

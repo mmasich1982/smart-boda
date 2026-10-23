@@ -103,7 +103,7 @@ function ChamaPayScreen({ navigation, route }) {
               <Text>📋</Text>
             </TouchableOpacity>)}
         </Card>
-        <Btn label="I've Made the Payment ✅" onPress={submit} disabled={busy || !ready} testID="mgr-submit" />
+        <Btn glow label="I've Made the Payment ✅" onPress={submit} disabled={busy || !ready} testID="mgr-submit" />
       </ScrollView>);
   }
 

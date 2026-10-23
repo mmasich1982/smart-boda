@@ -176,8 +176,11 @@ def preview(b: PreviewIn, group_id: Optional[RowId] = GID, db: Session = Depends
         periods.append({"payout": p.isoformat(), "from": start.isoformat(), "contributions": n, "per_person": per,
                         "pool": (per * (b.hands if b.recipient_pays else max(0, b.hands - 1))) if b.hands else None})
         start = p + timedelta(days=1)
+    horizon = today + timedelta(days=400)                     # for the schedule screen's calendar and "Upcoming payouts"
     return {"ok": True, "error": None, "periods": periods, "hands": b.hands, "recipient_pays": b.recipient_pays,
-            "contrib_label": sch.label(contrib) if contrib else None, "payout_label": sch.label(payout)}
+            "contrib_label": sch.label(contrib) if contrib else None, "payout_label": sch.label(payout),
+            "payout_dates": [d.isoformat() for d in sch.generate(payout, today, horizon)],
+            "contrib_dates": [d.isoformat() for d in sch.generate(contrib, today, horizon)] if contrib else []}
 
 @router.post("/circles", status_code=201)
 def create_circle(b: CircleIn, group_id: Optional[RowId] = GID, db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):

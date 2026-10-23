@@ -53,6 +53,14 @@ import MgrSwapsScreen from '../screens/chama/MgrSwapsScreen';
 import MgrRulesScreen from '../screens/chama/MgrRulesScreen';
 import MgrHistoryScreen from '../screens/chama/MgrHistoryScreen';
 import MgrPaySubmittedScreen from '../screens/chama/MgrPaySubmittedScreen';
+import MgrContributionsScreen from '../screens/chama/MgrContributionsScreen';
+import MgrContributionDetailScreen from '../screens/chama/MgrContributionDetailScreen';
+import MgrPayoutScreen from '../screens/chama/MgrPayoutScreen';
+import MgrRosterScreen from '../screens/chama/MgrRosterScreen';
+import MgrExceptionScreen from '../screens/chama/MgrExceptionScreen';
+import MgrConfirmPayoutScreen from '../screens/chama/MgrConfirmPayoutScreen';
+import MgrSetupScreen from '../screens/chama/MgrSetupScreen';
+import MgrScheduleScreen from '../screens/chama/MgrScheduleScreen';
 
 // ============================================================================
 // TILE 1: FUEL / CHARGE BATTERY
@@ -505,6 +513,14 @@ export const MainNavigator = () => {
       <Stack.Screen name="MgrRules" component={MgrRulesScreen} />
       <Stack.Screen name="MgrHistory" component={MgrHistoryScreen} />
       <Stack.Screen name="MgrPaySubmitted" component={MgrPaySubmittedScreen} />
+      <Stack.Screen name="MgrContributions" component={MgrContributionsScreen} />
+      <Stack.Screen name="MgrContributionDetail" component={MgrContributionDetailScreen} />
+      <Stack.Screen name="MgrPayout" component={MgrPayoutScreen} />
+      <Stack.Screen name="MgrRoster" component={MgrRosterScreen} />
+      <Stack.Screen name="MgrException" component={MgrExceptionScreen} />
+      <Stack.Screen name="MgrConfirmPayout" component={MgrConfirmPayoutScreen} />
+      <Stack.Screen name="MgrSetup" component={MgrSetupScreen} />
+      <Stack.Screen name="MgrSchedule" component={MgrScheduleScreen} />
 
       {/* ===== SUPPORTING SCREENS ===== */}
       {/* ✅ DetailedStatementPreviewScreen: Primary detailed statement view (RA-18-C) */}

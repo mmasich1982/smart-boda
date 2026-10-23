@@ -9,7 +9,7 @@ import DecisionDialog from '../../components/DecisionDialog';
 import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
 import { useToast } from '../../components/Toast';
-import { queueList, queueDecide, apiError } from '../../api/groupsClient';
+import { queueList, queueDecide, managedGroups, apiError } from '../../api/groupsClient';
 import { getLocalRiderStatus } from '../../offline/db';
 import { s, fmt } from './chamaStyles';
 import colors from '../../theme/colors';
@@ -48,6 +48,14 @@ function ChamaQueueScreen({ navigation, route }) {
 
   const load = useCallback(() => queueList(kind, groupId).then((r) => { setItems(r.items); setPool(r.pool ?? null); }).catch(() => {}), [kind, groupId]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  // A Merry-Go-Round group has its own Contributions screen (Manage Chama redesign): send the Treasurer there.
+  useEffect(() => {
+    if (kind !== 'contributions' || !groupId) return;
+    managedGroups().then((rows) => {
+      const g = (rows || []).find((x) => (x.id || x.group_id) === groupId);
+      if (g && g.group_type === 'mgr') navigation.replace('MgrContributions', { groupId });
+    }).catch(() => {});
+  }, [kind, groupId]);
 
   async function decide(id, action, reason) {
     setBusy(true);

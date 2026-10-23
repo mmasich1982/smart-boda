@@ -254,7 +254,7 @@ def circle_card(db, circle) -> dict:
         out["round"] = {"round_no": rnd.round_no, "turn_no": rnd.turn_no, "deadline": rnd.deadline.isoformat(),
                         "recipient": rec.full_name, "pot": p["pot"], "expected": p["expected"],
                         "paid_count": p["paid_count"], "member_count": p["member_count"], "can_pay": p["can_pay"],
-                        "behind_count": p["behind_count"], "unit_amount": rnd.unit_amount, "contrib_count": rnd.contrib_count or 1,
+                        "pending": p["pending"], "behind_count": p["behind_count"], "unit_amount": rnd.unit_amount, "contrib_count": rnd.contrib_count or 1,
                         "amount_per_member": rnd.amount_per_member}
     return out
 
