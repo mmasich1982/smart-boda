@@ -5,7 +5,7 @@
 // Money rules of a circle (all kept from Stage 1): each contribution, two schedules (when members contribute, when the pool is
 // paid out), "recipient also contributes", "Treasurer also takes part". While a cycle runs these are LOCKED: what you change
 // is saved for the next cycle. Nothing here computes money: the pot shown is worked out by the server (/chama/mgr/preview).
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { withChamaOnlineGate } from '../../components/ChamaOnlineGate';
 import { ScrollView, Text, View, TextInput, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -87,21 +87,40 @@ function MgrSetupScreen({ navigation }) {
 
   // ---------- saving the rules ----------
   const savedMsg = (r) => (r.locked ? `Saved. It starts from cycle ${r.cycle_no + 1}.` : 'Saved.');
-  const save = (patch, quiet) => run(() => mgrUpdateCircle(cid, patch, gid), quiet ? null : savedMsg);
+  // Saves go to the server ONE AT A TIME, in the order they were made, and they refresh only what the screen knows about the circle:
+  // they never rewrite the text boxes (so saving the name can never wipe an amount that is being typed).
+  const saveQ = useRef(Promise.resolve());
+  const persist = (patch) => {
+    const job = saveQ.current.then(async () => {
+      const r = await mgrUpdateCircle(cid, patch, gid);
+      setD(r);
+      if (patch.name !== undefined) m.reload();                  // the circle tabs show the name
+      return r;
+    });
+    saveQ.current = job.catch(() => {});                         // one failed save must not block the next
+    return job;
+  };
+  const save = (patch, quiet) => persist(patch)
+    .then((r) => { if (!quiet) showToast(savedMsg(r), 'success'); })
+    .catch((e) => showToast(apiError(e, 'Could not save. Check your connection.'), 'warn'));
+  // Saves whatever has been typed but not yet saved. Called before anything that depends on the saved circle (Start, the schedule screens),
+  // so an amount can never be "typed but not saved" when the server checks it.
+  const flushRules = async () => {
+    if (!d) return;
+    const patch = {};
+    const nm = name.trim();
+    if (nm && nm !== d.name) patch.name = nm;
+    const a = num(amount);
+    if (String(amount).trim() !== '' && Number.isFinite(a) && a >= 0 && a !== Number(eff.amount ?? d.amount)) patch.amount = a;
+    if (Object.keys(patch).length) await persist(patch);
+    await saveQ.current;
+  };
   const saveName = () => { if (name.trim() && name.trim() !== d.name) save({ name: name.trim() }, true); };
   const saveAmount = () => {
-    if (!d) return;
     const a = num(amount);
-    if (!(a >= 0)) return showToast('Enter the amount as a number.', 'warn');
+    if (!Number.isFinite(a) || a < 0) return showToast('Enter the amount as a number.', 'warn');
     if (a !== Number(eff.amount ?? d.amount)) save({ amount: a });
   };
-  // Start: make sure the amount typed on screen is on the server before the circle is started (the field saves on blur,
-  // so a Treasurer who taps Start straight after typing must not be rejected with "Set the contribution amount first").
-  const startCircle = () => run(async () => {
-    const a = num(amount);
-    if (a > 0 && a !== Number(eff.amount ?? d.amount)) await mgrUpdateCircle(cid, { amount: a }, gid);
-    return mgrStart(cid, gid);
-  }, () => 'Started. Everyone can now see their turn.');
   const newCircle = () => run(
     () => mgrCreateCircle({ name: `Circle ${(m.circles || []).length + 1}`, amount: 0, sched: DEFAULT_SCHED, contrib_sched: { type: 'same' }, recipient_pays: false, treasurer_joins: false }, gid),
     () => 'Circle created. Now add the people.', (c) => m.setCircle(c.id));
@@ -142,7 +161,10 @@ function MgrSetupScreen({ navigation }) {
   ];
   const ready = checks.every(([, ok]) => ok);
 
-  const openSchedule = (kind) => navigation.navigate('MgrSchedule', { kind, circleId: cid, groupId: gid });
+  const openSchedule = async (kind) => {
+    try { await flushRules(); } catch (e) { return showToast(apiError(e, 'Could not save. Check your connection.'), 'warn'); }
+    navigation.navigate('MgrSchedule', { kind, circleId: cid, groupId: gid });
+  };
   const slotsLeft = grp ? grp.slots_available : 0;
 
   // ---------- the editable rules (card 1) ----------
@@ -317,7 +339,7 @@ function MgrSetupScreen({ navigation }) {
             {checks.map(([label, ok]) => <Text key={label} style={st.check}>{ok ? '✅' : '⬜'} {label}</Text>)}
             <MoreInfo>Everyone in the circle sees their turn once you start. Before that you can still change anything.</MoreInfo>
             <Btn glow label={d.needs_season_setup ? '🚀 Start new season' : '🚀 Start first round'} disabled={busy || !ready}
-              onPress={startCircle} testID="start-round" />
+              onPress={() => run(async () => { await flushRules(); return mgrStart(cid, gid); }, () => 'Started. Everyone can now see their turn.')} testID="start-round" />
           </Section>)}
 
         {!started && (
