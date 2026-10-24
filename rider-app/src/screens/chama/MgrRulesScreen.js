@@ -41,7 +41,6 @@ function MgrRulesScreen({ navigation, route }) {
           ...(c.recipient_pays ? [['Recipient also contributes', 'Yes']] : []),
           ...(c.treasurer_joins ? [['Treasurer also takes part', 'Yes']] : []),
         ]} /></Card>
-        {st.behind && <Notice tone="amber" icon="⚠️" title={`You are ${st.R.days_behind} ${Number(st.R.days_behind) === 1 ? 'day' : 'days'} behind`} sub={`Pay ${fmt(st.R.behind_amount)} to catch up.`} />}
         {c.next_cycle && (
           <Notice tone="green" icon="🕒" title={`From cycle ${c.next_cycle.cycle_no}: ${fmt(c.next_cycle.amount)}${c.next_cycle.contrib_label ? ` · ${c.next_cycle.contrib_label}` : ''}, paid out ${String(c.next_cycle.payout_label).toLowerCase()}`}
             sub="Your Treasurer changed the rules. They start with the next cycle." />)}

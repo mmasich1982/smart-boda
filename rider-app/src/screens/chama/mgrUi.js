@@ -46,8 +46,6 @@ export function mgrTurns(c) {
   }));
 }
 
-const days = (n) => `${n} ${n === 1 ? 'day' : 'days'}`;
-
 /**
  * Everything the screens need to know about the rider in ONE circle.
  *   kind: waiting | receive | nothing | paid | awaiting | due
@@ -55,7 +53,8 @@ const days = (n) => `${n} ${n === 1 ? 'day' : 'days'}`;
  *   left: what the rider can still pay this round (owed minus what already waits for the Treasurer)
  *   unit / payDefault: one contribution, and what the Pay screen pre-fills (the missed days when behind)
  * Circles whose members contribute more often than the pool is paid out (c.contrib_label) show today's / the next
- * contribution, how much of the round is paid, and a "behind" warning. Older circles look as before.
+ * contribution and how much of the round is paid. Riders are NOT shown a "days behind" message; when behind, the amount due simply
+ * covers the missed days (the Treasurer sees who is behind). Older circles look as before.
  */
 export function mgrState(c) {
   const R = c?.round || null;
@@ -81,7 +80,7 @@ export function mgrState(c) {
   const dueHero = multi
     ? { label: behind ? 'Contribution due' : R.contribute_today ? "Today's contribution" : 'Next contribution',
         amount: fmt(Math.min(left, behind ? Number(R.behind_amount) : unit)),
-        split: [`This round: ${fmt(paidSoFar)} of ${fmt(owesTotal)}`, `Payout ${longDate(R.deadline)}`, behind ? `⚠️ ${days(R.days_behind)} behind` : null].filter(Boolean) }
+        split: [`This round: ${fmt(paidSoFar)} of ${fmt(owesTotal)}`, `Payout ${longDate(R.deadline)}`] }
     : { label: 'Contribution due', amount: fmt(owed), split: R ? [`Due ${longDate(R.deadline)}`, c.sched_label].filter(Boolean) : [] };
   const hero = {
     waiting: { label: 'Merry-Go-Round', amount: 'Not started', split: [c.joins_next_cycle ? 'You join from the next cycle.' : 'Waiting for your Treasurer to start this circle.'] },

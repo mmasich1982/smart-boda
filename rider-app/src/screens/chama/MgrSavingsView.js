@@ -4,18 +4,20 @@
 //   -> "Group rules" and "My Contribution history" links.
 // A group can run several circles (each with its own amount and schedule); circles are tabs when there is more than one.
 // The numbers come from /chama/mgr/me (via /chama/me/savings).
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
 import { useToast } from '../../components/Toast';
 import { completeSeen, mgrMyActivity } from '../../api/groupsClient';
 import { fmt } from './chamaStyles';
-import { Tabs } from './common';
+import { Tabs, niceDateTime } from './common';
 import MgrTurnsView from './MgrTurnsView';
 import { Hero, Btn, TextLink, Card, DetailRows, Notice, mgrState, payParams } from './mgrUi';
 import colors from '../../theme/colors';
 
 const SEEN = ['mgr_payout_received', 'contribution_confirmed', 'contribution_rejected',
   'swap_result', 'swap_request_incoming', 'swap_needs_approval', 'swap_agreed'];
+const CONFIRMED_NOTICE_DAYS = 3;              // how long the "confirmed by your Treasurer" message stays on the screen
+const CHECK_EVERY_MS = 20000;                // while a payment awaits approval, look for the Treasurer's decision this often
 
 export default function MgrSavingsView({ navigation, group, reload }) {
   const { showToast } = useToast();
@@ -24,7 +26,24 @@ export default function MgrSavingsView({ navigation, group, reload }) {
   const [view, setView] = useState('mine');          // 'mine' | 'turns'  (Members Payout Turns)
   const [activity, setActivity] = useState([]);
   const c = circles.find((x) => x.id === cid) || circles[0];
-  useEffect(() => { completeSeen(SEEN); mgrMyActivity(group.group_id).then((a) => setActivity(a || [])).catch(() => {}); }, [group]);
+  // The server's result notices ("confirmed", "not accepted", payout, swaps) are marked as seen only AFTER this screen has loaded
+  // and is showing what they say. (They used to be dismissed the moment the screen opened, before anything was shown.)
+  const loadActivity = useCallback(() => mgrMyActivity(group.group_id).then((a) => { setActivity(a || []); return a || []; }), [group.group_id]);
+  useEffect(() => { loadActivity().then(() => completeSeen(SEEN)).catch(() => {}); }, [group, loadActivity]);
+
+  // A payment is waiting for the Treasurer: quietly look for the decision, so "awaiting approval" turns into "confirmed" without leaving the screen.
+  // Stops by itself once nothing is waiting. A failed check is ignored and tried again.
+  const awaitingApproval = circles.some((x) => x.round && Number(x.round.pending) > 0);
+  useEffect(() => {
+    if (!awaitingApproval) return undefined;
+    const t = setInterval(() => {
+      loadActivity().then((rows) => {
+        const stillWaiting = rows.some((r) => r.kind === 'contribution' && r.status === 'pending');
+        if (!stillWaiting && reload) reload();               // a decision arrived: refresh the figures (this also ends the checking)
+      }).catch(() => {});
+    }, CHECK_EVERY_MS);
+    return () => clearInterval(t);
+  }, [awaitingApproval, loadActivity, reload]);
 
   const nameLine = <Text style={s.groupName}>👥 {group.group_name}</Text>;
   if (circles.length === 0) {
@@ -38,6 +57,10 @@ export default function MgrSavingsView({ navigation, group, reload }) {
   const myPays = activity.filter((a) => a.kind === 'contribution' && a.circle_id === c.id);
   const waiting = myPays.find((a) => a.status === 'pending');
   const lastRej = myPays[0] && myPays[0].status === 'rejected' ? myPays[0] : null;   // newest decision was a rejection
+  // Payments the Treasurer confirmed in the last few days: this is the "your Treasurer has confirmed" message.
+  const since = Date.now() - CONFIRMED_NOTICE_DAYS * 86400000;
+  const confirmed = myPays.filter((a) => a.status === 'confirmed' && new Date(a.at).getTime() >= since);
+  const confirmedTotal = confirmed.reduce((t, a) => t + Number(a.amount), 0);
   const go = (screen) => navigation.navigate(screen, { groupId: group.group_id, circleId: c.id });
   const pay = () => {
     if (st.left <= 0) return showToast(st.kind === 'awaiting' ? 'Your payment is waiting for your Treasurer to confirm.' : 'You have already paid for this round.', 'warn');
@@ -58,13 +81,17 @@ export default function MgrSavingsView({ navigation, group, reload }) {
     {nameLine}{picker}
     <Hero {...st.hero} />
 
+    {confirmed.length > 0 && (
+      <Notice tone="green" icon="✅" onPress={() => go('MgrHistory')}
+        title={confirmed.length === 1
+          ? `${fmt(confirmed[0].amount)} ${confirmed[0].method === 'cash' ? 'cash' : 'M-Pesa'} confirmed by your Treasurer`
+          : `${confirmed.length} payments (${fmt(confirmedTotal)}) confirmed by your Treasurer`}
+        sub={`${niceDateTime(confirmed[0].at)} · Tap to view your history`} />)}
+
     {st.R && Number(st.R.pending) > 0 ? (
       <Notice tone="amber" icon="⏳" onPress={() => go('MgrHistory')}
         title={`${fmt(st.R.pending)} ${waiting ? (waiting.method === 'cash' ? 'cash' : 'M-Pesa') + ' ' : ''}awaiting Treasurer approval`}
         sub={`Tap to view${waiting?.reference ? ` · Ref ${waiting.reference}` : ''}`} />) : null}
-    {st.behind && (
-      <Notice tone="amber" icon="⚠️" title={`You are ${st.R.days_behind} ${Number(st.R.days_behind) === 1 ? 'day' : 'days'} behind`}
-        sub={`Pay ${fmt(st.R.behind_amount)} to catch up. You can pay several days at once.`} />)}
     {st.kind === 'due' && lastRej && (
       <Notice tone="red" icon="❌" title={`Your ${fmt(lastRej.amount)} payment was not accepted${lastRej.reason ? `: “${lastRej.reason}”` : ''}. Please pay again.`} />)}
 
