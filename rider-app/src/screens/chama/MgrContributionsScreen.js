@@ -73,9 +73,7 @@ function MgrContributionsScreen({ navigation, route }) {
         </TouchableOpacity>))}
       {items && shown.length === 0 && !!needle && <Text style={s.hint}>No payment matches “{q}”.</Text>}
 
-      <TouchableOpacity onPress={() => navigation.navigate('GroupFinanceHistory', { groupId: gid })} style={{ alignItems: 'center', marginVertical: 12 }} accessibilityRole="link">
-        <Text style={c.link}>🕘 Received Contributions History →</Text>
-      </TouchableOpacity>
+      {/* "Received Contributions History" link (Group Finance History & Statements) hidden for now */}
     </ScrollView>);
 }
 

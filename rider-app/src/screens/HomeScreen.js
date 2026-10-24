@@ -18,10 +18,7 @@ import { getQueuedRecords } from '../offline/syncQueue';
 import { getActiveBikeProfile, getRiderAccountSummary, clearSession, getLocalRiderId } from '../offline/db';
 import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
 import HeroFareCard from '../components/HeroFareCard';
-// ✅ NEW IMPORT: Subscription Banners
-import SubscriptionBanners from '../components/SubscriptionBanners';
-// ✅ CRITICAL: Account lock enforcement
-import { checkAndEnforceLock, ensureFreeTrial } from '../offline/subscriptionUtils';
+// NOTE: Subscription banners and account-lock enforcement removed - the app is always open.
 // ✅ CHAMA: system-driven membership (IndexedDB copy first, server is the authority) + logout cleanup
 import useChamaMembership from '../hooks/useChamaMembership';
 import { useGroupText } from './chama/groupText';
@@ -42,7 +39,6 @@ const HOME_TILES = [
   { emoji: '🏡', label: 'home.tile_send_money_home', route: 'SendMoneyHome' },
   { emoji: '🏆', label: 'home.tile_my_goals', route: 'Goals' },
   { emoji: '💡', label: 'home.tile_suggestions_feedback', route: 'SuggestionsFeedback' },
-  { emoji: '📲', label: 'home.tile_my_subscription', route: 'Subscription' },
 ];
 
 function LoadingSkeleton() {
@@ -145,10 +141,6 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   // ✅ Track if data has been loaded on mount
   const hasLoadedRef = useRef(false);
 
-  // ✅ CRITICAL: Account lock state
-  const [isAccountLocked, setIsAccountLocked] = useState(false);
-  const [lockCheckInProgress, setLockCheckInProgress] = useState(true);
-
   // ✅ CHAMA: Role flags come from the rider's ACTIVE Chama membership only. There is nothing for the rider to switch on.
   //   My Savings / My Loans appear once the Treasurer adds the rider to a group and disappear if the rider is no longer in one.
   //   Works offline from the saved copy; refreshes on focus, app resume, reconnect, every 45s, and on membership notices.
@@ -183,71 +175,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
 
   // ✅ CHAMA: role flags are loaded by useChamaMembership() above (replaces the old inline loader).
 
-  // ========================================================================
-  // ✅ CRITICAL: LOCK ENFORCEMENT GATE ON SCREEN FOCUS
-  // ========================================================================
-  // This is the MAIN GATE: Check for account lock BEFORE rendering home
-  // If locked, navigate to AccountLockedScreen immediately
-  useFocusEffect(
-    useCallback(() => {
-      const checkAndEnforceAccountLock = async () => {
-        if (!riderId) {
-          console.log('[HomeScreen] Lock gate: no riderId, cannot check');
-          setLockCheckInProgress(false);
-          return;
-        }
-
-        try {
-          console.log('[HomeScreen] 🔒 MAIN GATE: Checking account lock status...');
-          setLockCheckInProgress(true);
-
-          // ✅ CRITICAL: Initialize free trial for newly onboarded riders BEFORE checking lock
-          // This ensures new riders get their 2-hour trial before any lock enforcement
-          console.log('[HomeScreen] ✨ Ensuring free trial initialized for rider...');
-          const trialState = await ensureFreeTrial(riderId);
-          console.log('[HomeScreen] ✅ Trial status after initialization:', {
-            trialStarted: trialState?.trialStarted,
-            trialEndDate: trialState?.trialEndDate,
-            hoursLeft: trialState?.trialStarted ? 'calculating...' : 'N/A',
-          });
-
-          // ✅ NOW check lock status - trial will prevent lock if active
-          const lockStatus = await checkAndEnforceLock(riderId);
-
-          if (lockStatus.isLocked) {
-            console.log('[HomeScreen] 🔒 GATE CLOSED: Account is LOCKED - navigating to AccountLockedScreen', {
-              reason: lockStatus.reason,
-              justLocked: lockStatus.justLocked,
-            });
-
-            setIsAccountLocked(true);
-
-            // ✅ ENFORCE LOCK: Navigate to AccountLockedScreen before rendering home
-            navigation.reset({
-              index: 0,
-              routes: [{ name: 'AccountLockedScreen' }],
-            });
-            return;
-          }
-
-          console.log('[HomeScreen] ✅ GATE OPEN: Account is UNLOCKED - rendering home screen normally');
-          setIsAccountLocked(false);
-        } catch (err) {
-          console.error('[HomeScreen] Error checking account lock:', err);
-          // Fail-safe: allow home screen on error
-          setIsAccountLocked(false);
-        } finally {
-          setLockCheckInProgress(false);
-        }
-      };
-
-      checkAndEnforceAccountLock();
-
-      return () => {
-        // Cleanup on unfocus
-      };
-    }, [riderId, navigation])
-  );
+  // NOTE: Subscription lock enforcement gate removed - the app never locks.
 
   /**
    * ✅ Calculate today's total from trip cache
@@ -492,7 +420,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     }
   }, [navigation]);
 
-  if (riderIdLoading || !isInitialized || lockCheckInProgress) {
+  if (riderIdLoading || !isInitialized) {
     return <LoadingSkeleton />;
   }
 
@@ -508,64 +436,6 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
           }
         }}
       />
-    );
-  }
-
-  // ========================================================================
-  // ✅ IF ACCOUNT IS LOCKED - RENDER ACCOUNT LOCKED SCREEN DIRECTLY
-  // ========================================================================
-  // This prevents HomeScreen from rendering when account is locked
-  if (isAccountLocked) {
-    console.log('[HomeScreen] 🔒 Account is locked - rendering AccountLockedScreen UI');
-    return (
-      <ScrollView style={styles.container}>
-        <View style={styles.lockedContainer}>
-          <View style={styles.heroLocked}>
-            <Text style={styles.heroEmoji}>👋</Text>
-            <Text style={styles.heroTitle}>We've Missed You!</Text>
-            <Text style={styles.heroSubtitle}>
-              Your subscription has expired — but your data is safe and waiting for you.
-            </Text>
-          </View>
-
-          <View style={styles.bannerContainer}>
-            <View style={[styles.banner, styles.bannerWarn]}>
-              <Text style={styles.bannerText}>
-                👉 Good news — getting back in takes just one payment, and you're back to work instantly.
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.card}>
-            <View style={styles.kvRow}>
-              <Text style={styles.kvLabel}>Status</Text>
-              <Text style={styles.kvValue}>🔒 Locked</Text>
-            </View>
-            <View style={[styles.kvRow, styles.kvRowBold]}>
-              <Text style={styles.kvLabelBold}>Amount To Unlock</Text>
-              <Text style={styles.kvValueBold}>KSh 125</Text>
-            </View>
-          </View>
-
-          <TouchableOpacity
-            style={styles.buttonPrimary}
-            onPress={() => navigation.navigate('ConfirmSubscriptionScreen', {
-              selectedFrequency: 'biweekly'
-            })}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.buttonPrimaryText}>🔓 Pay & Unlock Now →</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.buttonGhost}
-            onPress={() => navigation.navigate('SelectFrequency')}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.buttonGhostText}>Choose a different plan</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
     );
   }
 
@@ -605,10 +475,6 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             onOpenDailySummary={handleDailyTradeSummary}
             onNewTrip={handleRecordTrip}
           />
-
-          {/* ✅ SUBSCRIPTION BANNERS - Displayed below Hero Fare Card */}
-          {/* Display logic controlled by subscriptionUtils (trial, reminder, locked) */}
-          <SubscriptionBanners navigation={navigation} />
 
           {/* Yesterday's Total */}
           {yesterdayTotal !== null && (
@@ -666,7 +532,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             </TouchableOpacity>
           </View>
 
-          {/* Row 2: Financial Performance + My Subscription */}
+          {/* Row 2: Financial Performance + My Savings (My Subscription tile removed) */}
           <View style={styles.tileRow}>
             <TouchableOpacity
               style={styles.homeTile}
@@ -675,30 +541,23 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.tileEmoji}>💰</Text>
               <Text style={styles.tileLabel}>{t('home.tile_financial_performance')}</Text>
             </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.homeTile}
-              onPress={() => navigation.navigate('Subscription')}
-            >
-              <Text style={styles.tileEmoji}>📲</Text>
-              <Text style={styles.tileLabel}>{t('home.tile_my_subscription')}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* ✅ PART 5 - Row 3: My Savings + My Loans (only for members of a group) */}
-          {role.hasGroup && (
-            <View style={styles.tileRow}>
+            {/* My Savings takes the spot the My Subscription tile used to occupy (only for members of a group) */}
+            {role.hasGroup ? (
               <TouchableOpacity style={styles.homeTile} onPress={() => navigation.navigate('MySavings')}>
                 <Text style={styles.tileEmoji}>🏦</Text>
                 <Text style={styles.tileLabel}>{t('home.tile_my_savings') || 'My Savings'}</Text>
               </TouchableOpacity>
-              {/* My Loans is only for Table Banking: a rider who is only in a Merry-Go-Round has no loans */}
-              {chamaMembership.hasTb ? (
-                <TouchableOpacity style={styles.homeTile} onPress={() => navigation.navigate('MyLoans')}>
-                  <Text style={styles.tileEmoji}>📋</Text>
-                  <Text style={styles.tileLabel}>{t('home.tile_my_loans') || 'My Loans'}</Text>
-                </TouchableOpacity>
-              ) : <View style={[styles.homeTile, { opacity: 0 }]} />}
+            ) : <View style={{ flex: 1 }} />}
+          </View>
+
+          {/* Row 3: My Loans (Table Banking members only - a rider who is only in a Merry-Go-Round has no loans) */}
+          {role.hasGroup && chamaMembership.hasTb && (
+            <View style={styles.tileRow}>
+              <TouchableOpacity style={styles.homeTile} onPress={() => navigation.navigate('MyLoans')}>
+                <Text style={styles.tileEmoji}>📋</Text>
+                <Text style={styles.tileLabel}>{t('home.tile_my_loans') || 'My Loans'}</Text>
+              </TouchableOpacity>
+              <View style={{ flex: 1 }} />
             </View>
           )}
 
@@ -775,13 +634,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
 
-            {/* ✅ PART 5: Treasurer-only item (stray `)}` removed) */}
-            {role.isTreasurer && (
-              <TouchableOpacity style={styles.settingsListItem} onPress={() => navigation.navigate('GroupFinanceHistory')}>
-                <Text style={styles.settingsListLabel}>🏦 {t('home.group_finance_history') || 'Group Finance History & Statements'}</Text>
-                <Text style={styles.settingsListArrow}>›</Text>
-              </TouchableOpacity>
-            )}
+            {/* Group Finance History & Statements hidden from the UI for now */}
 
             <TouchableOpacity
               style={[styles.settingsListItem, styles.logoutListItem]}

@@ -134,6 +134,9 @@ export const REMINDER_CHECKS_PER_DAY = 3;
  * - justLocked: boolean - true if lock status changed on this check
  */
 export async function checkAndEnforceLock(riderId) {
+  // SUBSCRIPTION LOCK DISABLED: the app is always open and never locks because of subscription.
+  return { isLocked: false, reason: null, lockedSince: null, justLocked: false };
+  // eslint-disable-next-line no-unreachable
   try {
     // ✅ CRITICAL: Validate rider ID exists
     if (!riderId || riderId === 'undefined' || riderId === 'null') {

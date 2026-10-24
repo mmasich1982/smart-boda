@@ -80,6 +80,9 @@ function getServiceDueAlerts(bike, currentOdometer) {
  * ✅ Shows when expiring within 5 days
  */
 function getSubscriptionAlerts(sub) {
+  // Subscription alerts disabled: the app is always open.
+  return [];
+  // eslint-disable-next-line no-unreachable
   if (!sub) return [];
 
   const alerts = [];
@@ -126,6 +129,9 @@ function getSubscriptionAlerts(sub) {
  * (EM-10 requirement: users must know before billing happens)
  */
 function getPriceChangeAlert(sub) {
+  // Subscription price-change alerts disabled: subscription is hidden from the UI.
+  return [];
+  // eslint-disable-next-line no-unreachable
   if (!sub?.pendingPricingChange) return [];
 
   const p = sub.pendingPricingChange;
