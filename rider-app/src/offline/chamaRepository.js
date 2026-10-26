@@ -21,6 +21,7 @@
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { getLocalRiderId, getLocalRiderStatus, saveLocalRiderStatus } from './db';
+import { clearMgrHistoryKv } from './chamaMgrHistoryRepository';
 import {
   CHAMA_RETENTION_CONFIG,
   CHAMA_COLLECTIONS,
@@ -399,6 +400,7 @@ export async function clearChamaData(riderId) {
     await indexedDbAdapter.kvDelete(`${MEMBERSHIP_PREFIX}${rid}`).catch(() => {});
     await indexedDbAdapter.kvDelete(`${NOTIFICATIONS_PREFIX}${rid}`).catch(() => {});
     await indexedDbAdapter.kvDelete(`${RETENTION_CONFIG_PREFIX}${rid}`).catch(() => {});
+    await clearMgrHistoryKv(rid).catch(() => {});       // contribution-history cursors and totals (their rows went with the rest above)
     console.log(`🧹 [chamaRepository] Cleared Chama data for rider ${rid}`);
     return true;
   } catch (err) {

@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
 import { useToast } from '../../components/Toast';
 import { completeSeen, mgrMyActivity } from '../../api/groupsClient';
+import { registerMgrHistoryGroup } from '../../offline/chamaMgrHistorySync';
 import { fmt } from './chamaStyles';
 import { Tabs, niceDateTime } from './common';
 import MgrTurnsView from './MgrTurnsView';
@@ -30,6 +31,7 @@ export default function MgrSavingsView({ navigation, group, reload }) {
   // and is showing what they say. (They used to be dismissed the moment the screen opened, before anything was shown.)
   const loadActivity = useCallback(() => mgrMyActivity(group.group_id).then((a) => { setActivity(a || []); return a || []; }), [group.group_id]);
   useEffect(() => { loadActivity().then(() => completeSeen(SEEN)).catch(() => {}); }, [group, loadActivity]);
+  useEffect(() => { registerMgrHistoryGroup(group.group_id).catch(() => {}); }, [group.group_id]);   // keep this group's contribution history up to date in the background
 
   // A payment is waiting for the Treasurer: quietly look for the decision, so "awaiting approval" turns into "confirmed" without leaving the screen.
   // Stops by itself once nothing is waiting. A failed check is ignored and tried again.

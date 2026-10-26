@@ -5,11 +5,11 @@ from app.services.group_member_link_service import mask_phone
 from typing import Literal, Optional
 from uuid import UUID                  # request bodies
 from uuid import UUID as RowId   # NOT "UUID": star-imports of the models bring SQLAlchemy's UUID column type into scope
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, tuple_
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth import get_current_rider
@@ -573,6 +573,62 @@ def cancel_swap(sid: RowId, db: Session = Depends(get_db), rider: Rider = Depend
     eng.expire_stale_swaps(db, c); db.refresh(s)
     eng.cancel_swap(db, g, c, s); db.commit()
     return {"ok": True}
+
+# ----------------------------- Rider: my contribution history -----------------------------
+def _my_contribution_query(db, rider, group_id, circle_id, only_status=None):
+    """The rider's own payments into Merry-Go-Round circles (all of them, newest decision or submission time as `upd`)."""
+    mine = _my_mgr_members(db, rider, group_id)
+    if not mine: return None, None
+    upd = func.coalesce(ChamaContribution.decided_at, ChamaContribution.submitted_at)
+    q = db.query(ChamaContribution, ChamaMgrRound.circle_id, upd.label("upd"))\
+          .join(ChamaMgrRound, ChamaMgrRound.id == ChamaContribution.round_id)\
+          .filter(ChamaContribution.member_id.in_([m.id for m, _ in mine]))
+    if circle_id: q = q.filter(ChamaMgrRound.circle_id == circle_id)
+    if only_status: q = q.filter(ChamaContribution.status == only_status)
+    return q, upd
+
+def _contribution_item(c, cid_, upd, names):
+    return {"id": str(c.id), "circle_id": str(cid_), "circle_name": names.get(cid_), "reference": c.reference, "amount": c.amount,
+            "method": c.method, "status": c.status, "reason": c.reject_reason, "self_confirmed": bool(c.self_confirmed),
+            "submitted_at": c.submitted_at.isoformat() if c.submitted_at else None, "at": upd.isoformat()}
+
+@router.get("/me/contributions")
+def my_contributions(group_id: Optional[RowId] = GID, circle_id: Optional[RowId] = None,
+                     since: Optional[str] = Query(None, description="Cursor from the previous page: 'iso-time|id'. Only payments that changed after it."),
+                     from_ts: Optional[datetime] = Query(None, description="Skip anything not touched since this moment (the phone's six-month window)"),
+                     order: Literal["asc", "desc"] = "asc", status: Optional[Literal["pending", "confirmed", "rejected"]] = None,
+                     limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0),
+                     db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
+    """The rider's own payments, with NO cap on how far back they go.
+    Two ways to read it:
+      • sync (order=asc, since=cursor): what is new or changed since the phone last asked, 100 at a time, with a cursor to continue from.
+        `from_ts` keeps the phone from downloading what its six-month window would throw away.
+      • browse (order=desc, offset): the whole history page by page, for "Since Joining" and anything older than the phone keeps."""
+    q, upd = _my_contribution_query(db, rider, group_id, circle_id, status)
+    if q is None: return {"items": [], "next_cursor": since, "has_more": False, "total": 0}
+    if from_ts: q = q.filter(upd >= from_ts)
+    if since:
+        try: t, _, i = since.partition("|"); after = (datetime.fromisoformat(t), UUID(i))
+        except Exception: raise HTTPException(422, "That cursor is not valid.")
+        q = q.filter(tuple_(upd, ChamaContribution.id) > tuple_(after[0], after[1]))
+    total = q.count()
+    key = (upd, ChamaContribution.id)
+    q = q.order_by(*(k.desc() for k in key)) if order == "desc" else q.order_by(*key)
+    rows = q.offset(offset).limit(limit + 1).all()
+    more, rows = len(rows) > limit, rows[:limit]
+    names = {c.id: c.name for c in db.query(ChamaMgrCircle).filter(ChamaMgrCircle.id.in_({r[1] for r in rows}))} if rows else {}
+    items = [_contribution_item(c, cid_, u, names) for c, cid_, u in rows]
+    return {"items": items, "next_cursor": f"{rows[-1][2].isoformat()}|{rows[-1][0].id}" if rows else since, "has_more": more, "total": total}
+
+@router.get("/me/contributions/summary")
+def my_contributions_summary(group_id: Optional[RowId] = GID, circle_id: Optional[RowId] = None,
+                             db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
+    """Everything the rider has paid in (confirmed) since joining: the figure for the "Since Joining" tile, however old it is."""
+    q, upd = _my_contribution_query(db, rider, group_id, circle_id, "confirmed")
+    if q is None: return {"count": 0, "total": 0, "first_at": None}
+    sub = q.with_entities(ChamaContribution.amount, upd.label("u")).subquery()
+    n, tot, first = db.query(func.count(), func.coalesce(func.sum(sub.c.amount), 0), func.min(sub.c.u)).select_from(sub).one()
+    return {"count": int(n), "total": tot, "first_at": first.isoformat() if first else None}
 
 @router.get("/me/activity")
 def my_activity(group_id: Optional[RowId] = GID, circle_id: Optional[RowId] = None, db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):

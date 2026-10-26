@@ -595,6 +595,28 @@ export async function batchInsert(storeName, rows) {
   });
 }
 
+/**
+ * Upsert rows: insert, or replace the row that has the same id.
+ * (batchInsert above tries add() first; on a duplicate id the failed add() is not cancelled, which aborts the whole transaction,
+ *  so it cannot be relied on to overwrite an existing row. put() is the proper upsert.)
+ */
+export async function putRows(storeName, rows) {
+  return queueTransaction(async () => {
+    const database = await getDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction([storeName], 'readwrite');
+      const store = transaction.objectStore(storeName);
+      const results = [];
+      (rows || []).forEach((row) => {
+        const request = store.put(row);
+        request.onsuccess = () => results.push(row.id);
+      });
+      transaction.onerror = () => reject(transaction.error);
+      transaction.oncomplete = () => resolve(results);
+    });
+  });
+}
+
 // ========== UTILITY FUNCTIONS ==========
 
 /**
@@ -669,6 +691,7 @@ export default {
   countRows,
   clearStore,
   batchInsert,
+  putRows,
   getStats,
   exportAllData,
   clearAllData,
