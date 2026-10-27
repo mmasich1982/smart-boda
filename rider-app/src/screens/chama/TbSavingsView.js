@@ -50,8 +50,8 @@ export default function TbSavingsView({ navigation, groupId }) {
         <PrimaryButton label="Pay Contribution →"
           onPress={() => navigation.navigate('ChamaPay', { kind: 'contribution', amount: d.category?.amount, treasurer: d.treasurer, groupId: d.group_id })} />
         <TouchableOpacity testID="open-history" onPress={() => navigation.navigate('TbHistory', { groupId: d.group_id, kind: 'savings' })}>
-          <Text style={{ color: colors.bodaOrange, fontWeight: '800', marginVertical: 14 }}>📈 My Payments History ›</Text></TouchableOpacity>
-        <Text style={s.hint}>Your contributions and loan repayments by month, with totals. Saved on your phone, so it also opens offline.</Text>
+          <Text style={{ color: colors.bodaOrange, fontWeight: '800', marginVertical: 14 }}>📈 My Savings Contribution ›</Text></TouchableOpacity>
+        <Text style={s.hint}>Your savings contributions by month, with totals. Saved on your phone, so it also opens offline.</Text>
       </>)}
     </>);
 }

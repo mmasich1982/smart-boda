@@ -1,9 +1,11 @@
 // rider-app/src/screens/chama/TbHistoryScreen.js
-// "My Payments History" for Table Banking: the same layout as the Merry-Go-Round one (MgrHistoryScreen).
-//   Category chips   Savings | Loan repayments | All
+// One screen, two titles, opened from two places (it never mixes the two categories):
+//   My Savings > "My Savings Contribution"   (route.params.kind = 'savings')        only savings contributions
+//   My Loans   > "My Loan Repayment"         (route.params.kind = 'loan_repayment') only loan repayments
+// Same layout as the Merry-Go-Round history (MgrHistoryScreen).
 //   Period tiles     This Month, Last Month, 6 Months, Since Joining, each with its total for the chosen category
 //   "Waiting for Treasurer" card, then the confirmed payments 5 to a page.
-// route.params: { groupId, kind? }   kind = 'savings' | 'loan_repayment' | 'all' (which chip opens first)
+// route.params: { groupId, kind }   kind = 'savings' (default) | 'loan_repayment'
 //
 // OFFLINE-FIRST: the payments are read from the phone (IndexedDB, the same six-month store and cleanup as the rest of the Chama history)
 // and shown at once, with or without a connection. A quiet sync then brings in only what changed (offline/chamaTbHistorySync.js).
@@ -17,9 +19,9 @@ import { ScrollView, Text, View, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
 import { completeSeen, mySavings } from '../../api/groupsClient';
-import { s, fmt, Chip } from './chamaStyles';
+import { s, fmt } from './chamaStyles';
 import { Card, Badge, Pager, ScreenTitle, monthDay } from './mgrUi';
-import { loadTbPayments, bucketPayments, byKind, sumAmounts, getMeta, setMeta, KIND_LABEL } from '../../offline/chamaTbHistoryRepository';
+import { loadTbPayments, bucketPayments, byKind, sumAmounts, getMeta, setMeta } from '../../offline/chamaTbHistoryRepository';
 import { syncTbHistory, registerTbHistoryGroup, refreshTbSummary, fetchTbHistoryPage } from '../../offline/chamaTbHistorySync';
 import colors from '../../theme/colors';
 
@@ -27,13 +29,13 @@ const PER_PAGE = 5;
 const REJECTED_SHOWN_DAYS = 14;               // a rejection stays in the "waiting" card this long
 const TILES = [['thisMonth', '📅', 'This Month'], ['lastMonth', '📆', 'Last Month'], ['sixMonths', '📊', '6 Months'], ['sinceJoining', '👥', 'Since Joining']];
 const LABELS = { thisMonth: 'This Month', lastMonth: 'Last Month', sixMonths: 'Last 6 Months', sinceJoining: 'Since Joining' };
-const KIND_CHIPS = [['savings', 'Savings'], ['loan_repayment', 'Loan repayments'], ['all', 'All']];
-const EMPTY = { savings: 'No savings contributions for this period yet.', loan_repayment: 'No loan repayments for this period yet.', all: 'No payments for this period yet.' };
+const TITLE = { savings: '💰 My Savings Contribution', loan_repayment: '🏦 My Loan Repayment' };
+const EMPTY = { savings: 'No savings contributions for this period yet.', loan_repayment: 'No loan repayments for this period yet.' };
 
 function TbHistoryScreen({ navigation, route }) {
-  const { groupId, kind: startKind } = route.params || {};
+  const { groupId, kind: kindParam } = route.params || {};
+  const kind = kindParam === 'loan_repayment' ? 'loan_repayment' : 'savings';   // fixed by where the screen was opened from
   const [rows, setRows] = useState(null), [meta, setMetaState] = useState({});
-  const [kind, setKind] = useState(['savings', 'loan_repayment', 'all'].includes(startKind) ? startKind : 'savings');
   const [cat, setCat] = useState('thisMonth'), [page, setPage] = useState(1);
   const [remote, setRemote] = useState(null);       // Since Joining from the server: null = loading, false = could not reach it, {items,total}
 
@@ -68,7 +70,7 @@ function TbHistoryScreen({ navigation, route }) {
     if (cat !== 'sinceJoining') return undefined;
     let live = true;
     setRemote(null);
-    fetchTbHistoryPage(groupId, { kind: kind === 'all' ? undefined : kind, offset: (page - 1) * PER_PAGE, limit: PER_PAGE })
+    fetchTbHistoryPage(groupId, { kind, offset: (page - 1) * PER_PAGE, limit: PER_PAGE })
       .then((res) => { if (live) setRemote({ items: res.items, total: res.total }); })
       .catch(() => { if (live) setRemote(false); });
     return () => { live = false; };
@@ -83,7 +85,7 @@ function TbHistoryScreen({ navigation, route }) {
   // The tiles, for the chosen category. Server totals (any age) win over the phone's six months when they are larger.
   const by = bucketPayments(byKind(confirmed, kind));
   const sv = meta.summary || {};
-  const srv = (k) => (k === 'all' ? { count: (sv.savings?.count || 0) + (sv.loan_repayment?.count || 0), total: (sv.savings?.total || 0) + (sv.loan_repayment?.total || 0) } : sv[k] || { count: 0, total: 0 });
+  const srv = (k) => sv[k] || { count: 0, total: 0 };
   const tot = { thisMonth: sumAmounts(by.thisMonth), lastMonth: sumAmounts(by.lastMonth), sixMonths: sumAmounts(by.sixMonths), sinceJoining: sumAmounts(by.sinceJoining) };
   tot.sinceJoining = Math.max(srv(kind).total, tot.sinceJoining);
   const sinceCount = Math.max(srv(kind).count, by.sinceJoining.length);
@@ -96,17 +98,11 @@ function TbHistoryScreen({ navigation, route }) {
   const pageRecords = onServer ? remote.items : local.slice((pg - 1) * PER_PAGE, pg * PER_PAGE);
   const shownCount = cat === 'sinceJoining' ? Math.max(totalCount, sinceCount) : totalCount;
   const last = meta.lastSyncAt ? monthDay(new Date(meta.lastSyncAt).toISOString()) : confirmed[0] ? monthDay(confirmed[0].at) : monthDay(new Date().toISOString());
-  const split = kind === 'all' && !onServer
-    ? ['savings', 'loan_repayment'].map((k) => `${KIND_LABEL[k]} ${fmt(sumAmounts(byKind(by[cat] || [], k)))}`).join(' · ') : '';
 
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
       <BackLink onPress={() => navigation.goBack()} label="← Back" />
-      <ScreenTitle>📈 My Payments History</ScreenTitle>
-
-      <View style={s.chipRow}>
-        {KIND_CHIPS.map(([k, l]) => <Chip key={k} on={kind === k} label={l} onPress={() => { setKind(k); setPage(1); }} />)}
-      </View>
+      <ScreenTitle>{TITLE[kind]}</ScreenTitle>
 
       <View style={h.grid}>
         {TILES.map(([k, e, l]) => (
@@ -123,7 +119,7 @@ function TbHistoryScreen({ navigation, route }) {
           {notDone.map((r) => (
             <View key={r.id} style={h.pendRow}>
               <View style={{ flex: 1 }}>
-                <Text style={h.pendTxt}>{fmt(r.amount)} · {KIND_LABEL[r.kind]} · {r.method === 'cash' ? '💵 Cash' : '📲 M-Pesa'}</Text>
+                <Text style={h.pendTxt}>{fmt(r.amount)} · {r.method === 'cash' ? '💵 Cash' : '📲 M-Pesa'}</Text>
                 {r.status === 'rejected' && !!r.reason && <Text style={h.reason}>Reason: {r.reason}</Text>}
               </View>
               {r.status === 'rejected' ? <Badge tone="red">✕ Not confirmed</Badge> : <Badge tone="amber">Pending</Badge>}
@@ -137,15 +133,14 @@ function TbHistoryScreen({ navigation, route }) {
         {(rows !== null && shownCount > 0) ? (<>
           <View style={h.totalBox}>
             <Text style={h.totalTxt}>Total for period: <Text style={{ fontWeight: '700' }}>{fmt(tot[cat])}</Text> • {shownCount} transaction{shownCount !== 1 ? 's' : ''}</Text>
-            {!!split && <Text style={h.totalTxt}>{split}</Text>}
           </View>
           {pageRecords.map((e, i) => (
             <View key={e.id} style={[h.row, i === pageRecords.length - 1 && { borderBottomWidth: 0 }]}>
               <View style={{ flex: 1 }}>
-                <Text style={h.rowTitle}>{e.kind === 'loan_repayment' ? '🏦 Loan repayment' : '💰 Savings contribution'}</Text>
+                <Text style={h.rowTitle}>{kind === 'loan_repayment' ? 'Loan repayment' : 'Savings contribution'}</Text>
                 <Text style={h.rowSub}>{monthDay(e.at)} • {e.method === 'cash' ? '💵 Cash' : '📲 M-Pesa'}{tFirst ? ` • ✓ Approved by ${tFirst}` : ''}</Text>
               </View>
-              <Text style={[h.rowAmt, e.kind === 'loan_repayment' && { color: colors.bodaOrange }]}>{e.kind === 'loan_repayment' ? '−' : '+'}{fmt(e.amount)}</Text>
+              <Text style={[h.rowAmt, kind === 'loan_repayment' && { color: colors.bodaOrange }]}>{kind === 'loan_repayment' ? '−' : '+'}{fmt(e.amount)}</Text>
             </View>))}
           <Pager page={pg} totalPages={totalPages} total={totalCount} pageSize={PER_PAGE} onPage={setPage} />
         </>) : <Text style={h.empty}>{EMPTY[kind]}</Text>}
@@ -155,7 +150,7 @@ function TbHistoryScreen({ navigation, route }) {
         <Text style={{ fontSize: 16 }}>🔄</Text>
         <View style={{ flex: 1 }}>
           <Text style={h.syncTitle}>Auto-Sync Active</Text>
-          <Text style={h.syncTxt}>This screen syncs automatically when your Chama treasurer records payments. Last updated: {last}</Text>
+          <Text style={h.syncTxt}>This screen syncs automatically when your Chama treasurer records your {kind === 'loan_repayment' ? 'loan repayments' : 'contributions'}. Last updated: {last}</Text>
         </View>
       </View>
     </ScrollView>);

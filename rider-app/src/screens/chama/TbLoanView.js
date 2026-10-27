@@ -122,7 +122,7 @@ export default function TbLoanView({ navigation, groupId }) {
         <TouchableOpacity onPress={() => navigation.navigate('GroupLoans', { groupId: d.group_id })}>
           <Text style={{ color: colors.bodaOrange, fontWeight: '800', marginVertical: 12 }}>👥 See who is borrowing in this group ›</Text></TouchableOpacity>
         <TouchableOpacity testID="open-repayments" onPress={() => navigation.navigate('TbHistory', { groupId: d.group_id, kind: 'loan_repayment' })}>
-          <Text style={{ color: colors.bodaOrange, fontWeight: '800', marginVertical: 6 }}>📈 My Repayment History ›</Text></TouchableOpacity>
+          <Text style={{ color: colors.bodaOrange, fontWeight: '800', marginVertical: 6 }}>📈 My Loan Repayment ›</Text></TouchableOpacity>
         <Text style={s.hint}>Your loan repayments by month, with totals. Saved on your phone, so it also opens offline.</Text>
       </>)}
     </>);
