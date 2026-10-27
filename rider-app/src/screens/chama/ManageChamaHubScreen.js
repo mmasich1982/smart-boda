@@ -1,9 +1,9 @@
 // rider-app/src/screens/chama/ManageChamaHubScreen.js
-// Manage Chama for a Treasurer who may run several groups, laid out like Smart_Boda_Prototype_v30:
-//   group type tabs  ->  group tabs (more than one group of that type)  ->  circle tabs (more than one circle)
-//   ->  "To do" hero  ->  Confirm contributions · Pay out the pool · Members & rules.
-// Merry-Go-Round rows open the new Contributions, Pay out the pool and Set Up Your Chama screens.
-// Table Banking keeps its own rows (Contributions, Loans, Loan security, Security held, Members & rules).
+// Manage Chama for a Treasurer who may run several groups, laid out like Smart_Boda_Prototype_v44:
+//   group type tabs  ->  group tabs (more than one group of that type)  ->  round tabs (more than one round)
+//   ->  "To do" hero  ->  Confirm Received Payments · Give Money to Member · Members & rules.
+// Merry-Go-Round rows open the Confirm Received Payments, Give Money to Member and Set Up Your Chama screens.
+// Table Banking keeps its own rows (Confirm Received Payments, Loans, Loan security, Security held, Members & rules).
 import React, { useCallback, useState } from 'react';
 import { withChamaOnlineGate } from '../../components/ChamaOnlineGate';
 import { ScrollView, Text } from 'react-native';
@@ -50,14 +50,14 @@ function ManageChamaHubScreen({ navigation }) {
         <ManageTabs m={m} />
         {m.group.status && m.group.status !== 'active' && <Notice tone="amber" icon="⏸️" title="This group is inactive." />}
         {m.isMgr && m.circles && m.circles.length === 0 && (
-          <Notice tone="amber" icon="🔄" title="No circle yet" sub="A circle has its own contribution, schedules and people. Open Members & rules to make one." />)}
+          <Notice tone="amber" icon="🔄" title="No round yet" sub="A round has its own amount, pay days and people. Open Members & rules to make one." />)}
 
-        <Hero label="To do" amount={todo ? `${todo} waiting` : 'All done ✅'}
-          split={[`${n} contribution${n === 1 ? '' : 's'}`, tb ? `${loans} loan item${loans === 1 ? '' : 's'}` : `Pool ${fmt(pool)}`]} />
+        <Hero label="To do" amount={todo ? `${todo} waiting` : 'All done ✓'} stack
+          split={[`${n} Payment${n === 1 ? '' : 's'} waiting for your confirmation`, tb ? `${loans} loan item${loans === 1 ? '' : 's'}` : `Payments received so far ${fmt(pool)}`]} />
 
-        <MenuRow emoji="✅" title="Confirm contributions" badge={n || ''} testID="row-contributions"
+        <MenuRow emoji="✅" title="Confirm Received Payments" badge={n || ''} testID="row-contributions"
           onPress={() => (tb ? go('ChamaQueue', { kind: 'contributions' }) : go('MgrContributions'))} />
-        {!tb && <MenuRow emoji="💸" title="Pay out the pool" badge={pool > 0 ? fmt(pool) : ''} testID="row-payout" onPress={() => go('MgrPayout')} />}
+        {!tb && <MenuRow emoji="💸" title="Give Money to Member" badge={pool > 0 ? fmt(pool) : ''} testID="row-payout" onPress={() => go('MgrPayout')} />}
         {tb && <MenuRow emoji="💳" title="Loans" badge={loans || ''} testID="row-loans" onPress={() => go('ChamaLoans')} />}
         {tb && <MenuRow emoji="🛡️" title="Loan security & guarantors" testID="row-security" onPress={() => go('TbSecurityRules')} />}
         {tb && <MenuRow emoji="🗄️" title="Security held" badge={held || ''} testID="row-held" onPress={() => go('SecurityHeld')} />}

@@ -95,7 +95,7 @@ function AddChamaMemberScreen({ navigation, route }) {
         </View>)}
       {type === 'mgr' && (
         <View style={s.card}><Text style={s.cardTitle}>Which circles?</Text>
-          {circles.length === 0 && <Text style={s.hint}>No circle yet. You can add the person now and put them in a circle later.</Text>}
+          {circles.length === 0 && <Text style={s.hint}>No round yet. You can add the person now and put them in a round later.</Text>}
           {circles.map((c) => (
             <View key={c.id} style={{ marginBottom: 8 }}>
               <Text style={{ fontWeight: '700' }}>{c.name} · KSh {Math.round(Number(c.amount)).toLocaleString()}{c.contrib_label ? ` · ${c.contrib_label}` : ''} · {c.contrib_label ? 'paid out ' : ''}{c.sched_label || 'days not set'}</Text>

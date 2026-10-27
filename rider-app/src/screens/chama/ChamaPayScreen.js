@@ -5,7 +5,7 @@
 // route.params: { kind: 'contribution' | 'loan', amount?, treasurer?, groupId, circleId?, model?, maxAmount?, circleName? }
 //   contribution -> Table Banking saving, or a Merry-Go-Round round (circleId says which circle)   POST /chama/me/contributions
 //   loan         -> Table Banking loan repayment                                                   POST /chama/me/loan-payments
-// model === 'mgr' shows the Merry-Go-Round "Pay contribution" layout from Smart_Boda_Prototype_v25.
+// model === 'mgr' shows the Merry-Go-Round "Pay contribution" layout from Smart_Boda_Prototype_v43.
 import React, { useState } from 'react';
 import { withChamaOnlineGate } from '../../components/ChamaOnlineGate';   // My Savings / My Loans / My Chama require an internet connection
 import { View, Text, TextInput, ScrollView, TouchableOpacity } from 'react-native';
@@ -81,7 +81,7 @@ function ChamaPayScreen({ navigation, route }) {
         <BackLink onPress={() => navigation.goBack()} />
         <ScreenTitle>💳 Pay contribution</ScreenTitle>
         <Card>
-          <FormLabel required>Amount contributed (KSh)</FormLabel>
+          <FormLabel required>Amount to pay (KSh)</FormLabel>
           <TextInput style={m.input} keyboardType="number-pad" value={amount} onChangeText={setAmount}
             placeholder={`e.g. ${p.amount ? Math.round(p.amount) : 500}`} />
           <Text style={m.hint}>Minimum {fmt(min)} · Maximum {fmt(mgrMax)}</Text>

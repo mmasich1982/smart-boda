@@ -1,5 +1,5 @@
 // rider-app/src/screens/chama/MgrRosterScreen.js
-// "Who has paid" for the open round of a Merry-Go-Round circle (Smart_Boda_Prototype_v30).
+// "Who has paid" for the open round of a Merry-Go-Round circle (Smart_Boda_Prototype_v44).
 // A member who is behind on the contribution days so far gets a small warning line (circles with their own contribution days).
 import React, { useCallback, useState } from 'react';
 import { withChamaOnlineGate } from '../../components/ChamaOnlineGate';
@@ -32,7 +32,7 @@ function MgrRosterScreen({ navigation }) {
   };
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
-      <BackLink onPress={() => navigation.goBack()} label="← Pay out the pool" />
+      <BackLink onPress={() => navigation.goBack()} label="← Give Money to Member" />
       <ScreenTitle>📋 Who has paid</ScreenTitle>
       <CircleTabs m={m} />
       {!!err && <Card><Text>{err}</Text></Card>}

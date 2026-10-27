@@ -1,6 +1,6 @@
 // rider-app/src/screens/chama/MgrTurnsView.js
-// "Members Payout Turns" for ONE Merry-Go-Round circle (the prototype's Group Turns tab):
-//   My Payout Turn card -> my turn-swap card -> round progress -> filter chips -> the list of every turn, 10 to a page.
+// "Members Turns for Receiving Money" for ONE Merry-Go-Round circle (Smart_Boda_Prototype_v43):
+//   My Turn for Receiving the Money card -> my turn-swap card -> round progress -> filter chips -> the list of every turn, 10 to a page.
 //
 // Swaps: the other rider can only AGREE. The rider who asked can CANCEL. There is no decline.
 import React, { useState } from 'react';
@@ -14,7 +14,7 @@ import { Btn, Card, FilterChips, Pager, Badge, longDate, DISPLAY_FONT } from './
 import colors from '../../theme/colors';
 
 const PAGE_SIZE = 10;
-const PILL = { paid: ['green', '✓ Received'], next: ['amber', '⏭ Next payout'], upcoming: ['grey', 'Yet to receive'] };
+const PILL = { paid: ['green', '✓ Received'], next: ['amber', '⏭ Next to receive'], upcoming: ['grey', 'Yet to receive'] };
 const DOT_BG = { paid: colors.signalGreenBg, next: colors.signalAmberBg, upcoming: '#eeeeee' };
 
 /** The card that tells the rider where their turn swap stands. */
@@ -78,13 +78,13 @@ export default function MgrTurnsView({ group, c, st, navigation, reload, onBack 
 
   const mineNos = all.filter((t) => t.mine);
   const shown = mineNos.filter((t) => t.status !== 'paid').length ? mineNos.filter((t) => t.status !== 'paid') : mineNos;
-  const turnText = shown.length ? `Turn ${shown.map((t) => t.turn).join(' and ')} of ${c.total_turns}` : '—';
+  const turnText = shown.length ? `${shown.map((t) => `Turn ${t.turn}`).join(' and ')} of ${c.total_turns}` : '—';
   const before = me ? Math.max(0, me.turn - (c.current_turn || 1)) : 0;
   const mineMsg = !me ? 'Your Treasurer has not set your turn yet.'
-    : me.status === 'paid' ? 'You have received your payout'
-    : me.status === 'next' ? "You're next to receive the payout!"
-    : `${before} more payout${before === 1 ? '' : 's'} before yours`;
-  const estimate = me && me.status !== 'paid' && Number(c.payout_estimate) > 0 ? ` · Payout ${fmt(c.payout_estimate)}` : '';
+    : me.status === 'paid' ? 'You have received your money'
+    : me.status === 'next' ? "You're next to receive the money!"
+    : `${before} more member${before === 1 ? ' receives' : 's receive'} money before you`;
+  const estimate = me && me.status !== 'paid' && Number(c.payout_estimate) > 0 ? ` · Money to be received: ${fmt(c.payout_estimate)}` : '';
 
   // Swaps: anything waiting for my agreement, plus the newest request I made that was not cancelled.
   const swaps = c.swaps || [];
@@ -93,12 +93,12 @@ export default function MgrTurnsView({ group, c, st, navigation, reload, onBack 
   const cards = [...incoming, ...(mine && !incoming.includes(mine) ? [mine] : [])];
 
   return (<>
-    <Btn ghost label="← My savings" onPress={onBack} testID="turns-back" />
+    <Btn ghost label="← My Savings" onPress={onBack} testID="turns-back" />
 
     <LinearGradient colors={['#fff6ee', '#ffffff']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={ss.myTurn}>
-      <Text style={ss.cardTitle}>🎯 My Payout Turn</Text>
+      <Text style={ss.cardTitle}>🎯 My Turn for Receiving the Money</Text>
       <Text style={ss.turnBig}>{turnText}</Text>
-      {!!me && <Text style={ss.payDate}>{me.status === 'paid' ? 'Received on:' : 'Payout date:'} {me.date ? longDate(me.date) : '—'}</Text>}
+      {!!me && <Text style={ss.payDate}>{me.status === 'paid' ? 'Received on:' : 'Receiving date:'} {me.date ? longDate(me.date) : '—'}</Text>}
       <Text style={ss.turnMsg}>{mineMsg}{estimate}</Text>
       {c.my_hands > 1 && <Text style={ss.turnMsg}>🔁 You have a double turn: you receive twice in this cycle.</Text>}
       {!!me && me.status === 'upcoming' && !!c.swap?.can_request && (

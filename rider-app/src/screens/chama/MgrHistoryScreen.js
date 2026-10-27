@@ -1,5 +1,5 @@
 // rider-app/src/screens/chama/MgrHistoryScreen.js
-// "My Contribution History" for Merry-Go-Round, as in Smart_Boda_Prototype_v25: period tiles (This Month, Last Month,
+// "My Payments History" for Merry-Go-Round, as in Smart_Boda_Prototype_v43: period tiles (This Month, Last Month,
 // 6 Months, Since Joining) with totals, a "waiting for Treasurer" card, the confirmed contributions 5 to a page,
 // and the Auto-Sync note. route.params: { groupId, circleId? }
 //
@@ -95,7 +95,7 @@ function MgrHistoryScreen({ navigation, route }) {
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
       <BackLink onPress={() => navigation.goBack()} label="← Back to Contributions Hub" />
-      <ScreenTitle>📈 My Contribution History</ScreenTitle>
+      <ScreenTitle>📈 My Payments History</ScreenTitle>
 
       <View style={h.grid}>
         {TILES.map(([k, e, l]) => (

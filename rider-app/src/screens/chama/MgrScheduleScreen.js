@@ -1,7 +1,7 @@
 // rider-app/src/screens/chama/MgrScheduleScreen.js
-// "Payout schedule" / "Contribution schedule" of one circle (Smart_Boda_Prototype_v30 schedule screen):
-//   how often -> calendar with the dates marked -> upcoming dates -> Done.
-// A circle has TWO schedules: when the pool is paid out and (optionally) when members contribute. Every payout period must
+// "Days when members pay" / "Day when a member receives Money" of one round (Smart_Boda_Prototype_v44):
+//   how often -> which day -> calendar with the dates marked -> sample / upcoming dates -> Done.
+// A round has TWO schedules: when a member receives money (the pool is paid out) and (optionally) the days when members pay. Every payout period must
 // contain at least one contribution date; the server checks this on the real dates and says why when it does not fit.
 // While a cycle is running the rules are locked: changes saved here start from the next cycle.
 // route.params: { kind: 'payout' | 'contribution', circleId, groupId }
@@ -12,10 +12,10 @@ import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
 import { useToast } from '../../components/Toast';
 import { mgrCircle, mgrUpdateCircle, mgrPreview, apiError } from '../../api/groupsClient';
-import { s, fmt } from './chamaStyles';
-import { Btn, Card, Notice, ScreenTitle, longDate } from './mgrUi';
+import { s } from './chamaStyles';
+import { Btn, Card, Notice, ScreenTitle, shortDate } from './mgrUi';
 import { GroupLine, CircleTabs } from './manageUi';
-import ScheduleEditor, { DEFAULT_SCHED } from './ScheduleEditor';
+import ScheduleEditor, { DEFAULT_SCHED, PAY_TYPES, RECEIVE_TYPES } from './ScheduleEditor';
 import MonthCalendar from './MonthCalendar';
 import useManageChama from './useManageChama';
 import colors from '../../theme/colors';
@@ -88,19 +88,29 @@ function MgrScheduleScreen({ navigation, route }) {
   const firstTurn = d?.round?.turn_no || 1;
   const label = sched ? (contrib ? pv?.contrib_label : pv?.payout_label) : null;
   const blocked = !!pv && !pv.ok;
+  // Who receives on a turn ("Turn 4 · Esther Njeri"; the Treasurer is "You").
+  const who = (turn) => {
+    const x = (d?.turns || []).find((r) => r.turn === turn);
+    if (!x) return '';
+    return (m.members || []).find((y) => y.member_id === x.member_id)?.is_treasurer ? 'You' : x.name;
+  };
 
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
       <BackLink onPress={() => navigation.goBack()} label="← Set Up Your Chama" />
-      <ScreenTitle>🗓️ {contrib ? 'Contribution schedule' : 'Payout schedule'}</ScreenTitle>
-      <Text style={sc.sub}>{d?.name || ''}{label ? ` · ${label}` : ''}</Text>
+      <ScreenTitle>{contrib ? '📅 Days when members pay' : '🗓️ Day when a member receives Money'}</ScreenTitle>
+      <Text style={sc.sub}>{d?.name || 'Your round'}{label ? ` · ${label}` : ''}</Text>
       <CircleTabs m={m} />
       {!!d?.locked && <Notice tone="amber" icon="🔒" title="Locked for this cycle" sub={`What you save here starts from cycle ${d.cycle_no + 1}.`} />}
 
       {sched && (<>
         <Card>
           <ScheduleEditor kind={kind} sched={sched} onChange={setSched} flags={sched.type === 'monthly' ? (d?.monthly_flags || []) : []}
-            title={contrib ? 'How often do members contribute?' : 'How often do payouts happen?'} />
+            types={contrib ? PAY_TYPES : RECEIVE_TYPES} dayTitle="Which day?"
+            copy={contrib
+              ? { daily: 'Members pay every day. Nothing to pick.', weekly: 'Pick the day, or tap a date on the calendar.', twice: 'Pick two days, for example Tuesday and Thursday.', biweekly: 'Tap the first payment date on the calendar. It then repeats every 2 weeks.' }
+              : { daily: 'Untick any day with no payout.', weekly: 'Pick the day.', twice: 'Pick two days, for example Tuesday and Thursday.', biweekly: 'Tap the first date on the calendar. It then repeats every 2 weeks.' }}
+            title={contrib ? 'How often do members pay?' : 'How often does a member receive money?'} />
           {contrib && <Btn small ghost label="Use one payment per payout" onPress={oncePerPayout} disabled={busy} style={{ marginTop: 10 }} />}
         </Card>
 
@@ -109,16 +119,16 @@ function MgrScheduleScreen({ navigation, route }) {
             <View style={{ flex: 1 }}><Text style={sc.errTitle}>This does not fit</Text><Text style={sc.errTxt}>{pv.error}</Text></View></View>)}
 
         <Card>
-          <MonthCalendar marked={dates} onPick={pick} legend={`${contrib ? 'Contribution' : 'Payout'} days repeat on the orange dates.`} />
+          <MonthCalendar marked={dates} onPick={pick} legend={contrib ? 'Members pay on the orange dates.' : 'Payout days repeat on the orange dates.'} />
         </Card>
 
         <Card>
-          <Text style={sc.upTitle}>{contrib ? 'Upcoming contributions' : 'Upcoming payouts'}</Text>
+          <Text style={sc.upTitle}>{contrib ? 'Sample payment dates' : 'Upcoming payouts'}</Text>
           {upcoming.length === 0 && <Text style={s.hint}>Choose the days above to see the dates.</Text>}
           {upcoming.map((x, i) => (
             <View key={x} style={[sc.upRow, i === upcoming.length - 1 && { borderBottomWidth: 0 }]}>
-              <Text style={sc.upDate}>{longDate(x).replace(/ \d{4}$/, '')}</Text>
-              <Text style={sc.upRight}>{contrib ? fmt(d?.effective?.amount ?? d?.amount) : `Turn ${firstTurn + i}`}</Text>
+              <Text style={sc.upDate}>{shortDate(x)}</Text>
+              {!contrib && <Text style={sc.upRight}>{`Turn ${firstTurn + i}`}{who(firstTurn + i) ? ` · ${who(firstTurn + i)}` : ''}</Text>}
             </View>))}
         </Card>
         <Btn label="Done" onPress={done} disabled={busy || blocked} testID="schedule-done" />

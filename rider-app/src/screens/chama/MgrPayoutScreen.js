@@ -1,7 +1,7 @@
 // rider-app/src/screens/chama/MgrPayoutScreen.js
-// "Pay out the pool" for one Merry-Go-Round circle (Smart_Boda_Prototype_v30):
-//   circle tabs -> who this round goes to + amount collected -> who still has to pay / "Everyone has paid"
-//   -> Pay out · Who has paid · Note an exception -> Turn Swap Requests.
+// "Give Money to Member" for one Merry-Go-Round round (Smart_Boda_Prototype_v44):
+//   round tabs -> who this round goes to + amount collected -> who still has to pay / "Everyone has paid"
+//   -> Pay the Receiving Member · Who has paid · Note a reason -> Turn Swap Requests.
 // The pool can be paid out once every member who owes has paid, or the Treasurer has noted an exception.
 // With "Recipient also contributes" on, the recipient is one of the payers too (the server works that out).
 import React, { useCallback, useState } from 'react';
@@ -41,15 +41,15 @@ function MgrPayoutScreen({ navigation }) {
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
       <BackLink onPress={() => navigation.navigate('ManageChama')} label="← Manage Chama" />
-      <ScreenTitle>💸 Pay out the pool</ScreenTitle>
+      <ScreenTitle>💸 Give Money to Member</ScreenTitle>
       <GroupLine type="mgr" name={m.group?.group_name} />
       <CircleTabs m={m} />
       {!!err && <Card><Text>{err}</Text></Card>}
-      {m.circles && m.circles.length === 0 && <Notice tone="amber" icon="🔄" title="No circle yet" sub="Open Members & rules to make one." />}
+      {m.circles && m.circles.length === 0 && <Notice tone="amber" icon="🔄" title="No round yet" sub="Open Members & rules to make one." />}
 
       {d && d.id === cid && !R && (
-        <Notice tone="amber" icon="⏳" title={d.status === 'draft' ? 'This circle has not started yet' : 'Waiting for the new season'}
-          sub="Open Members & rules to finish the set-up and start the round." />)}
+        <Notice tone="amber" icon="⏳" title={d.status === 'draft' ? 'This round has not started yet' : 'Waiting for the new season'}
+          sub="Open Members & rules to finish the set-up and save the round." />)}
 
       {R && (<>
         <LinearGradient colors={['#fff6ee', '#ffffff']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={p.goes}>
@@ -66,7 +66,7 @@ function MgrPayoutScreen({ navigation }) {
         {R.can_pay ? (
           <View style={p.ok}>
             <Text style={{ fontSize: 15 }}>✅</Text>
-            <View style={{ flex: 1 }}><Text style={p.okTitle}>Everyone has paid</Text><Text style={p.okSub}>You can pay out now.</Text></View>
+            <View style={{ flex: 1 }}><Text style={p.okTitle}>{(R.noted || []).length ? 'Everyone has paid or is noted' : 'Everyone has paid'}</Text><Text style={p.okSub}>You can pay out now.</Text></View>
           </View>
         ) : (unpaid.length > 0 ? (
           <View style={p.wait}>
@@ -79,13 +79,13 @@ function MgrPayoutScreen({ navigation }) {
             </View>
           </View>) : (R.block ? <Notice tone="amber" icon="⏳" title={R.block} /> : null))}
 
-        <Btn glow={R.can_pay} label={R.can_pay ? `💸 Pay ${fmt(R.pot)} to ${first(R.recipient)} →` : '💸 Pay out (not yet)'} disabled={!R.can_pay}
+        <Btn glow={R.can_pay} label={R.can_pay ? `💸 Pay ${fmt(R.pot)} to ${R.recipient_is_treasurer ? 'yourself' : first(R.recipient)} →` : '💸 Pay the Receiving Member (not yet)'} disabled={!R.can_pay}
           onPress={() => go('MgrConfirmPayout')} testID="payout-go" />
         <Btn ghost label="📋 Who has paid →" onPress={() => go('MgrRoster')} testID="payout-roster" />
 
         {(R.noted || []).length > 0 && (
           <Card>
-            <Text style={p.cardTitle}>📝 Exceptions noted</Text>
+            <Text style={p.cardTitle}>📝 Noted by you · members can see this</Text>
             {R.noted.map((x) => (
               <View key={x.member_id} style={p.noted}>
                 <View style={{ flex: 1 }}>
@@ -93,16 +93,16 @@ function MgrPayoutScreen({ navigation }) {
                   <Text style={s.hint}>{x.reason}{x.note ? ` · ${x.note}` : ''} · owes {fmt(x.owed)}</Text>
                 </View>
                 <TouchableOpacity accessibilityRole="button" onPress={() => mgrUnnote(cid, x.member_id, gid).then(() => { showToast('Note removed.', 'success'); load(); }).catch((e) => showToast(apiError(e, 'Could not remove.'), 'warn'))}>
-                  <Text style={p.remove}>Remove</Text>
+                  <Text style={p.remove}>Undo</Text>
                 </TouchableOpacity>
               </View>))}
           </Card>)}
 
         {unpaid.length > 0 && (
           <Card>
-            <Text style={p.cardTitle}>Someone cannot pay this round?</Text>
-            <MoreInfo>Only for a death or an emergency. Members will see the note, and the pool is paid out without that person's share.</MoreInfo>
-            <Btn ghost label="📝 Note an exception" onPress={() => go('MgrException')} style={{ marginBottom: 0 }} testID="payout-exception" />
+            <Text style={p.cardTitle}>Someone cannot pay this time?</Text>
+            <MoreInfo>Only for a death or an emergency. Write the reason here. Members will see it. The pool is paid out without that person's share.</MoreInfo>
+            <Btn ghost label="📝 Note a reason" onPress={() => go('MgrException')} style={{ marginBottom: 0 }} testID="payout-exception" />
           </Card>)}
       </>)}
 

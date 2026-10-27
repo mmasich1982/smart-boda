@@ -1,6 +1,6 @@
 // rider-app/src/screens/chama/ScheduleEditor.js
-// Schedule picker for a Merry-Go-Round circle. Used twice on the circle form: kind="contribution" (how often members
-// contribute) and kind="payout" (how often the pool is paid out, the default). Produces exactly the shapes the server validates
+// Schedule picker for a Merry-Go-Round round. Used twice: kind="contribution" (how often members pay: "Days when members pay")
+// and kind="payout" (when a member receives money: "Day when a member receives Money", the default). Produces exactly the shapes the server validates
 // (services/mgr_schedule.py):  daily{days} | weekly{day} | twice{days:[2]} | biweekly{start} | monthly{dom, fix} | special{dates}
 // Weekdays: 0 = Sunday ... 6 = Saturday.
 import React from 'react';
@@ -19,10 +19,14 @@ const isoOk = (v) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !isNaN(new Date(v));
 
 export const DEFAULT_SCHED = { type: 'weekly', day: 6 };
 
-/** Start a fresh schedule of a type, keeping what still makes sense. */
-export function switchType(prev, type) {
+/** The prototype's wording for the schedule types (Smart_Boda_Prototype_v44), in the order it shows them. */
+export const PAY_TYPES = [['daily', 'Every day'], ['weekly', 'Every week'], ['twice', 'Twice a week'], ['biweekly', 'Every 2 weeks'], ['monthly', 'Every month']];
+export const RECEIVE_TYPES = [['weekly', 'Every week'], ['biweekly', 'Every 2 weeks'], ['monthly', 'Every month'], ['daily', 'Every day'], ['twice', 'Twice a week']];
+
+/** Start a fresh schedule of a type, keeping what still makes sense. contrib = "every day" means all seven days (nothing to untick). */
+export function switchType(prev, type, contrib) {
   switch (type) {
-    case 'daily': return { type, days: [1, 2, 3, 4, 5, 6] };
+    case 'daily': return { type, days: contrib ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5, 6] };
     case 'weekly': return { type, day: prev?.day ?? 6 };
     case 'twice': return { type, days: [2, 4] };
     case 'biweekly': return { type, start: prev?.start || '' };
@@ -44,6 +48,7 @@ const pc = StyleSheet.create({
   txt: { fontSize: 13, fontWeight: '700', color: colors.ink },
   txtOn: { color: '#fff' },
   hint: { fontSize: 14, color: colors.inkSoft, lineHeight: 21, marginTop: 8 },
+  dayTitle: { fontWeight: '800', fontSize: 15, color: colors.ink, marginTop: 12 },
 });
 
 const DayChips = ({ value, onToggle }) => (
@@ -51,9 +56,12 @@ const DayChips = ({ value, onToggle }) => (
 
 /**
  * sched: current schedule object, onChange(newSched). flags = monthly_flags from the server (short months for dom >= 29).
- * kind: 'payout' (default) or 'contribution': only changes the wording.
+ * kind: 'payout' (default) or 'contribution': changes the wording (and "every day" for contributions means all seven days).
+ * types: the chips to offer, [[type, label], ...] (a schedule of another type that is already saved is added, so it never vanishes).
+ * copy: replaces the hint line of a schedule type, e.g. { daily: 'Members pay every day. Nothing to pick.' }.
+ * dayTitle: a heading ("Which day?") above the day chips of the weekly and twice-a-week schedules.
  */
-export default function ScheduleEditor({ sched, onChange, flags = [], kind = 'payout', title }) {
+export default function ScheduleEditor({ sched, onChange, flags = [], kind = 'payout', title, types, copy = {}, dayTitle }) {
   const sc = sched || DEFAULT_SCHED;
   const contrib = kind === 'contribution';
   const noun = contrib ? 'contribution' : 'payout';
@@ -68,16 +76,19 @@ export default function ScheduleEditor({ sched, onChange, flags = [], kind = 'pa
       {title
         ? <Text style={{ fontWeight: '800', fontSize: 15, color: colors.ink, marginBottom: 8 }}>{title}</Text>
         : <Text style={s.label}>{contrib ? 'HOW OFTEN DO MEMBERS CONTRIBUTE? *' : 'HOW OFTEN IS THE POOL PAID OUT? *'}</Text>}
-      <ChipRow>{SCHEDULE_TYPES.map(([k, l]) => <PChip key={k} on={sc.type === k} label={l} onPress={() => onChange(switchType(sc, k))} />)}</ChipRow>
+      <ChipRow>{((types || SCHEDULE_TYPES).some(([k]) => k === sc.type) ? (types || SCHEDULE_TYPES) : [...(types || SCHEDULE_TYPES), ...SCHEDULE_TYPES.filter(([k]) => k === sc.type)])
+        .map(([k, l]) => <PChip key={k} on={sc.type === k} label={l} onPress={() => onChange(switchType(sc, k, contrib))} />)}</ChipRow>
 
-      {sc.type === 'daily' && (<><View style={{ height: 6 }} /><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i)} /><Text style={pc.hint}>Untick the days with no {noun}, for example Sunday. You can also tap a date on the calendar.</Text></>)}
-      {sc.type === 'weekly' && (<><View style={{ height: 6 }} />
+      {sc.type === 'daily' && (contrib
+        ? <Text style={pc.hint}>{copy.daily || 'Members pay every day. Nothing to pick.'}</Text>
+        : (<><View style={{ height: 6 }} /><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i)} /><Text style={pc.hint}>{copy.daily || `Untick the days with no ${noun}, for example Sunday. You can also tap a date on the calendar.`}</Text></>))}
+      {sc.type === 'weekly' && (<>{!!dayTitle && <Text style={pc.dayTitle}>{dayTitle}</Text>}<View style={{ height: 6 }} />
         <ChipRow>{DAYS.map((d, i) => <PChip key={d} on={sc.day === i} label={d} onPress={() => onChange({ ...sc, day: i })} />)}</ChipRow>
-        <Text style={pc.hint}>Pick the {noun} day, or tap a date on the calendar.</Text></>)}
-      {sc.type === 'twice' && (<><View style={{ height: 6 }} /><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i, 2)} /><Text style={pc.hint}>Pick two days, for example Tue and Thu, or tap dates on the calendar.</Text></>)}
+        <Text style={pc.hint}>{copy.weekly || `Pick the ${noun} day, or tap a date on the calendar.`}</Text></>)}
+      {sc.type === 'twice' && (<>{!!dayTitle && <Text style={pc.dayTitle}>{dayTitle}</Text>}<View style={{ height: 6 }} /><DayChips value={sc.days || []} onToggle={(i) => toggleMany(i, 2)} /><Text style={pc.hint}>{copy.twice || 'Pick two days, for example Tue and Thu, or tap dates on the calendar.'}</Text></>)}
       {sc.type === 'biweekly' && (<><Text style={s.label}>{contrib ? 'FIRST CONTRIBUTION DATE *' : 'FIRST PAYOUT DATE *'}</Text>
         <MonthPicker selected={sc.start ? [sc.start] : []} onChange={(d) => onChange({ ...sc, start: d[0] })} />
-        <Text style={s.hint}>{isoOk(sc.start || '') ? `${niceDate(sc.start)}, then every 2 weeks.` : 'Then it repeats every 2 weeks.'}</Text></>)}
+        <Text style={s.hint}>{isoOk(sc.start || '') ? `${niceDate(sc.start)}, then every 2 weeks.` : (copy.biweekly || 'Then it repeats every 2 weeks.')}</Text></>)}
       {sc.type === 'monthly' && (<><Text style={s.label}>DATE EACH MONTH (1 TO 31) *</Text>
         <TextInput style={s.input} keyboardType="number-pad" value={String(sc.dom || '')} maxLength={2}
           onChangeText={(v) => onChange({ ...sc, dom: parseInt(v, 10) || 0, fix: {} })} />

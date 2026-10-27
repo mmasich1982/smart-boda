@@ -1,5 +1,5 @@
 // rider-app/src/screens/chama/MgrExceptionScreen.js
-// "Note an exception" (Smart_Boda_Prototype_v30): only for a death or an emergency. Members see the note, and the pool is
+// "Note a reason" (Smart_Boda_Prototype_v44): only for a death or an emergency. Members see the note, and the pool is
 // paid out without that person's share. Steps: who cannot pay -> what happened -> short note -> "I confirm this is genuine".
 import React, { useCallback, useState } from 'react';
 import { withChamaOnlineGate } from '../../components/ChamaOnlineGate';
@@ -37,15 +37,15 @@ function MgrExceptionScreen({ navigation }) {
     setBusy(true);
     try {
       await mgrNote(cid, { member_id: pickedWho, reason: why, note: note.trim() || undefined }, gid);
-      showToast('Noted. The payout can go ahead.', 'success');
+      showToast('Noted. Members can see it.', 'success');
       navigation.goBack();
     } catch (e) { showToast(apiError(e, 'Could not save. Check your connection.'), 'warn'); setBusy(false); }
   }
 
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
-      <BackLink onPress={() => navigation.goBack()} label="← Pay out the pool" />
-      <ScreenTitle>📝 Note an exception</ScreenTitle>
+      <BackLink onPress={() => navigation.goBack()} label="← Give Money to Member" />
+      <ScreenTitle>📝 Note a reason</ScreenTitle>
       <Text style={x.sub}>Only for a death or an emergency. Members will see this note.</Text>
       {d && !R && <Notice tone="amber" icon="⏳" title="No round is open yet" />}
       {R && unpaid.length === 0 && <Notice tone="green" icon="✅" title="Everyone has paid" sub="There is nobody to note." />}

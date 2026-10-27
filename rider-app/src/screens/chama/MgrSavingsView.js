@@ -1,7 +1,8 @@
 // rider-app/src/screens/chama/MgrSavingsView.js
-// One Merry-Go-Round GROUP in My Savings, laid out like Smart_Boda_Prototype_v25:
-//   hero (contribution due / sent / paid) -> Pay contribution -> contributions summary -> Members Payout Turns
-//   -> "Group rules" and "My Contribution history" links.
+// One Merry-Go-Round GROUP in My Savings, laid out like Smart_Boda_Prototype_v43:
+//   hero (This Round: Not Paid / Partly Paid · Payment Sent · Paid ✓) -> Pay for This Round -> details card
+//   (Next Member to Receive Money, Money collected so far, Members who have paid, My turns; the rest under "More details")
+//   -> Members Turns for Receiving Money -> "Group rules" and "My Payments History" links.
 // A group can run several circles (each with its own amount and schedule); circles are tabs when there is more than one.
 // The numbers come from /chama/mgr/me (via /chama/me/savings).
 import React, { useCallback, useEffect, useState } from 'react';
@@ -24,7 +25,7 @@ export default function MgrSavingsView({ navigation, group, reload }) {
   const { showToast } = useToast();
   const circles = group.circles || [];
   const [cid, setCid] = useState(null);
-  const [view, setView] = useState('mine');          // 'mine' | 'turns'  (Members Payout Turns)
+  const [view, setView] = useState('mine');          // 'mine' | 'turns'  (Members Turns for Receiving Money)
   const [activity, setActivity] = useState([]);
   const c = circles.find((x) => x.id === cid) || circles[0];
   // The server's result notices ("confirmed", "not accepted", payout, swaps) are marked as seen only AFTER this screen has loaded
@@ -97,15 +98,15 @@ export default function MgrSavingsView({ navigation, group, reload }) {
     {st.kind === 'due' && lastRej && (
       <Notice tone="red" icon="❌" title={`Your ${fmt(lastRej.amount)} payment was not accepted${lastRej.reason ? `: “${lastRej.reason}”` : ''}. Please pay again.`} />)}
 
-    {st.canPay && <Btn label={st.kind === 'paid' ? 'Pay another contribution' : '＋ Pay contribution'} ghost={st.kind === 'paid'} onPress={pay} testID="mgr-pay" />}
+    {st.canPay && st.kind !== 'paid' && <Btn label="＋ Pay for This Round" onPress={pay} testID="mgr-pay" />}
 
-    {st.payoutRows.length > 0 && <Card><DetailRows rows={st.payoutRows} /></Card>}
+    {st.payoutRows.length > 0 && <Card><DetailRows rows={st.payoutRows} max={4} foldKey={`mgr-savings|${group.group_id}|${c.id}`} /></Card>}
     {(c.notes || []).map((n) => (
       <Notice key={n.name} tone="amber" icon="📝" title={`${n.name}: ${n.reason}${n.note ? ` · ${n.note}` : ''}. The group has agreed, so the pool is paid out without it.`} />))}
 
-    <Btn ghost label="Members Payout Turns" onPress={() => setView('turns')} testID="mgr-turns" />
+    <Btn ghost label="Members Turns for Receiving Money" onPress={() => setView('turns')} testID="mgr-turns" />
     <TextLink label="Group rules" onPress={() => go('MgrRules')} />
-    <TextLink label="My Contribution history" onPress={() => go('MgrHistory')} />
+    <TextLink label="My Payments History" onPress={() => go('MgrHistory')} />
   </>);
 }
 

@@ -1,5 +1,5 @@
 // rider-app/src/screens/chama/MgrContributionsScreen.js
-// "Contributions" for the Treasurer of a Merry-Go-Round group (Smart_Boda_Prototype_v30):
+// "Confirm Received Payments" for the Treasurer of a Merry-Go-Round group (Smart_Boda_Prototype_v44):
 //   circle tabs -> "To confirm" card -> search -> one card per payment waiting -> "Received Contributions History".
 // A payment only exists once the member submitted "I've made the payment"; the Treasurer then confirms or rejects it.
 // Tapping a card opens the review screen. route.params: { groupId? }  (the group and circle also come from the Manage Chama choice)
@@ -49,7 +49,7 @@ function MgrContributionsScreen({ navigation, route }) {
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
       <BackLink onPress={() => navigation.navigate('ManageChama')} label="← Manage Chama" />
-      <ScreenTitle>📥 Contributions</ScreenTitle>
+      <ScreenTitle>📥 Confirm Received Payments</ScreenTitle>
       <GroupLine type="mgr" name={m.group?.group_name} />
       <CircleTabs m={m} />
 
