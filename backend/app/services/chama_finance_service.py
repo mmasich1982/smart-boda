@@ -44,11 +44,19 @@ def active_loan(db: Session, member_id):
     return db.query(ChamaLoan).filter_by(member_id=member_id, status="active").first()
 
 def borrowing(db: Session, member, cfg: ChamaConfig) -> dict:
+    """Borrowing power. Savings a member has COMMITTED as loan security (their own pledge, or savings they back someone else with)
+    cannot be borrowed against, so only the uncommitted part of their savings counts toward the limit:
+        limit     = (savings - committed savings) x borrowing multiple
+        available = limit - balance still owed on a running loan
+    e.g. savings 30,000, all of it pledged to their own loan -> limit 0.  Savings 20,000 with 10,000 backing another member -> the limit
+    is worked out on 10,000."""
+    from app.services.tb_security import locked_savings        # imported here: tb_security imports this module
     sav = Decimal(savings_of(db, member.id))
-    limit = sav * Decimal(cfg.max_loan_multiple)
+    committed = min(sav, Decimal(locked_savings(db, member.id)))
+    limit = (sav - committed) * Decimal(cfg.max_loan_multiple)
     loan = active_loan(db, member.id)
     balance = (loan.total - loan.paid) if loan else ZERO
-    return {"savings": sav, "limit": limit, "balance": balance, "available": max(ZERO, limit - balance)}
+    return {"savings": sav, "committed": committed, "limit": limit, "balance": balance, "available": max(ZERO, limit - balance)}
 
 def pool_cash(db: Session, group_id, cfg: ChamaConfig) -> Decimal:
     """Cash the group can lend now = opening pool + money in - money out."""
@@ -75,9 +83,10 @@ def eligibility(db: Session, member, cfg, group) -> dict:
     if cfg.min_contributions_for_loan and count < cfg.min_contributions_for_loan:
         why.append(f"You need at least {cfg.min_contributions_for_loan} confirmed contributions (you have {count}).")
     if b["available"] < cfg.min_loan_amount:
-        why.append(f"Your available limit is below the minimum loan of KSh {cfg.min_loan_amount:,.0f}.")
+        why.append(f"Your available limit is below the minimum loan of KSh {cfg.min_loan_amount:,.0f}."
+                   + (f" KSh {b['committed']:,.0f} of your savings is committed as loan security, so it does not count toward your limit." if b["committed"] > 0 else ""))
     return {"eligible": not why, "blockers": why, "savings": b["savings"], "opening_savings": member.opening_savings,
-            "limit": b["limit"], "multiple": cfg.max_loan_multiple, "available": b["available"],
+            "limit": b["limit"], "multiple": cfg.max_loan_multiple, "available": b["available"], "committed_savings": b["committed"],
             "confirmed_contributions": count, "required_contributions": cfg.min_contributions_for_loan,
             "last_contribution_at": last.isoformat() if last else None}
 

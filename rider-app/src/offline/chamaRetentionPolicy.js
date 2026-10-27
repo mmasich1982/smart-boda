@@ -12,7 +12,7 @@
  * └─ IndexedDB (device, 6-month rolling window)
  *    ├─ chamaRecords (store)           : one row per history item
  *    │    collections: contribution | loan_payment |
- *    │                 group_ledger | notification | mgr_contribution
+ *    │                 group_ledger | notification | mgr_contribution | tb_history
  *    ├─ chama_snapshot_${riderId}_${key}: last good server answer for a screen (summary, board, state …)
  *    ├─ chama_membership_${riderId}     : has_group / group_type / roles (drives the Home tiles)
  *    └─ chama_retention_config_${riderId}: lastCleanupAt, nextCleanupAt, lastCleanupResult
@@ -68,6 +68,7 @@ export const CHAMA_COLLECTIONS = [
   'group_ledger',
   'notification',
   'mgr_contribution',   // My Contribution History (Merry-Go-Round): same six-month window; "Since Joining" is read from the server
+  'tb_history',         // My Payments History (Table Banking: savings + loan repayments): same six-month window; "Since Joining" is read from the server
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;

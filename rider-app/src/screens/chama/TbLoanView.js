@@ -51,7 +51,10 @@ export default function TbLoanView({ navigation, groupId }) {
           <Text style={s.cardTitle}>📒 My Borrowing Power</Text>
           <Text style={s.big}>{fmt(d.available)}</Text><Text style={s.hint}>available to borrow</Text>
           <View style={s.row}><Text style={s.k}>Table Banking savings</Text><Text style={s.v}>{fmt(d.savings)}</Text></View>
-          <View style={[s.row, { borderBottomWidth: 0 }]}><Text style={s.k}>Borrowing limit ({d.rules.multiple}× savings)</Text><Text style={s.v}>{fmt(d.limit)}</Text></View>
+          {Number(d.committed_savings) > 0 && (
+            <View style={s.row}><Text style={s.k}>🔒 Committed as loan security</Text><Text style={s.v}>− {fmt(d.committed_savings)}</Text></View>)}
+          <View style={[s.row, { borderBottomWidth: 0 }]}><Text style={s.k}>Borrowing limit ({d.rules.multiple}× uncommitted savings)</Text><Text style={s.v}>{fmt(d.limit)}</Text></View>
+          {Number(d.committed_savings) > 0 && <Text style={s.hint}>Savings you have committed to a loan (yours or someone you back) cannot be borrowed against until that loan is repaid.</Text>}
         </View>
 
         {A && (
@@ -104,7 +107,9 @@ export default function TbLoanView({ navigation, groupId }) {
         {!L && !A && (<>
           <View style={[s.card, { borderColor: d.eligibility.eligible ? colors.signalGreen : colors.signalAmber }]}>
             <Text style={s.cardTitle}>{d.eligibility.eligible ? '✅ You can borrow' : '⏳ Not eligible yet'}</Text>
-            {[['Savings (incl. opening balance)', fmt(d.eligibility.savings)], [`Borrowing limit (${d.eligibility.multiple}× savings)`, fmt(d.eligibility.limit)],
+            {[['Savings (incl. opening balance)', fmt(d.eligibility.savings)],
+              ...(Number(d.eligibility.committed_savings) > 0 ? [['🔒 Committed as loan security', `− ${fmt(d.eligibility.committed_savings)}`]] : []),
+              [`Borrowing limit (${d.eligibility.multiple}× uncommitted savings)`, fmt(d.eligibility.limit)],
               ['Available to borrow', fmt(d.eligibility.available)],
               ['Confirmed contributions', d.eligibility.required_contributions ? `${d.eligibility.confirmed_contributions} of ${d.eligibility.required_contributions} needed` : String(d.eligibility.confirmed_contributions)]]
               .map(([k, v]) => <View key={k} style={s.row}><Text style={s.k}>{k}</Text><Text style={s.v}>{v}</Text></View>)}
@@ -116,13 +121,9 @@ export default function TbLoanView({ navigation, groupId }) {
 
         <TouchableOpacity onPress={() => navigation.navigate('GroupLoans', { groupId: d.group_id })}>
           <Text style={{ color: colors.bodaOrange, fontWeight: '800', marginVertical: 12 }}>👥 See who is borrowing in this group ›</Text></TouchableOpacity>
-        <Text style={[s.cardTitle, { marginTop: 4 }]}>Repayments</Text>
-        {d.payments.length === 0 && <Text style={s.hint}>No repayments yet.</Text>}
-        {d.payments.map((p) => (
-          <View key={p.id} style={s.card}>
-            <View style={s.row}><Text style={s.v}>{fmt(p.amount)} · {p.method === 'cash' ? '💵 Cash' : '📱 M-Pesa'}</Text><StatusBadge label={p.status} color={COLOR[p.status]} /></View>
-            {p.status === 'rejected' && <Text style={[s.hint, { color: colors.signalRed }]}>Reason: {p.reason}. Please speak to your Treasurer or submit again.</Text>}
-          </View>))}
+        <TouchableOpacity testID="open-repayments" onPress={() => navigation.navigate('TbHistory', { groupId: d.group_id, kind: 'loan_repayment' })}>
+          <Text style={{ color: colors.bodaOrange, fontWeight: '800', marginVertical: 6 }}>📈 My Repayment History ›</Text></TouchableOpacity>
+        <Text style={s.hint}>Your loan repayments by month, with totals. Saved on your phone, so it also opens offline.</Text>
       </>)}
     </>);
 }

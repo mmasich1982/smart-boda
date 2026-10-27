@@ -52,6 +52,7 @@ import SwapRequestScreen from '../screens/chama/SwapRequestScreen';
 import MgrSwapsScreen from '../screens/chama/MgrSwapsScreen';
 import MgrRulesScreen from '../screens/chama/MgrRulesScreen';
 import MgrHistoryScreen from '../screens/chama/MgrHistoryScreen';
+import TbHistoryScreen from '../screens/chama/TbHistoryScreen';
 import MgrPaySubmittedScreen from '../screens/chama/MgrPaySubmittedScreen';
 import MgrContributionsScreen from '../screens/chama/MgrContributionsScreen';
 import MgrContributionDetailScreen from '../screens/chama/MgrContributionDetailScreen';
@@ -512,6 +513,7 @@ export const MainNavigator = () => {
       <Stack.Screen name="MgrSwaps" component={MgrSwapsScreen} />
       <Stack.Screen name="MgrRules" component={MgrRulesScreen} />
       <Stack.Screen name="MgrHistory" component={MgrHistoryScreen} />
+      <Stack.Screen name="TbHistory" component={TbHistoryScreen} />
       <Stack.Screen name="MgrPaySubmitted" component={MgrPaySubmittedScreen} />
       <Stack.Screen name="MgrContributions" component={MgrContributionsScreen} />
       <Stack.Screen name="MgrContributionDetail" component={MgrContributionDetailScreen} />

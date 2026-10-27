@@ -4,13 +4,14 @@
 A rider can belong to SEVERAL groups at once (Merry-Go-Round and Table Banking, run by different Treasurers).
 Every route that depends on a group takes an optional ?group_id=. Without it the rider's oldest matching membership is used,
 so older app versions keep working."""
-from datetime import date
+import uuid as _uuid
+from datetime import date, datetime
 from uuid import UUID as RowId   # NOT "UUID": star-imports of the models bring SQLAlchemy's UUID column type into scope
 from decimal import Decimal
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import or_
+from sqlalchemy import or_, func, tuple_, literal, DateTime
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth import get_current_rider
@@ -168,7 +169,7 @@ def summary(group_id: Optional[RowId] = GID, db: Session = Depends(get_db), ride
         "eligibility": eligibility(db, m, cfg, g),
         "savings": b["savings"], "locked": tbs.locked_savings(db, m.id), "free": tbs.free_savings(db, m),
         "savings_pledge_max": tbs.savings_pledge_max(db, m, sec),
-        "limit": b["limit"], "available": b["available"],
+        "limit": b["limit"], "available": b["available"], "committed_savings": b["committed"],
         "pending_contributions_total": sum((Decimal(c.amount) for c in pend), ZERO),
         "loan": loan and {"reference": loan.reference, "principal": loan.principal, "interest": loan.interest,
             "total": loan.total, "paid": loan.paid, "balance": loan.total - loan.paid,
@@ -183,6 +184,92 @@ def summary(group_id: Optional[RowId] = GID, db: Session = Depends(get_db), ride
             "reason": c.reject_reason, "at": c.submitted_at.isoformat()} for c in hist],
         "payments": [{"id": str(p.id), "amount": p.amount, "method": p.method, "status": p.status,
             "reason": p.reject_reason, "at": p.submitted_at.isoformat()} for p in pays]}
+
+# ───────────────────────────── my payments history (Table Banking) ─────────────────────────────
+# Every payment a member has made in ONE Table Banking group, in two categories:
+#   savings          a contribution into the group's savings
+#   loan_repayment   a repayment of the member's loan
+# `at` is the day the Treasurer decided the payment (or, while it is still waiting, the day it was sent), so a payment counts in the
+# month it was CONFIRMED. The server keeps everything for ever; the phone keeps six months (see offline/chamaTbHistoryRepository.js).
+def _tb_history_sources(db, m, kind, status):
+    out = []
+    if kind in (None, "savings"):
+        upd = func.coalesce(ChamaContribution.decided_at, ChamaContribution.submitted_at)
+        q = db.query(ChamaContribution, upd.label("upd")).filter(ChamaContribution.member_id == m.id, ChamaContribution.round_id.is_(None))
+        if status: q = q.filter(ChamaContribution.status == status)
+        out.append(("savings", ChamaContribution, upd, q))
+    if kind in (None, "loan_repayment"):
+        upd = func.coalesce(ChamaLoanPayment.decided_at, ChamaLoanPayment.submitted_at)
+        q = db.query(ChamaLoanPayment, upd.label("upd")).filter(ChamaLoanPayment.member_id == m.id)
+        if status: q = q.filter(ChamaLoanPayment.status == status)
+        out.append(("loan_repayment", ChamaLoanPayment, upd, q))
+    return out
+
+def _tb_history_item(kind, row, upd):
+    return {"id": str(row.id), "kind": kind, "reference": row.reference, "amount": row.amount, "method": row.method,
+            "status": row.status, "reason": row.reject_reason, "submitted_at": row.submitted_at.isoformat() if row.submitted_at else None,
+            "at": upd.isoformat()}
+
+def _parse_cursor(since):
+    """'S:iso|id;L:iso|id' -> {'savings': (time, id), 'loan_repayment': (time, id)}. A kind with no entry has no cursor yet."""
+    out = {}
+    for part in filter(None, (since or "").split(";")):
+        try:
+            k, _, rest = part.partition(":"); tm, _, i = rest.partition("|")
+            out[{"S": "savings", "L": "loan_repayment"}[k]] = (datetime.fromisoformat(tm), _uuid.UUID(i))
+        except Exception:
+            raise HTTPException(422, "That cursor is not valid.")
+    return out
+
+@router.get("/history")
+def my_history(group_id: Optional[RowId] = GID, kind: Optional[Literal["savings", "loan_repayment"]] = None,
+               status: Optional[Literal["pending", "confirmed", "rejected"]] = None,
+               since: Optional[str] = Query(None, description="Cursor from the previous page. Only payments that changed after it."),
+               from_ts: Optional[datetime] = Query(None, description="Only payments dated on or after this moment"),
+               to_ts: Optional[datetime] = Query(None, description="Only payments dated before this moment"),
+               order: Literal["asc", "desc"] = "asc", limit: int = Query(100, ge=1, le=200), offset: int = Query(0, ge=0, le=5000),
+               db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
+    """The rider's own payments in one Table Banking group (savings contributions and loan repayments), with NO cap on how far back.
+      • sync   (order=asc, since=cursor): what is new or changed since the phone last asked; the cursor continues from there.
+      • browse (order=desc, offset, optional kind/status/from_ts/to_ts): the whole history page by page, newest first."""
+    m, g, cfg = _ctx(db, rider, "tb", group_id)
+    cursors = _parse_cursor(since)
+    sources = _tb_history_sources(db, m, kind, status)
+    total, merged, more, next_c = 0, [], False, dict(cursors)
+    for k, M, upd, q in sources:
+        if from_ts: q = q.filter(upd >= from_ts)
+        if to_ts: q = q.filter(upd < to_ts)
+        if order == "asc" and k in cursors:
+            c_time, c_id = cursors[k]
+            q = q.filter(tuple_(upd, M.id) > tuple_(literal(c_time, DateTime(timezone=True)), literal(c_id, M.id.type)))
+        total += q.count()
+        q = q.order_by(upd.desc(), M.id.desc()) if order == "desc" else q.order_by(upd, M.id)
+        take = (offset + limit + 1) if order == "desc" else (limit + 1)
+        rows = q.limit(take).all()
+        if order == "asc":
+            if len(rows) > limit: more = True; rows = rows[:limit]
+            if rows: next_c[k] = (rows[-1][1], rows[-1][0].id)
+        merged += [(u, str(r.id), k, r) for r, u in rows]
+    merged.sort(key=lambda x: (x[0], x[1]), reverse=(order == "desc"))
+    if order == "desc":
+        page = merged[offset:offset + limit]; more = len(merged) > offset + limit
+    else:
+        page = merged
+    cur = ";".join(f"{ {'savings': 'S', 'loan_repayment': 'L'}[k] }:{v[0].isoformat()}|{v[1]}" for k, v in next_c.items())
+    return {"items": [_tb_history_item(k, r, u) for u, _, k, r in page], "next_cursor": cur or since, "has_more": more, "total": total}
+
+@router.get("/history/summary")
+def my_history_summary(group_id: Optional[RowId] = GID, db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
+    """Confirmed payments since joining, per category: the "Since Joining" figures, however old they are."""
+    m, g, cfg = _ctx(db, rider, "tb", group_id)
+    out, first = {"savings": {"count": 0, "total": 0}, "loan_repayment": {"count": 0, "total": 0}}, None
+    for k, M, upd, q in _tb_history_sources(db, m, None, "confirmed"):
+        sub = q.with_entities(M.amount, upd.label("u")).subquery()
+        n, tot, f = db.query(func.count(), func.coalesce(func.sum(sub.c.amount), 0), func.min(sub.c.u)).select_from(sub).one()
+        out[k] = {"count": int(n), "total": tot}
+        if f and (first is None or f < first): first = f
+    out["first_at"] = first.isoformat() if first else None
+    return out
 
 @router.get("/loans")
 def my_loans(db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):

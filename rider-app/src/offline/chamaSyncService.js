@@ -16,6 +16,7 @@ import { addToSyncQueue } from './syncQueue';
 import { getLocalRiderId, getLocalAuthToken } from './db';
 import { isOnlineNow } from './chamaConnectivity';
 import { syncAllMgrHistory } from './chamaMgrHistorySync';
+import { syncAllTbHistory } from './chamaTbHistorySync';
 import { saveMembership, getMembership, runRetentionCleanup, clearChamaData } from './chamaRepository';
 
 // ---------------------------------------------------------------------------
@@ -104,8 +105,9 @@ export async function runChamaSyncCycle() {
     if (!online) return { online: false };
     const refreshed = await refreshMembership();
     const mgrHistory = await syncAllMgrHistory();                // My Contribution History: only what changed, at most every 15 minutes per group
+    const tbHistory = await syncAllTbHistory();                  // My Payments History (Table Banking): same rules
     const cleanup = await runRetentionCleanup({ online: true }); // weekly; returns {skipped:true} when not due
-    return { online: true, membershipOk: refreshed.ok, membershipChanged: refreshed.changed, mgrHistory, cleanup };
+    return { online: true, membershipOk: refreshed.ok, membershipChanged: refreshed.changed, mgrHistory, tbHistory, cleanup };
   } catch (err) {
     console.warn('⚠️ [chamaSync] cycle error (non-fatal):', err?.message);
     return { online: false, error: err?.message };

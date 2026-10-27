@@ -72,6 +72,9 @@ export const mgrPreview = (b, groupId) => api.post('/chama/mgr/preview', b, G(gr
 // ── My Contribution History (Merry-Go-Round): what the phone syncs and what "Since Joining" reads (see offline/chamaMgrHistorySync.js).
 export const mgrContributionsPage = (groupId, params) => api.get('/chama/mgr/me/contributions', { params: { group_id: groupId, ...params } }).then(data);
 export const mgrContributionsSummary = (groupId, circleId) => api.get('/chama/mgr/me/contributions/summary', { params: { group_id: groupId, circle_id: circleId || undefined } }).then(data);
+// ── My Payments History (Table Banking): what the phone syncs and what "Since Joining" reads (see offline/chamaTbHistorySync.js).
+export const tbHistoryPage = (groupId, params) => api.get('/chama/me/history', { params: { group_id: groupId, ...params } }).then(data);
+export const tbHistorySummary = (groupId) => api.get('/chama/me/history/summary', { params: { group_id: groupId } }).then(data);
 export const mgrUpdateCircle = (circleId, b, groupId) => api.put(`/chama/mgr/circles/${circleId}`, b, G(groupId)).then(data);
 export const mgrDeleteCircle = (circleId, groupId) => api.delete(`/chama/mgr/circles/${circleId}`, G(groupId)).then(data);
 export const mgrSetPerson = (circleId, memberId, hands, groupId) => api.put(`/chama/mgr/circles/${circleId}/people/${memberId}`, { hands }, G(groupId)).then(data);

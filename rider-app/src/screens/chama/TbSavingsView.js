@@ -1,21 +1,19 @@
 // rider-app/src/screens/chama/TbSavingsView.js
 // Table Banking savings of ONE group: what I have saved, what is locked as loan security, what is free, the group's
 // contribution rule, pay contribution, history.
-import React, { useCallback, useState } from 'react';
-import { View, Text } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import PrimaryButton from '../../components/PrimaryButton';
-import StatusBadge from '../../components/StatusBadge';
 import { mySummary, completeSeen, apiError } from '../../api/groupsClient';
 import { s, fmt } from './chamaStyles';
-import { niceDate } from './common';
+import { registerTbHistoryGroup } from '../../offline/chamaTbHistorySync';
 import colors from '../../theme/colors';
-
-const COLOR = { pending: 'amber', confirmed: 'green', rejected: 'red' };   // StatusBadge takes a NAME: green | amber | red | grey
 
 export default function TbSavingsView({ navigation, groupId }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
+  useEffect(() => { registerTbHistoryGroup(groupId).catch(() => {}); }, [groupId]);   // keep this group's payments history up to date in the background
   useFocusEffect(useCallback(() => {
     mySummary(groupId).then((r) => { setD(r); setErr(null); completeSeen(['contribution_confirmed', 'contribution_rejected']); })
       .catch((e) => setErr(apiError(e, 'Could not load. Check your connection.')));
@@ -51,14 +49,9 @@ export default function TbSavingsView({ navigation, groupId }) {
         </View>
         <PrimaryButton label="Pay Contribution →"
           onPress={() => navigation.navigate('ChamaPay', { kind: 'contribution', amount: d.category?.amount, treasurer: d.treasurer, groupId: d.group_id })} />
-        <Text style={[s.cardTitle, { marginTop: 14 }]}>History</Text>
-        {d.contributions.length === 0 && <Text style={s.hint}>No contributions yet.</Text>}
-        {d.contributions.map((c) => (
-          <View key={c.id} style={s.card}>
-            <View style={s.row}><Text style={s.v}>{fmt(c.amount)} · {c.method === 'cash' ? '💵 Cash' : '📱 M-Pesa'}</Text><StatusBadge label={c.status} color={COLOR[c.status]} /></View>
-            <Text style={s.hint}>{niceDate(c.at)}</Text>
-            {c.status === 'rejected' && <Text style={[s.hint, { color: colors.signalRed }]}>Reason: {c.reason}</Text>}
-          </View>))}
+        <TouchableOpacity testID="open-history" onPress={() => navigation.navigate('TbHistory', { groupId: d.group_id, kind: 'savings' })}>
+          <Text style={{ color: colors.bodaOrange, fontWeight: '800', marginVertical: 14 }}>📈 My Payments History ›</Text></TouchableOpacity>
+        <Text style={s.hint}>Your contributions and loan repayments by month, with totals. Saved on your phone, so it also opens offline.</Text>
       </>)}
     </>);
 }
