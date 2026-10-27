@@ -13,9 +13,10 @@ from app.models.rider import Rider
 from app.models.boda_group import BodaGroup, GroupMember, GroupSlotRequest, AppNotification
 from app.models.chama_finance import ChamaCategory, ChamaConfig, ChamaLoan, ChamaMgrCircle, ChamaMgrHand
 from app.models.location_models import County, SubCounty, Ward
-from app.services.group_member_link_service import find_rider_id_by_mobile, mask_phone
+from app.services.group_member_link_service import find_rider_id_by_mobile
 from app.services.group_roles import phone_key
 from app.services.chama_finance_service import new_ref, ensure_config
+from app.services import mgr_engine as MGR
 from app.services import slot_pool_service as POOL
 from app.services.group_roles import treasurer_group, treasurer_groups, same_phone
 import os, re
@@ -36,8 +37,7 @@ class CodeIn(BaseModel):
     group_code: str = Field(min_length=4, max_length=12)
 
 class CircleSeat(BaseModel):
-    circle_id: UUID
-    hands: int = Field(default=1, ge=1, le=2)                              # 2 = double turn
+    circle_id: UUID                                                        # which circle the member joins (one turn each)
 
 class MemberIn(BaseModel):
     full_name: str = Field(min_length=3, max_length=80)
@@ -49,12 +49,23 @@ class MemberIn(BaseModel):
     loan_outstanding: Optional[Decimal] = Field(default=None, gt=0, le=10000000)
     loan_interest_outstanding: Optional[Decimal] = Field(default=None, ge=0, le=10000000)
     loan_due_date: Optional[date] = None
-    circles: Optional[list["CircleSeat"]] = None                          # Merry-Go-Round: which circles, single or double turn
+    circles: Optional[list["CircleSeat"]] = None                          # Merry-Go-Round: which circles the member joins
     @field_validator("phone")
     @classmethod
     def _phone(cls, v):
         v = re.sub(r"[\s-]", "", v)
         if not PHONE_RE.match(v):                                        # FORMAT ONLY
+            raise ValueError("Enter a valid mobile number, e.g. 0712345678.")
+        return v
+
+class MemberEditIn(BaseModel):
+    full_name: str = Field(min_length=3, max_length=80)
+    phone: str
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, v):
+        v = re.sub(r"[\s-]", "", v)
+        if not PHONE_RE.match(v):
             raise ValueError("Enter a valid mobile number, e.g. 0712345678.")
         return v
 
@@ -132,8 +143,8 @@ def list_members(group_id: Optional[RowId] = Query(None), db: Session = Depends(
     seats = {}
     for h, c in db.query(ChamaMgrHand, ChamaMgrCircle).join(ChamaMgrCircle, ChamaMgrCircle.id == ChamaMgrHand.circle_id)\
                   .filter(ChamaMgrCircle.group_id == g.id).all():
-        d = seats.setdefault(h.member_id, {}).setdefault(c.id, {"circle_id": str(c.id), "circle": c.name, "hands": 0, "turns": []})
-        d["hands"] += 1; d["turns"].append(h.turn_no)
+        d = seats.setdefault(h.member_id, {}).setdefault(c.id, {"circle_id": str(c.id), "circle": c.name, "turns": []})
+        d["turns"].append(h.turn_no)
     return [{"id": str(m.id), "full_name": m.full_name, "phone": m.phone,
              "link_status": m.link_status,
              "category_id": str(m.category_id) if m.category_id else None,
@@ -185,7 +196,7 @@ def add_member(body: MemberIn, group_id: Optional[RowId] = Query(None), db: Sess
         for seat in body.circles or []:                                  # optional: put the member in a circle right away
             c = db.query(ChamaMgrCircle).filter_by(id=seat.circle_id, group_id=g.id).first()
             if not c: raise HTTPException(422, "Choose a circle of this group.")
-            seats.append((c, seat.hands))
+            seats.append(c)
 
     linked = find_rider_id_by_mobile(db, body.phone)                     # mobile-number match
     now = datetime.now(timezone.utc)
@@ -203,12 +214,11 @@ def add_member(body: MemberIn, group_id: Optional[RowId] = Query(None), db: Sess
             interest=body.loan_interest_outstanding, opening_interest=body.loan_interest_outstanding,
             total=body.loan_outstanding, installment=body.loan_outstanding, paid=0,
             status="active", is_migrated=True, due_date=body.loan_due_date, disbursed_at=now))
-    for c, hands in seats:                                               # new people join a running circle from its next cycle
+    for c in seats:                                                      # new people join a running circle from its next cycle
         top = db.query(func.max(ChamaMgrHand.turn_no)).filter_by(circle_id=c.id).scalar() or 0
-        for no in range(1, hands + 1):
-            running = c.status == "active"
-            db.add(ChamaMgrHand(circle_id=c.id, member_id=m.id, hand_no=no,
-                                turn_no=None if running else top + no, joins_next_cycle=running))
+        running = c.status == "active"
+        db.add(ChamaMgrHand(circle_id=c.id, member_id=m.id, hand_no=1,
+                            turn_no=None if running else top + 1, joins_next_cycle=running))
     _complete(db, recipient_type="rider", recipient_id=rider.id, kind="slot_request_approved")
     try:
         db.commit()
@@ -217,6 +227,53 @@ def add_member(body: MemberIn, group_id: Optional[RowId] = Query(None), db: Sess
         raise HTTPException(409, "This member could not be saved because another change happened at the same time. Try again.")
     return {"id": str(m.id), "link_status": m.link_status,
             "slots_available": POOL.pool_allowance(db, g) - _used(db, g)}
+
+@router.put("/mine/members/{member_id}")
+def edit_member(member_id: RowId, body: MemberEditIn, group_id: Optional[RowId] = Query(None), db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
+    """Edit a member's name and phone number (fix a typo or a new number). Allowed at any time: it never touches money or turns."""
+    g = _my_group(db, rider, lock=True, group_id=group_id)
+    m = db.query(GroupMember).filter_by(id=member_id, group_id=g.id, status="active").first()
+    if not m: raise HTTPException(404, "That member is not in this group.")
+    key = phone_key(body.phone)
+    if db.query(GroupMember.id).filter(GroupMember.group_id == g.id, GroupMember.phone_key == key, GroupMember.status == "active",
+                                       GroupMember.id != m.id).first():
+        raise HTTPException(409, "That phone number belongs to another member.")
+    if key != m.phone_key and not POOL.has_slot(db, g, key) and _used(db, g) - (1 if not _other_use(db, g, m) else 0) >= POOL.pool_allowance(db, g):
+        raise HTTPException(409, "Member limit reached. Request more slots to use a new phone number.")
+    m.full_name = body.full_name.strip()
+    if key != m.phone_key or body.phone != m.phone:
+        linked = find_rider_id_by_mobile(db, body.phone)               # a new number may belong to a different rider account
+        m.phone, m.phone_key = body.phone, key
+        m.linked_rider_id, m.link_status = linked, "linked" if linked else "awaiting_signup"
+        m.linked_at = datetime.now(timezone.utc) if linked else None
+    try: db.commit()
+    except IntegrityError:
+        db.rollback(); raise HTTPException(409, "That phone number belongs to another member.")
+    return {"id": str(m.id), "full_name": m.full_name, "phone": m.phone, "link_status": m.link_status}
+
+def _other_use(db, g, m) -> bool:
+    """True when the member's old number still holds a slot through the paired group (so changing it frees nothing)."""
+    ids = [x.id for x in POOL.pool_groups(db, g)]
+    return db.query(GroupMember.id).filter(GroupMember.group_id.in_(ids), GroupMember.phone_key == m.phone_key,
+                                           GroupMember.status == "active", GroupMember.id != m.id).first() is not None
+
+@router.delete("/mine/members/{member_id}")
+def remove_member(member_id: RowId, group_id: Optional[RowId] = Query(None), db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
+    """Remove a member from the group. Their place becomes free again (so Add New Member shows again).
+    Merry-Go-Round only, and never while a round that they are part of is running (see mgr_engine.remove_from_circle).
+    The record is kept (status "removed") so payments and payouts they were part of stay in the history."""
+    g = _my_group(db, rider, lock=True, group_id=group_id)
+    cfg = db.get(ChamaConfig, g.id)
+    if not cfg or cfg.chama_type != "mgr":
+        raise HTTPException(409, "Members can be removed here only in a Merry-Go-Round.")
+    m = db.query(GroupMember).filter_by(id=member_id, group_id=g.id, status="active").first()
+    if not m: raise HTTPException(404, "That member is not in this group.")
+    for c in db.query(ChamaMgrCircle).filter_by(group_id=g.id).with_for_update().all():
+        if db.query(ChamaMgrHand.id).filter_by(circle_id=c.id, member_id=m.id).first():
+            MGR.remove_from_circle(db, c, m.id)
+    m.status = "removed"
+    db.commit()
+    return {"ok": True, "slots_available": POOL.pool_allowance(db, g) - _used(db, g)}
 
 @router.post("/mine/slot-requests", status_code=201)
 def request_slots(body: SlotReqIn, group_id: Optional[RowId] = Query(None), db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):

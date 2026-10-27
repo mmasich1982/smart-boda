@@ -6,7 +6,7 @@ import BackLink from '../../components/BackLink';
 import FormField from '../../components/FormField';
 import PrimaryButton from '../../components/PrimaryButton';
 import { useToast } from '../../components/Toast';
-import { addMember, chamaConfig, mgrCircles, apiError } from '../../api/groupsClient';
+import { addMember, chamaConfig, mgrCircles, getMyGroup, apiError } from '../../api/groupsClient';
 import { s, Chip } from './chamaStyles';
 import { useGroupText } from './groupText';
 
@@ -24,7 +24,8 @@ function AddChamaMemberScreen({ navigation, route }) {
   const [hasLoan, setHasLoan] = useState(null);              // mandatory yes / no
   const [principal, setPrincipal] = useState(''), [owed, setOwed] = useState(''), [interest, setInterest] = useState(''), [due, setDue] = useState('');
   const [circles, setCircles] = useState([]);              // Merry-Go-Round: the circles in this group
-  const [seats, setSeats] = useState({});                   // circle_id -> 0 (not in it) | 1 (single) | 2 (double turn)
+  const [seats, setSeats] = useState({});                   // circle_id -> true when the member joins that circle
+  const [slots, setSlots] = useState(null);                 // places left in the group (null until known)
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     chamaConfig(groupId).then((r) => {
@@ -33,7 +34,9 @@ function AddChamaMemberScreen({ navigation, route }) {
       if (t === 'mgr') mgrCircles(groupId).then((x) => setCircles(x.circles)).catch(() => {});
     }).catch(() => {});
   }, [groupId]);
+  useEffect(() => { getMyGroup(groupId).then((g) => setSlots(Number(g.slots_available))).catch(() => {}); }, [groupId]);
   const tb = type === 'tb';
+  const full = slots !== null && slots <= 0;                   // every place is used: the form is not shown until a place is free
 
   async function save() {
     const p = phone.replace(/[\s-]/g, '');
@@ -51,7 +54,7 @@ function AddChamaMemberScreen({ navigation, route }) {
         Object.assign(body, { loan_principal: num(principal), loan_outstanding: num(owed), loan_interest_outstanding: num(interest), loan_due_date: due });
       }
     } else {
-      const picked = Object.entries(seats).filter(([, h]) => h > 0).map(([circle_id, hands]) => ({ circle_id, hands }));
+      const picked = Object.entries(seats).filter(([, on]) => on).map(([circle_id]) => ({ circle_id }));
       if (picked.length) body.circles = picked;
     }
     setBusy(true);
@@ -70,6 +73,14 @@ function AddChamaMemberScreen({ navigation, route }) {
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
       <BackLink onPress={() => navigation.goBack()} />
       <Text style={s.title}>➕ {gt('group.title_add_member', 'Add Chama Member')}</Text>
+      {full ? (
+        <View style={s.card} testID="members-full">
+          <Text style={s.cardTitle}>🚫 Your group is full</Text>
+          <Text style={s.hint}>All the places in your group are used, so a new member cannot be added now. You can add someone again when the Smart Boda Admin gives your group more places, or when you remove a member.</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('RequestChamaSlots', { groupId })} style={[s.chip, { alignItems: 'center', marginTop: 10 }]} accessibilityRole="button">
+            <Text style={{ fontWeight: '700' }}>📈 Request More Places in Your Group</Text></TouchableOpacity>
+        </View>
+      ) : (<>
       {tb && cats.length > 0 && (
         <View style={s.card}><Text style={s.cardTitle}>1 · Select Chama Category</Text>
           <View style={s.chipRow}>{cats.map((c) => <Chip key={c.id} on={cat === c.id} label={`${cat === c.id ? '✓ ' : ''}${c.freq} · KSh ${Math.round(c.amount).toLocaleString()}`} onPress={() => setCat(c.id)} />)}</View></View>)}
@@ -100,12 +111,13 @@ function AddChamaMemberScreen({ navigation, route }) {
             <View key={c.id} style={{ marginBottom: 8 }}>
               <Text style={{ fontWeight: '700' }}>{c.name} · KSh {Math.round(Number(c.amount)).toLocaleString()}{c.contrib_label ? ` · ${c.contrib_label}` : ''} · {c.contrib_label ? 'paid out ' : ''}{c.sched_label || 'days not set'}</Text>
               <View style={s.chipRow}>
-                {[[0, 'Not in it'], [1, 'One turn'], [2, 'Double turn ✌️']].map(([h, l]) => <Chip key={h} on={(seats[c.id] || 0) === h} label={l} onPress={() => setSeats({ ...seats, [c.id]: h })} />)}
+                {[[false, 'Not in it'], [true, 'In this round']].map(([v, l]) => <Chip key={l} on={!!seats[c.id] === v} label={l} onPress={() => setSeats({ ...seats, [c.id]: v })} />)}
               </View>
-              {c.status === 'active' && (seats[c.id] || 0) > 0 && <Text style={s.hint}>This circle is running, so the person joins from the next cycle.</Text>}
+              {c.status === 'active' && !!seats[c.id] && <Text style={s.hint}>This circle is running, so the person joins from the next cycle.</Text>}
             </View>))}
           <Text style={s.hint}>Turn numbers are set in the circle. A person can be in several circles and groups.</Text></View>)}
       <PrimaryButton label="Save Member" onPress={save} disabled={busy || !type} />
+      </>)}
     </ScrollView>);
 }
 
