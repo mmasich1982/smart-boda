@@ -3,11 +3,12 @@
 // until their loan is repaid. I may also say no; the borrower is told and can ask someone else.
 import React, { useCallback, useState } from 'react';
 import { withChamaOnlineGate } from '../../components/ChamaOnlineGate';
-import { View, Text, ScrollView, Alert } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
 import PrimaryButton from '../../components/PrimaryButton';
 import GhostButton from '../../components/GhostButton';
+import DecisionDialog from '../../components/DecisionDialog';
 import { useToast } from '../../components/Toast';
 import { guaranteeRequests, answerGuarantee, apiError } from '../../api/groupsClient';
 import { s, fmt } from './chamaStyles';
@@ -22,13 +23,19 @@ function GuaranteeRequestsScreen({ navigation }) {
   const [rows, setRows] = useState(null), [err, setErr] = useState(null);
   const load = useCallback(() => guaranteeRequests().then((r) => { setRows(r); setErr(null); }).catch((e) => setErr(apiError(e, 'Could not load.'))), []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+  const [dlg, setDlg] = useState(null), [busy, setBusy] = useState(false);
   const answer = async (r, yes) => {
+    if (busy) return;
+    setBusy(true);
     try { await answerGuarantee(r.id, yes); showToast(yes ? 'Thank you. You are now backing this loan.' : 'You said no. They will be told.', yes ? 'success' : 'info'); load(); }
     catch (e) { showToast(apiError(e, 'Could not send your answer.'), 'warn'); load(); }
+    finally { setBusy(false); setDlg(null); }
   };
-  const confirmYes = (r) => Alert.alert('Back this loan?',
-    r.form === 'savings' ? `${fmt(r.value)} of your savings in ${r.group} stays locked until ${r.borrower.split(' ')[0]} finishes paying.` : `You agree to back ${r.borrower.split(' ')[0]}'s loan with ${FORM[r.form]}.`,
-    [{ text: 'Not now' }, { text: 'Yes, I agree', onPress: () => answer(r, true) }]);
+  // Alert.alert with buttons does nothing on the web (PWA), so the confirmation uses the in-app DecisionDialog.
+  const confirmYes = (r) => setDlg(r);
+  const dlgText = (r) => !r ? '' : (r.form === 'savings'
+    ? `${fmt(r.value)} of your savings in ${r.group} stays locked until ${r.borrower.split(' ')[0]} finishes paying.`
+    : `You agree to back ${r.borrower.split(' ')[0]}'s loan with ${FORM[r.form]}.`);
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
       <BackLink onPress={() => navigation.goBack()} />
@@ -46,6 +53,9 @@ function GuaranteeRequestsScreen({ navigation }) {
           <View style={{ marginTop: 8 }}><PrimaryButton label="Yes, I will back it" onPress={() => confirmYes(r)} /></View>
           <GhostButton label="No, I cannot" onPress={() => answer(r, false)} />
         </View>))}
+      <DecisionDialog visible={!!dlg} busy={busy} title="Back this loan?" message={dlgText(dlg)}
+        confirmLabel="Yes, I agree" cancelLabel="Not now"
+        onConfirm={() => dlg && answer(dlg, true)} onCancel={() => !busy && setDlg(null)} />
     </ScrollView>);
 }
 export default withChamaOnlineGate(GuaranteeRequestsScreen, 'loans');
