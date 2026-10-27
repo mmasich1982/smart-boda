@@ -18,7 +18,7 @@ const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DEFAULTS = { interest_rate_pct: '5', max_loan_multiple: '3', max_loan_months: '4', min_loan_amount: '1000', opening_pool: '0', min_contributions_for_loan: '0' };
 
-export default function ChamaRulesCard({ groupId, onSaved }) {
+export default function ChamaRulesCard({ groupId, onSaved, saveLabel = 'Save rules' }) {
   const { showToast } = useToast();
   const [type, setType] = useState(null);             // 'tb' | 'mgr', from the server
   const [cfg, setCfg] = useState(DEFAULTS);
@@ -35,6 +35,10 @@ export default function ChamaRulesCard({ groupId, onSaved }) {
   useEffect(() => { load(); }, [groupId]);
 
   async function save() {
+    // Members are linked to a contribution category, so at least one must be switched on with an amount before the rules can be saved.
+    if (!FREQS.some((f) => cats[f]?.is_active && +cats[f].amount > 0)) {
+      return showToast('Switch on at least one contribution category and enter its amount.', 'warn');
+    }
     try {
       await saveChamaConfig({ chama_type: type, interest_rate_pct: +cfg.interest_rate_pct, max_loan_multiple: +cfg.max_loan_multiple,
         max_loan_months: parseInt(cfg.max_loan_months, 10), min_loan_amount: +cfg.min_loan_amount, opening_pool: +cfg.opening_pool,
@@ -74,6 +78,6 @@ export default function ChamaRulesCard({ groupId, onSaved }) {
         <Text style={s.label}>WHICH DAY</Text><View style={s.chipRow}>{DAYS.map((w) => <Chip key={w} on={meet.meeting_day === w} label={w.slice(0, 3)} onPress={() => pickOne('meeting_day', w)} />)}</View>
         <Text style={s.label}>CYCLE ENDS IN</Text><View style={s.chipRow}>{MONTHS.map((w) => <Chip key={w} on={meet.cycle_month === w} label={w} onPress={() => pickOne('cycle_month', w)} />)}</View>
       </View>
-      <PrimaryButton label="Save rules" onPress={save} />
+      <PrimaryButton label={saveLabel} onPress={save} />
     </View>);
 }
