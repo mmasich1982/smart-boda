@@ -5,7 +5,6 @@ import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet } from 
 import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
 import PrimaryButton from '../../components/PrimaryButton';
-import GhostButton from '../../components/GhostButton';
 import { useToast } from '../../components/Toast';
 import colors from '../../theme/colors';
 import { refreshMembership } from '../../offline/chamaSyncService';
@@ -109,8 +108,10 @@ function ManageChamaScreen({ navigation, route }) {
               </View>))}
           </View>
 
-          <PrimaryButton label="➕ Add Chama Member" disabled={group.status !== 'active'}
-            onPress={() => left <= 0 ? showToast('Member limit reached. Request more slots to add members.', 'warn') : navigation.navigate('AddChamaMember', { groupId, type: group.group_type })} />
+          {/* Only shown while approved slots remain; it comes back when the Smart Boda admin allocates more slots. */}
+          {left > 0 && (
+            <PrimaryButton label="➕ Add Chama Member" disabled={group.status !== 'active'}
+              onPress={() => navigation.navigate('AddChamaMember', { groupId, type: group.group_type })} />)}
 
           {req.last && req.last.notification_id && (
             <View style={[s.banner, { backgroundColor: req.last.ok ? colors.signalGreenBg : colors.signalRedBg, marginTop: 10 }]}>
@@ -130,10 +131,7 @@ function ManageChamaScreen({ navigation, route }) {
             </View>
           ) : left <= 0 ? (
             <PrimaryButton label="📈 Request More Member Slots" onPress={() => navigation.navigate('RequestChamaSlots', { groupId })} />
-          ) : (
-            <><GhostButton label="📈 Request More Member Slots" disabled onPress={() => {}} />
-              <Text style={s.hint}>You still have {left} available slot{left > 1 ? 's' : ''}. You can request more once all approved slots are used.</Text></>
-          )}
+          ) : null}
         </>
       )}
     </ScrollView>

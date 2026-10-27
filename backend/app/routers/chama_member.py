@@ -329,7 +329,7 @@ def guarantee_requests(status: str = "waiting_guarantor", db: Session = Depends(
         out.append({"id": str(r.id), "borrower": b.full_name, "group": db.get(BodaGroup, r.group_id).group_name,
                     "group_id": str(r.group_id), "loan_amount": app.amount if app else None, "months": app.months if app else None,
                     "value": r.value, "form": r.guarantor_form, "status": r.status,
-                    "my_free_savings": tbs.free_savings(db, db.get(GroupMember, r.guarantor_member_id)),
+                    "my_free_savings": tbs.guarantee_capacity(db, db.get(GroupMember, r.guarantor_member_id)),
                     "at": r.created_at.isoformat()})
     return out
 
@@ -346,8 +346,12 @@ def _my_guarantee(db, rider, rid):
 @router.post("/guarantee-requests/{rid}/accept")
 def accept_guarantee(rid: RowId, db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
     r, gm, app = _my_guarantee(db, rider, rid)
-    if r.guarantor_form == "savings" and Decimal(r.value) > tbs.free_savings(db, gm):
-        raise HTTPException(409, f"You can back this with at most KSh {tbs.free_savings(db, gm):,.0f} of free savings.")
+    if r.guarantor_form == "savings":
+        cap = tbs.guarantee_capacity(db, gm)
+        if Decimal(r.value) > cap:
+            if tbs.loan_balance(db, gm.id) > 0:
+                raise HTTPException(409, f"You have a running loan, so you can only back this with savings above your remaining loan balance. You can back at most KSh {cap:,.0f}.")
+            raise HTTPException(409, f"You can back this with at most KSh {cap:,.0f} of free savings.")
     r.status, r.answered_at = "submitted", now_()
     complete(db, "loan_security", r.id, "decided")
     b = db.get(GroupMember, r.member_id); g = db.get(BodaGroup, r.group_id)

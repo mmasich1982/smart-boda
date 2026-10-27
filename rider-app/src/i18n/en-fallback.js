@@ -799,6 +799,7 @@ export default {
   "group.title_turn_swaps": "Turn Swap Requests",
   "group.title_pay_out": "Pay out",
   "group.title_add_member": "Add Chama Member",
+  "group.title_security_rules": "Loan security rules",
   "group.title_loans": "Loans",
   "group.title_apply_loan": "Apply for a Loan",
   "group.title_manage_chama": "Manage Chama",

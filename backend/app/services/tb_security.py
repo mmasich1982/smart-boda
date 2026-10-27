@@ -116,6 +116,18 @@ def locked_savings(db: Session, member_id) -> Decimal:
 def free_savings(db: Session, member) -> Decimal:
     return max(ZERO, savings_of(db, member.id) - locked_savings(db, member.id))
 
+def loan_balance(db: Session, member_id) -> Decimal:
+    """What a member still owes on their running loan (0 when they have none)."""
+    loan = db.query(ChamaLoan).filter_by(member_id=member_id, status="active").first()
+    return max(ZERO, Decimal(loan.total) - Decimal(loan.paid or 0)) if loan else ZERO
+
+def guarantee_capacity(db: Session, member) -> Decimal:
+    """Most savings a member can promise as a guarantor.
+    No running loan  -> all their free savings.
+    Running loan     -> only what is left after the remaining loan balance is taken off their available savings, so their
+                        savings must be MORE than the balance (if savings <= balance, they can back nobody with savings)."""
+    return max(ZERO, free_savings(db, member) - loan_balance(db, member.id))
+
 def savings_pledge_max(db, member, s) -> Decimal:
     return (free_savings(db, member) * s.savings_pct / 100).quantize(Decimal("1"), rounding=ROUND_DOWN)
 
@@ -156,8 +168,8 @@ def validate_offers(db: Session, g, member, amount, offers, existing=()) -> list
             form = o.guarantor_form or "savings"
             if form not in ("savings", "title", "logbook", "chattel") or not getattr(s, "guar_" + form):
                 raise HTTPException(422, "Your group does not accept that kind of guarantee.")
-            if form == "savings" and Decimal(o.value) > free_savings(db, gm):
-                raise HTTPException(422, f"{gm.full_name.split(' ')[0]} can back you with at most KSh {free_savings(db, gm):,.0f}.")
+            if form == "savings" and Decimal(o.value) > guarantee_capacity(db, gm):
+                raise HTTPException(422, f"{gm.full_name.split(' ')[0]} can back you with at most KSh {guarantee_capacity(db, gm):,.0f}.")
             gref = (o.ref or "").strip()[:60]
             if form != "savings":
                 if not gref: raise HTTPException(422, "Please add the number of the item your guarantor is putting up.")

@@ -680,6 +680,7 @@ export default {
   "group.title_turn_swaps": "Maombi ya Kubadilishana Zamu",
   "group.title_pay_out": "Toa Malipo",
   "group.title_add_member": "Ongeza Mwanachama wa Chama",
+  "group.title_security_rules": "Sheria za dhamana ya mkopo",
   "group.title_loans": "Mikopo",
   "group.title_apply_loan": "Omba Mkopo",
   "group.title_manage_chama": "Simamia Chama",
