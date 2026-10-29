@@ -9,11 +9,14 @@ import TbLoanView from './TbLoanView';
 import { myLoans, guaranteeRequests, apiError } from '../../api/groupsClient';
 import { s } from './chamaStyles';
 import { Tabs } from './common';
+import TreasurerJoinCard from './TreasurerJoinCard';
+import useChamaMembership from '../../hooks/useChamaMembership';
 import colors from '../../theme/colors';
 import { useGroupText } from './groupText';
 
 function MyLoansScreen({ navigation, route }) {
   const gt = useGroupText();
+  const { treasurerGroups } = useChamaMembership();
   const [groups, setGroups] = useState(null);
   const [asks, setAsks] = useState(0);
   const [err, setErr] = useState(null);
@@ -24,6 +27,7 @@ function MyLoansScreen({ navigation, route }) {
   }, []));
   const list = groups || [];
   const g = list.find((x) => x.group_id === gid) || list[0];
+  const notMember = groups ? (treasurerGroups || []).filter((tg) => tg.group_type === 'tb' && !list.some((x) => x.group_id === tg.group_id)) : [];   // Table Banking groups I run but have not joined
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
       <BackLink onPress={() => navigation.navigate('Home')} label="← Home" />
@@ -34,7 +38,8 @@ function MyLoansScreen({ navigation, route }) {
         <TouchableOpacity testID="guarantee-banner" style={[s.banner, { backgroundColor: '#fff6ee', borderColor: colors.bodaOrange }]} onPress={() => navigation.navigate('GuaranteeRequests')}>
           <Text>🤝</Text><Text style={{ flex: 1, fontWeight: '700' }}>{asks} member{asks > 1 ? 's' : ''} asked you to back a loan. Tap to answer.</Text><Text>›</Text>
         </TouchableOpacity>)}
-      {groups && list.length === 0 && <View style={s.card}><Text>{gt('group.no_tb_group', 'You are not in a Table Banking group, so there are no loans here.')}</Text></View>}
+      {groups && list.length === 0 && notMember.length === 0 && <View style={s.card}><Text>{gt('group.no_tb_group', 'You are not in a Table Banking group, so there are no loans here.')}</Text></View>}
+      <TreasurerJoinCard navigation={navigation} groups={notMember} what="loans" />
       {list.length > 1 && <Tabs tabs={list.map((x, i) => ({ key: x.group_id, label: `📒 ${x.group_name}` }))} value={g?.group_id} onChange={setGid} />}
       {g && <TbLoanView key={g.group_id} navigation={navigation} groupId={g.group_id} />}
     </ScrollView>);

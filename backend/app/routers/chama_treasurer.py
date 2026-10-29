@@ -377,6 +377,12 @@ def release_security(member_id: RowId, group_id: Optional[RowId] = GID, db: Sess
 TB_TYPES = ("contribution", "loan_disbursement", "loan_repayment_principal", "loan_repayment_interest")
 MGR_TYPES = ("mgr_contribution", "mgr_payout")
 
+def _tb_only(db, g):
+    """Group Finance History & Statements covers Table Banking groups only (the Merry-Go-Round has its own screens)."""
+    cfg = ensure_config(db, g)
+    if (cfg.chama_type if cfg else g.group_type) != "tb":
+        raise HTTPException(403, "Group Finance History & Statements is only for Table Banking groups.")
+
 @router.get("/history")
 def history(date_from: Optional[date] = None, date_to: Optional[date] = None,
             entry_type: Optional[str] = Query(None, description="One type, or several separated by commas"),
@@ -384,6 +390,8 @@ def history(date_from: Optional[date] = None, date_to: Optional[date] = None,
             member_id: Optional[RowId] = None, circle_id: Optional[RowId] = None, page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=100),
             group_id: Optional[RowId] = GID, db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
     g = _my_group(db, rider, group_id=group_id)
+    _tb_only(db, g)
+    model = "tb"                                                          # Table Banking only
     q = db.query(ChamaLedger, GroupMember).outerjoin(GroupMember, GroupMember.id == ChamaLedger.member_id)\
           .filter(ChamaLedger.group_id == g.id)
     if date_from: q = q.filter(ChamaLedger.posted_at >= date_from)
@@ -414,6 +422,7 @@ def history(date_from: Optional[date] = None, date_to: Optional[date] = None,
 def statement(date_from: date, date_to: date, group_id: Optional[RowId] = GID, db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
     if date_to < date_from: raise HTTPException(422, "End date is before start date.")
     g = _my_group(db, rider, group_id=group_id); cfg = _cfg(db, g)
+    _tb_only(db, g)
     rng = [ChamaLedger.group_id == g.id, ChamaLedger.posted_at >= date_from,
            ChamaLedger.posted_at < date_to + timedelta(days=1)]
     per = {}

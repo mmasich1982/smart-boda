@@ -50,20 +50,23 @@ const TYPE_FILTERS = {
   payout:  { label: 'Payouts', types: 'mgr_payout', models: ['mgr'] },
   loans:   { label: 'Loans', types: 'loan_disbursement,loan_repayment_principal,loan_repayment_interest', models: ['tb'] },
 };
-const MODEL_CHIPS = [['', 'Whole group'], ['mgr', '🔄 Merry-Go-Round'], ['tb', '📒 Digital Table Banking']];
 
 function GroupFinanceHistoryScreen({ navigation, route }) {
   const gt = useGroupText();
   // A Treasurer may run several groups: pick one (Merry-Go-Round / Table Banking tabs). Opened from a group's page, it is preselected.
+  // Table Banking only: a Merry-Go-Round group has no finance history or statements here (the server refuses it too).
   const { treasurerGroups } = useChamaMembership();
-  const pick = useGroupPicker(treasurerGroups, route?.params?.groupId);
+  const tbGroups = (treasurerGroups || []).filter((x) => x.group_type === 'tb');
+  const pick = useGroupPicker(tbGroups, route?.params?.groupId);
   const groupId = pick.group?.group_id || route?.params?.groupId;
   const { showToast } = useToast();
-  const [k, setK] = useState('thisMonth'), [type, setType] = useState(''), [model, setModel] = useState('');
+  const [k, setK] = useState('thisMonth'), [type, setType] = useState('');
+  const model = 'tb';
   const [h, setH] = useState(null), [st, setSt] = useState(null), [loadingMore, setLoadingMore] = useState(false);
   const reqId = useRef(0);          // ignore a slow response that arrives after the person changed the filters
 
   const load = useCallback(async (pg = 1) => {
+    if (!groupId) return;
     const id = ++reqId.current, [f, t] = range(k);
     try {
       const r = await groupHistory({ date_from: f, date_to: t, entry_type: TYPE_FILTERS[type]?.types || undefined,
@@ -83,15 +86,11 @@ function GroupFinanceHistoryScreen({ navigation, route }) {
     catch (e) { showToast(apiError(e, 'Could not generate.'), 'warn'); }
   }
   const pickRange = (key) => { setK(key); setSt(null); };
-  const pickModel = (key) => { setModel(key); setType(''); };      // a type chip may not apply to the other model
 
-  const models = h?.models || [];
-  const showModelChips = models.length >= 2;
-  const activeModel = model || (models.length === 1 ? models[0] : null);
-  const typeChips = Object.entries(TYPE_FILTERS).filter(([, v]) => !activeModel || v.models.includes(activeModel));
+  const typeChips = Object.entries(TYPE_FILTERS).filter(([, v]) => v.models.includes('tb'));
   const net = h ? Number(h.money_in) - Number(h.money_out) : 0;
   const hasMore = h && h.items.length < h.total;
-  const hasReceived = st && Number(st.totals?.received || 0) > 0;
+  const hasReceived = false;                        // payouts belong to the Merry-Go-Round, which has no statements here
 
   return (
     <ScrollView style={s.page} contentContainerStyle={{ padding: 16 }}>
@@ -100,8 +99,8 @@ function GroupFinanceHistoryScreen({ navigation, route }) {
       <Text style={s.sub}>Money in and out of the group</Text>
 
       <GroupPicker pick={pick} />
-      {showModelChips && (
-        <View style={s.chipRow}>{MODEL_CHIPS.map(([key, l]) => <Chip key={key || 'all'} on={model === key} label={l} onPress={() => pickModel(key)} />)}</View>)}
+      {treasurerGroups && tbGroups.length === 0 && (
+        <View style={s.card}><Text>Group Finance History & Statements is only for Table Banking groups.</Text></View>)}
       <View style={s.chipRow}>{Object.entries(RANGES).map(([key, l]) => <Chip key={key} on={k === key} label={l} onPress={() => pickRange(key)} />)}</View>
       {reachesPastRetention(k) && (
         <Text style={[s.hint, { marginBottom: 10 }]}>ℹ️ {gt('chama.retention.notice', CHAMA_RETENTION_CONFIG.ADMIN_NOTICE)}</Text>)}
