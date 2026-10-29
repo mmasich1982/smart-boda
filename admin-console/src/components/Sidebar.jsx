@@ -46,6 +46,7 @@ const SECTIONS = [
     label: '📱 User & Subscription Management',
     items: [
       { to: '/users/active-riders', label: 'Active Riders List' },
+      { to: '/users/individual-riders', label: 'Individual Riders' },
       { to: '/users/subscription-status', label: 'Subscription Status' },
       { to: '/users/churn-analysis', label: 'Churn Analysis' },
     ],

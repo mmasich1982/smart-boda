@@ -1,3 +1,4 @@
+# backend/app/seed/seed_all_data.py
 """
 Master seed script - runs all seed scripts in order.
 """
@@ -21,6 +22,7 @@ from app.seed import seed_financial_master_data
 from app.seed import seed_compliance_master_data
 from app.seed import seed_value_preview_config
 from app.seed import seed_ui_strings
+from app.seed import seed_individual_rider_strings   # Individual riders wording (updates/adds keys; run after seed_ui_strings)
 
 def run_all_seeds():
     """Run all seed scripts in order."""
@@ -66,6 +68,10 @@ def run_all_seeds():
         logger.info("\n[9/9] Seeding UI strings...")
         seed_ui_strings.run()
         logger.info("✓ UI strings seeded")
+        
+        logger.info("\n[+] Seeding Individual rider strings...")
+        seed_individual_rider_strings.run()
+        logger.info("✓ Individual rider strings seeded")
         
         logger.info("\n" + "=" * 60)
         logger.info("✓ ALL SEEDS COMPLETED SUCCESSFULLY!")

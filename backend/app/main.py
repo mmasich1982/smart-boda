@@ -265,6 +265,10 @@ app.include_router(chama_treasurer.router)
 app.include_router(chama_member.router)
 app.include_router(chama_mgr.router)
 
+# ---- Individual riders: admin pre-registers a rider with no Treasurer / group ----
+from app.routers import admin_individual_riders
+app.include_router(admin_individual_riders.router)     # admin: /admin/individual-riders
+
 # ---- Subscriptions Payment Router Registration ----
 from app.routers import subscriptions_payment
 app.include_router(subscriptions_payment.router)

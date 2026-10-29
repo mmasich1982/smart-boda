@@ -6,8 +6,9 @@
 #   GET  /onboarding/profile-lookup/{mobile_number}   -> {found, full_name, ...}   (before the account exists)
 #   POST /onboarding/setup-profile                    -> {rider_id, full_name, ...} (creates / resumes the pending rider)
 #
-# Who may set up: only a number that a Treasurer registered in a group, or that the administrator named as a group's Treasurer.
-# Everyone else is told to ask their Group Treasurer, so the app cannot be joined by guessing a number.
+# Who may set up: only a number that a Treasurer registered in a group, that the administrator named as a group's Treasurer,
+# or that the administrator pre-registered as an INDIVIDUAL rider (no Treasurer, no group; see admin_individual_riders.py).
+# Everyone else is told to ask their Group Treasurer or Smart Boda, so the app cannot be joined by guessing a number.
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -23,16 +24,18 @@ from app.routers.mobile_number import validate_mobile_number
 from app.schemas.onboarding import SetupProfileRequest
 from app.services.group_member_link_service import find_rider_id_by_mobile, link_members_for_rider
 from app.services.group_roles import phone_key, same_phone
+from app.services.individual_rider_service import find_preregistration, mark_registered
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/onboarding", tags=["Setup My Profile"])
 
 NOT_FOUND = ("We could not find this mobile number. Ask your Group Treasurer to register you in the group, "
-             "then try again.")
+             "or contact Smart Boda to be added as an individual rider, then try again.")
 
 
 def find_registration(db: Session, mobile: str):
-    """The Treasurer's record for this mobile number: (full_name, county_id, sub_county_id, ward_id, source) or None."""
+    """The record for this mobile number: (full_name, county_id, sub_county_id, ward_id, source) or None.
+    source is "member", "treasurer" or "individual" (pre-registered by the administrator: no group, so no location)."""
     k = phone_key(mobile)
     m = (db.query(GroupMember, BodaGroup).join(BodaGroup, BodaGroup.id == GroupMember.group_id)
          .filter(GroupMember.phone_key == k, GroupMember.status == "active", BodaGroup.status == "active")
@@ -43,6 +46,9 @@ def find_registration(db: Session, mobile: str):
     for g in db.query(BodaGroup).filter(BodaGroup.status == "active").order_by(BodaGroup.created_at).all():
         if same_phone(g.treasurer_phone, mobile):
             return g.treasurer_name, g.county_id, g.sub_county_id, g.ward_id, "treasurer"
+    pre = find_preregistration(db, mobile)                    # indexed look-up on the pre-registration table
+    if pre:
+        return pre.full_name, None, None, None, "individual"
     return None
 
 
@@ -104,6 +110,7 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
         else: db.add(BikeProfile(rider_id=rider.id, fuel_type_code=payload.fuel_type_code, submitted_at=now,
                                  sync_status="synced", is_active=True))
         link_members_for_rider(db, rider)
+        mark_registered(db, rider)                            # an individual rider's waiting record becomes "registered"
         db.commit()
     except HTTPException:
         db.rollback(); raise
@@ -116,4 +123,4 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
         raise HTTPException(500, "We could not save your profile. Please try again.")
     return {"status": "confirmed", "rider_id": str(rider.id), "full_name": rider.full_name,
             "mobile_number": rider.mobile_number, "fuel_type_code": payload.fuel_type_code,
-            "county_id": county_id, "sub_county_id": sub_county_id, "ward_id": ward_id, "next_step": "createPin"}
+            "county_id": county_id, "sub_county_id": sub_county_id, "ward_id": ward_id, "source": _src, "next_step": "createPin"}

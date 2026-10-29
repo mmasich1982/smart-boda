@@ -64,6 +64,7 @@ from app.models.swap_partner_master import SwapPartnerMaster
 from app.models.target_streak import TargetStreak
 from app.models.trip import Trip
 from app.models.boda_group import (BodaGroup, GroupSlotRequest, AppNotification, GroupMember)
+from app.models.individual_rider import IndividualRiderPreRegistration   # Individual riders
 from app.models.chama_finance import (
     ChamaConfig, ChamaCategory, ChamaContribution,
     ChamaLoanApplication, ChamaLoan, ChamaLoanPayment,
@@ -140,4 +141,5 @@ __all__ = [
     "PaymentChannelMaster",
     "CorrectionReasonMaster",
     "TripEntryRuleConfig",
+    "IndividualRiderPreRegistration",
 ]

@@ -35,6 +35,7 @@ import DailyRevenueReport from './pages/DailyRevenueReport';
 import UserEngagementMetrics from './pages/UserEngagementMetrics';
 import SystemHealth from './pages/SystemHealth';
 import ManageGroupsAndMembers from './pages/ManageGroupsAndMembers';
+import IndividualRiders from './pages/IndividualRiders';   // Individual riders: pre-register a rider with no Treasurer / group
 import IncomingGroupMemberAdditions from './pages/IncomingGroupMemberAdditions';
 
 // ============================================================================
@@ -374,6 +375,7 @@ function AppRoutes() {
       {/* CATCH-ALL - Redirect to dashboard if logged in, login otherwise */}
       {/* GROUP MANAGEMENT ROUTES */}
       <Route path="/groups/manage" element={<RequireAuth><Shell><ManageGroupsAndMembers /></Shell></RequireAuth>} />
+      <Route path="/users/individual-riders" element={<RequireAuth><Shell><IndividualRiders /></Shell></RequireAuth>} />
       <Route path="/groups/incoming-additions" element={<RequireAuth><Shell><IncomingGroupMemberAdditions /></Shell></RequireAuth>} />
 
       <Route path="*" element={<Navigate to={isLoggedIn() ? "/dashboard" : "/login"} replace />} />

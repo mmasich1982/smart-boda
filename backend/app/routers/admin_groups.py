@@ -17,6 +17,7 @@ from app.services import slot_pool_service as POOL
 from app.services.group_roles import same_phone, phone_key
 from app.services.group_member_link_service import rider_mobile_key
 from app.models.rider import Rider
+from app.services.individual_rider_service import is_unlinked_individual
 
 # Same guard style as payment_admin.py: every route below needs a logged-in admin.
 router = APIRouter(prefix="/admin/groups", tags=["admin-groups"],
@@ -168,6 +169,8 @@ def _require_unused_phone(db: Session, phone, group_type, exclude_id=None):
     if _pair_partner(db, phone, group_type, exclude_id):
         return                                                         # allowed: completes a Merry-Go-Round + Table Banking pair
     POOL.require_free_type(db, phone, group_type, exclude_id)          # clearer message when they already run a group of THIS type
+    if is_unlinked_individual(db, r):
+        return                                                         # allowed: an individual rider (in no group, linked to no Treasurer) may become a Treasurer
     raise HTTPException(409, _phone_taken_message(r))
 
 @router.get("/phone-check")
@@ -193,6 +196,9 @@ def phone_check(phone: str, group_type: Optional[str] = None, exclude_group_id: 
     if same:
         return {**base, "pair_ok": False,
                 "message": f"This Treasurer ({name}) already runs a {TYPE_NAME[group_type]} group ({same.group_name}). A Treasurer can run one group of each type."}
+    if is_unlinked_individual(db, r):                                  # shown in green: this number can be used
+        return {**base, "pair_ok": True,
+                "message": f"This number belongs to {name}, an individual rider who is in no group. They can be named the Treasurer of this group."}
     return {**base, "pair_ok": False, "message": _phone_taken_message(r)}
 
 # ---- Slot-request queue (must be declared BEFORE /{group_id}) ----

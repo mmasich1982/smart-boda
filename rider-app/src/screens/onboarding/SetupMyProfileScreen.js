@@ -33,12 +33,13 @@ export const cleanMobile = (v) => (v || '').replace(/[\s-]/g, '');
 
 export default function SetupMyProfileScreen({ navigation }) {
   const { fuelTypes } = useMasterData();
-  const { t } = useTranslation();
+  const { t, hasTranslation } = useTranslation();
   const { showToast } = useToast();
   const [mobile, setMobile] = useState('');
   const [mobileError, setMobileError] = useState(null);
   const [lookup, setLookup] = useState('idle'); // idle | looking | found | notfound | registered | offline
   const [fullName, setFullName] = useState('');
+  const [source, setSource] = useState('');   // member | treasurer | individual (pre-registered by Smart Boda, no group)
   const [fuelType, setFuelType] = useState('');
   const [fuelError, setFuelError] = useState(null);
   const [consent, setConsent] = useState(false);
@@ -59,17 +60,18 @@ export default function SetupMyProfileScreen({ navigation }) {
     }
     setMobileError(null);
     const mine = ++seq.current;
-    setLookup('looking'); setFullName('');
+    setLookup('looking'); setFullName(''); setSource('');
     (async () => {
       try {
         const res = await api.get(`/onboarding/profile-lookup/${encodeURIComponent(m)}`);
         if (mine !== seq.current) return;
         setFullName(res.data.full_name || '');
+        setSource(res.data.source || '');
         setLookup('found');
       } catch (err) {
         if (mine !== seq.current) return;
         const status = err.response?.status;
-        if (status === 404) { setLookup('notfound'); setMobileError(t('setup.mobile_not_found') || 'We could not find this number. Ask your Group Treasurer to register you, then try again.'); }
+        if (status === 404) { setLookup('notfound'); setMobileError(t('setup.mobile_not_found') || 'We could not find this number. Ask your Group Treasurer to register you, or contact Smart Boda to be added as an individual rider, then try again.'); }
         else if (status === 409) { setLookup('registered'); setMobileError(t('setup.already_registered') || 'This number is already set up. Please log in with your PIN.'); }
         else if (status === 400) { setLookup('idle'); setMobileError(t('setup.mobile_invalid') || 'Enter a valid Kenyan mobile number.'); }
         else { setLookup('offline'); }
@@ -124,7 +126,7 @@ export default function SetupMyProfileScreen({ navigation }) {
       navigation.navigate('CreatePin', { riderId });
     } catch (err) {
       const status = err.response?.status;
-      if (status === 404) setMobileError(t('setup.mobile_not_found') || 'We could not find this number. Ask your Group Treasurer to register you, then try again.');
+      if (status === 404) setMobileError(t('setup.mobile_not_found') || 'We could not find this number. Ask your Group Treasurer to register you, or contact Smart Boda to be added as an individual rider, then try again.');
       else if (status === 409) setMobileError(t('setup.already_registered') || 'This number is already set up. Please log in with your PIN.');
       else setSaveError(t('setup.save_error') || 'We could not save your profile. Please try again.');
       console.error('Error saving profile:', err?.message || err);
@@ -135,6 +137,7 @@ export default function SetupMyProfileScreen({ navigation }) {
 
   const nameHint = lookup === 'looking' ? (t('setup.looking_up') || 'Looking up your number…')
     : lookup === 'offline' ? (t('setup.need_connection') || 'Connect to the internet to find your name, then continue.')
+    : lookup === 'found' && source === 'individual' ? ((typeof hasTranslation === 'function' && hasTranslation('setup.name_hint_individual')) ? t('setup.name_hint_individual') : 'This is the name Smart Boda registered for you.')
     : lookup === 'found' ? (t('setup.name_hint') || 'This is the name your Group Treasurer registered.')
     : (t('setup.name_waiting') || 'Enter your mobile number to see your name.');
 

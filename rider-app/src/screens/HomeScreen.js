@@ -146,7 +146,10 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
   //   Works offline from the saved copy; refreshes on focus, app resume, reconnect, every 45s, and on membership notices.
   const chamaMembership = useChamaMembership();
   const gt = useGroupText();   // English fallback when a translation is missing
-  const role = { isTreasurer: chamaMembership.isTreasurer, hasGroup: chamaMembership.hasGroup };
+  // A Treasurer gets My Savings and Manage Chama as soon as the Chama Code is accepted, and (for a Table Banking group) My Loans and
+  // Group Finance History & Statements too. The Treasurer confirms their own savings, loans and repayments for now.
+  const tbTreasurerGroup = (chamaMembership.treasurerGroups || []).find((x) => x.group_type === 'tb') || null;
+  const role = { isTreasurer: chamaMembership.isTreasurer, hasGroup: chamaMembership.hasGroup, tbTreasurer: !!tbTreasurerGroup };
 
   // ✅ Load riderId on mount
   useEffect(() => {
@@ -542,7 +545,7 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.tileLabel}>{t('home.tile_financial_performance')}</Text>
             </TouchableOpacity>
             {/* My Savings takes the spot the My Subscription tile used to occupy (only for members of a group) */}
-            {role.hasGroup ? (
+            {(role.hasGroup || role.isTreasurer) ? (
               <TouchableOpacity style={styles.homeTile} onPress={() => navigation.navigate('MySavings')}>
                 <Text style={styles.tileEmoji}>🏦</Text>
                 <Text style={styles.tileLabel}>{t('home.tile_my_savings') || 'My Savings'}</Text>
@@ -550,8 +553,8 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
             ) : <View style={{ flex: 1 }} />}
           </View>
 
-          {/* Row 3: My Loans (Table Banking members only - a rider who is only in a Merry-Go-Round has no loans) */}
-          {role.hasGroup && chamaMembership.hasTb && (
+          {/* Row 3: My Loans (Table Banking members and Table Banking Treasurers only - a rider who is only in a Merry-Go-Round has no loans) */}
+          {((role.hasGroup && chamaMembership.hasTb) || role.tbTreasurer) && (
             <View style={styles.tileRow}>
               <TouchableOpacity style={styles.homeTile} onPress={() => navigation.navigate('MyLoans')}>
                 <Text style={styles.tileEmoji}>📋</Text>
@@ -634,7 +637,17 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
               <Text style={styles.settingsListArrow}>›</Text>
             </TouchableOpacity>
 
-            {/* Group Finance History & Statements hidden from the UI for now */}
+            {/* Group Finance History & Statements: Table Banking only. A Treasurer of a Merry-Go-Round group alone never sees it. */}
+            {role.tbTreasurer && (
+              <TouchableOpacity
+                style={styles.settingsListItem}
+                testID="row-group-finance-history"
+                onPress={() => navigation.navigate('GroupFinanceHistory', { groupId: tbTreasurerGroup.group_id })}
+              >
+                <Text style={styles.settingsListLabel}>🧾 {gt('group.title_finance_history', 'Group Finance History & Statements')}</Text>
+                <Text style={styles.settingsListArrow}>›</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={[styles.settingsListItem, styles.logoutListItem]}
