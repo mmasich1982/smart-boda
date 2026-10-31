@@ -1,6 +1,6 @@
 # backend/app/routers/admin_individual_riders.py
 # INDIVIDUAL RIDERS (admin side). The Smart Boda Administrator pre-creates a rider who has no Treasurer and no group:
-# name + mobile number. The number must exist NOWHERE in Smart Boda (rider table, earlier pre-registrations, group members,
+# name + mobile number + location (county, sub-county, ward: the same cascade and the same check as a group). The number must exist NOWHERE in Smart Boda (rider table, earlier pre-registrations, group members,
 # group Treasurer phones, PIN-recovery requests). Saved records wait in individual_rider_preregistration as
 # "awaiting_registration"; the rider then registers in the app (routers/setup_profile.py finds the record by mobile number).
 #
@@ -19,7 +19,9 @@ from app.auth import require_admin
 from app.database import get_db
 from app.models.admin_user import AdminUser
 from app.models.individual_rider import IndividualRiderPreRegistration as Pre, AWAITING, REGISTERED
+from app.models.location_models import County, SubCounty, Ward
 from app.models.rider import Rider
+from app.routers.admin_groups import _check_location           # REUSED: the Treasurer's rule (ward in sub-county in county)
 from app.routers.mobile_number import validate_mobile_number
 from app.services.group_roles import phone_key
 from app.services.individual_rider_service import find_phone_conflict
@@ -31,6 +33,9 @@ router = APIRouter(prefix="/admin/individual-riders", tags=["admin-individual-ri
 class IndividualRiderIn(BaseModel):
     full_name: str = Field(min_length=2, max_length=80)
     mobile_number: str = Field(min_length=9, max_length=20)
+    county_id: int                                        # same three fields, same cascade and same check as a group's location
+    sub_county_id: int
+    ward_id: int
 
     @field_validator("full_name")
     @classmethod
@@ -49,8 +54,10 @@ class IndividualRiderIn(BaseModel):
         return normalized
 
 
-def _row(p: Pre, rider_status=None) -> dict:
+def _row(p: Pre, rider_status=None, county=None, sub_county=None, ward=None) -> dict:
     return {"id": str(p.id), "full_name": p.full_name, "mobile_number": p.mobile_number, "status": p.status,
+            "county_id": p.county_id, "county": county, "sub_county_id": p.sub_county_id, "sub_county": sub_county,
+            "ward_id": p.ward_id, "ward": ward,
             "rider_status": rider_status,                 # registration_status of the rider account once it exists
             "registered_at": p.registered_at.isoformat() if p.registered_at else None,
             "created_at": p.created_at.isoformat() if p.created_at else None}
@@ -71,7 +78,10 @@ def phone_check(phone: str, db: Session = Depends(get_db)):
 @router.get("")
 def list_individual_riders(q: str = None, status: str = None, page: int = Query(1, ge=1),
                            page_size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
-    qry = db.query(Pre, Rider.registration_status).outerjoin(Rider, Rider.id == Pre.registered_rider_id)
+    qry = (db.query(Pre, Rider.registration_status, County.county_name, SubCounty.sub_county_name, Ward.ward_name)
+           .outerjoin(Rider, Rider.id == Pre.registered_rider_id)
+           .outerjoin(County, County.id == Pre.county_id).outerjoin(SubCounty, SubCounty.id == Pre.sub_county_id)
+           .outerjoin(Ward, Ward.id == Pre.ward_id))
     if q and q.strip():
         conds = [Pre.full_name.ilike(f"%{q.strip()}%")]
         d = re.sub(r"\D", "", q)
@@ -86,16 +96,17 @@ def list_individual_riders(q: str = None, status: str = None, page: int = Query(
     counts = dict(db.query(Pre.status, func.count(Pre.id)).group_by(Pre.status).all())
     return {"total": total, "page": page, "page_size": page_size,
             "awaiting": counts.get(AWAITING, 0), "registered": counts.get(REGISTERED, 0),
-            "items": [_row(p, rs) for p, rs in rows]}
+            "items": [_row(p, rs, c, sc, w) for p, rs, c, sc, w in rows]}
 
 
 @router.post("", status_code=201)
 def create_individual_rider(body: IndividualRiderIn, db: Session = Depends(get_db), admin: AdminUser = Depends(require_admin)):
+    _check_location(db, body)                            # 422 when the ward is not in the sub-county, or the sub-county not in the county
     c = find_phone_conflict(db, body.mobile_number)
     if c:
         raise HTTPException(409, c["message"] + " Use a different number.")
     p = Pre(full_name=body.full_name, mobile_number=body.mobile_number, phone_key=phone_key(body.mobile_number),
-            status=AWAITING, created_by_admin_id=admin.id)
+            county_id=body.county_id, sub_county_id=body.sub_county_id, ward_id=body.ward_id, status=AWAITING, created_by_admin_id=admin.id)
     db.add(p)
     try:
         db.commit()
@@ -104,7 +115,8 @@ def create_individual_rider(body: IndividualRiderIn, db: Session = Depends(get_d
         c = find_phone_conflict(db, body.mobile_number)
         raise HTTPException(409, (c["message"] + " Use a different number.") if c else "This number could not be saved. Try again.")
     db.refresh(p)
-    return _row(p)
+    c, sc, w = db.get(County, p.county_id), db.get(SubCounty, p.sub_county_id), db.get(Ward, p.ward_id)
+    return _row(p, None, c.county_name if c else None, sc.sub_county_name if sc else None, w.ward_name if w else None)
 
 
 @router.delete("/{pre_id}")

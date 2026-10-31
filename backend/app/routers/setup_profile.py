@@ -35,7 +35,7 @@ NOT_FOUND = ("We could not find this mobile number. Ask your Group Treasurer to 
 
 def find_registration(db: Session, mobile: str):
     """The record for this mobile number: (full_name, county_id, sub_county_id, ward_id, source) or None.
-    source is "member", "treasurer" or "individual" (pre-registered by the administrator: no group, so no location)."""
+    source is "member", "treasurer" or "individual" (pre-registered by the administrator: no group; the location is the one the administrator chose)."""
     k = phone_key(mobile)
     m = (db.query(GroupMember, BodaGroup).join(BodaGroup, BodaGroup.id == GroupMember.group_id)
          .filter(GroupMember.phone_key == k, GroupMember.status == "active", BodaGroup.status == "active")
@@ -48,7 +48,7 @@ def find_registration(db: Session, mobile: str):
             return g.treasurer_name, g.county_id, g.sub_county_id, g.ward_id, "treasurer"
     pre = find_preregistration(db, mobile)                    # indexed look-up on the pre-registration table
     if pre:
-        return pre.full_name, None, None, None, "individual"
+        return pre.full_name, pre.county_id, pre.sub_county_id, pre.ward_id, "individual"       # location chosen by the Administrator
     return None
 
 

@@ -10,7 +10,7 @@
 # phone_key is the last 9 digits of the number, exactly like group_member.phone_key, and is UNIQUE: the database itself
 # refuses a second record for the same number, even if two Administrators save at the same moment.
 import uuid
-from sqlalchemy import Column, String, DateTime, ForeignKey, Index, CheckConstraint, func
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Index, CheckConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
 
@@ -24,6 +24,9 @@ class IndividualRiderPreRegistration(Base):
     full_name = Column(String(80), nullable=False)
     mobile_number = Column(String(15), nullable=False)           # normalised +2547XXXXXXXX, the same form as rider.mobile_number
     phone_key = Column(String(9), nullable=False)                # last 9 digits: the indexed look-up key (unique)
+    county_id = Column(Integer, ForeignKey("counties.id"))               # location chosen by the Administrator (same cascade as a group);
+    sub_county_id = Column(Integer, ForeignKey("sub_counties.id"))       # copied to the rider account when the rider registers.
+    ward_id = Column(Integer, ForeignKey("wards.id"))                    # Required by the API; nullable here only so older records still load.
     status = Column(String(25), nullable=False, default=AWAITING)
     registered_rider_id = Column(UUID(as_uuid=True), ForeignKey("rider.id", ondelete="SET NULL"))
     registered_at = Column(DateTime(timezone=True))

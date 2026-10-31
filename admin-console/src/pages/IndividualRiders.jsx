@@ -1,5 +1,6 @@
 // admin-console/src/pages/IndividualRiders.jsx
-// Pre-register a rider who has no Treasurer and no group: name + mobile number. The number must exist nowhere in Smart Boda.
+// Pre-register a rider who has no Treasurer and no group: name + mobile number + location (county, sub-county, ward).
+// The number must exist nowhere in Smart Boda.
 // The rider then registers in the mobile app (the app finds the name from the number). My Savings / My Loans appear only
 // once a Treasurer adds the rider to a group.
 import React, { useEffect, useState } from 'react';
@@ -7,6 +8,7 @@ import { listIndividualRiders, createIndividualRider, removeIndividualRider, che
 import { useApiResource } from '../hooks/useApiResource';
 import ConfirmButton from '../components/ConfirmButton';
 import MaskedPhone from '../components/MaskedPhone';
+import LocationCascade from '../components/LocationCascade';   // REUSED: the same county > sub-county > ward picker as Manage Groups
 
 const errText = (e, fallback) => {            // detail is a string for our errors, a LIST for a 422
   const d = e?.response?.data?.detail;
@@ -17,7 +19,7 @@ const errText = (e, fallback) => {            // detail is a string for our erro
 };
 
 const PHONE_RE = /^(\+254|254|0)(7|1)[0-9]{8}$/;
-const EMPTY = { full_name: '', mobile_number: '' };
+const EMPTY = { full_name: '', mobile_number: '', county_id: null, sub_county_id: null, ward_id: null };
 const STATUS_LABEL = { awaiting_registration: '🟡 Awaiting rider registration', registered: '🟢 Registered' };
 
 export default function IndividualRiders() {
@@ -51,6 +53,9 @@ export default function IndividualRiders() {
     if (f.full_name.trim().length < 2) e.full_name = 'Rider name is required';
     if (!PHONE_RE.test(f.mobile_number.replace(/[ -]/g, ''))) e.mobile_number = 'Enter a valid number, e.g. 0712345678';
     else if (phoneWarn) e.mobile_number = phoneWarn.message;
+    if (!f.county_id) e.county_id = 'Please select a county';           // same three rules as the group form
+    if (!f.sub_county_id) e.sub_county_id = 'Please select a sub-county';
+    if (!f.ward_id) e.ward_id = 'Please select a ward';
     return e;
   }
 
@@ -60,7 +65,8 @@ export default function IndividualRiders() {
     if (Object.keys(e).length) return;
     setSaving(true);
     try {
-      const r = await createIndividualRider({ full_name: form.full_name.trim(), mobile_number: form.mobile_number.replace(/[ -]/g, '') });
+      const r = await createIndividualRider({ full_name: form.full_name.trim(), mobile_number: form.mobile_number.replace(/[ -]/g, ''),
+        county_id: form.county_id, sub_county_id: form.sub_county_id, ward_id: form.ward_id });
       setMsg(`${r.full_name} was pre-registered. They can now register in the Smart Boda app with ${r.mobile_number}.`);
       setForm(null); setPhoneWarn(null); setPhoneOk(false);
       riders.refresh();
@@ -93,12 +99,13 @@ export default function IndividualRiders() {
 
       <div className="card" style={{ overflowX: 'auto' }}>
         <table>
-          <thead><tr><th>Name</th><th>Mobile number</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Mobile number</th><th>Location</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
           <tbody>
             {(d.items || []).map((r) => (
               <tr key={r.id}>
                 <td>{r.full_name}</td>
                 <td><MaskedPhone value={r.mobile_number} /></td>
+                <td>{r.ward ? `${r.ward}, ${r.sub_county}, ${r.county}` : '—'}</td>
                 <td>{STATUS_LABEL[r.status] || r.status}{r.status === 'registered' && r.rider_status && r.rider_status !== 'active' ? <div className="muted" style={{ fontSize: 11 }}>still setting up their PIN</div> : null}</td>
                 <td>{r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}</td>
                 <td>{r.status === 'awaiting_registration'
@@ -123,6 +130,7 @@ export default function IndividualRiders() {
             <input value={form.mobile_number} placeholder="0712345678" onChange={(e) => setForm({ ...form, mobile_number: e.target.value })} style={{ display: 'block' }} />
             {errors.mobile_number && <span role="alert" style={{ color: 'red' }}>{errors.mobile_number}</span>}
           </label>
+          <LocationCascade value={form} errors={errors} onChange={(loc) => setForm({ ...form, ...loc })} />
           {phoneWarn && (
             <div role="alert" style={{ background: '#ffebee', border: '1px solid #d32f2f', color: '#b71c1c', padding: 8, borderRadius: 6, fontSize: 13, marginBottom: 10 }}>
               🚫 {phoneWarn.message} Use a different number to save this rider.
