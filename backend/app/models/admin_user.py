@@ -14,6 +14,8 @@ class AdminUser(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(120), unique=True, nullable=False)
     name = Column(String(80), nullable=False)
+    # Added to match: ALTER TABLE admin_user ADD COLUMN mobile_number VARCHAR(15);
+    mobile_number = Column(String(15), nullable=True)
     password_hash = Column(String(255), nullable=False)
     # AUDIT FIX (Admin Console §2, High): role is now enforced server-side by
     # require_super_admin / require_admin in app/auth.py, not just stored and ignored.
