@@ -19,6 +19,8 @@ from app.models.pin_recovery_request import PinRecoveryRequest
 from app.models.bike_profile import BikeProfile
 from app.models.data_export_request import DataExportRequest
 from app.models.legal_content import LegalContent
+from app.models.boda_group import BodaGroup
+from app.models.individual_rider import IndividualRiderPreRegistration
 
 router = APIRouter(prefix="/admin", tags=["admin-dashboard"])
 
@@ -28,17 +30,23 @@ router = APIRouter(prefix="/admin", tags=["admin-dashboard"])
 
 @router.get("/dashboard/summary")
 def dashboard_summary(db: Session = Depends(get_db)):
-    """Provide a high-level summary for the Super Admin dashboard"""
+    """Provide a high-level rider/group summary for the Super Admin dashboard.
+
+    Payments, subscriptions and revenue figures were removed from the dashboard along
+    with the Payments & Reconciliation, Subscriptions and Reporting menus.
+    """
     total_riders = db.query(func.count(Rider.id)).scalar() or 0
-    total_payments = db.query(func.count(Payment.id)).scalar() or 0
-    active_subscriptions = db.query(func.count(RiderSubscription.rider_id)).filter(
-        RiderSubscription.locked.is_(False)
+    active_riders = db.query(func.count(Rider.id)).filter(
+        Rider.registration_status == "active"
     ).scalar() or 0
+    individual_riders = db.query(func.count(IndividualRiderPreRegistration.id)).scalar() or 0
+    total_groups = db.query(func.count(BodaGroup.id)).scalar() or 0
 
     return {
         "total_riders": total_riders,
-        "total_payments": total_payments,
-        "active_subscriptions": active_subscriptions,
+        "active_riders": active_riders,
+        "individual_riders": individual_riders,
+        "total_groups": total_groups,
         "timestamp": datetime.now(timezone.utc),
     }
 

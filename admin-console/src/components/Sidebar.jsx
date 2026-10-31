@@ -1,5 +1,7 @@
 // admin-console/src/components/Sidebar.jsx
-// Matches the exact Super Admin Console menu structure you specified.
+// Super Admin Console menu structure.
+// Removed (no longer required): Master Data & Configuration, Rider Account Support,
+// Payments & Reconciliation, Subscriptions, Reporting, User & Subscription Management.
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { currentAdminName, currentAdminRole, logout } from '../auth/session';
@@ -7,24 +9,11 @@ import { currentAdminName, currentAdminRole, logout } from '../auth/session';
 const SECTIONS = [
   { label: '📊 Dashboard', items: [{ to: '/dashboard', label: 'Main Stats Dashboard' }] },
   {
-    label: '🏗️ Master Data & Configuration',
+    // Moved here from "User & Subscription Management".
+    label: '🏍️ Manage Riders',
     items: [
-      { to: '/master-data/dropdowns', label: 'Dropdowns (6 tabs)' },
-      { to: '/master-data/compliance-savings', label: 'Compliance & Savings Master Data' },
-      { to: '/master-data/trip-rules', label: 'Trip & Entry Rules' },
-      { to: '/master-data/legal', label: 'Legal Content' },
-      // AUDIT FIX: this page existed, fully coded, with no route or sidebar entry at all.
-      { to: '/master-data/payment-channels', label: 'Payment Channels & Correction Reasons' },
-    ],
-  },
-  {
-    label: '🚲 Rider Account Support',
-    items: [
-      { to: '/rider-support/mobile-verification', label: 'Mobile Verification Queue' },
-      { to: '/rider-support/pin-recovery', label: 'PIN Recovery Queue' },
-      { to: '/rider-support/data-export', label: 'Data Export Requests Queue' },
-      // AUDIT FIX: same as above -- fully coded, unreachable until now.
-      { to: '/rider-support/out-of-window', label: 'Out-of-Window Correction Requests' },
+      { to: '/riders/active', label: 'Active Riders List' },
+      { to: '/riders/individual', label: 'Individual Riders' },
     ],
   },
   {
@@ -32,38 +21,6 @@ const SECTIONS = [
     items: [
       { to: '/groups/manage', label: 'Manage Groups and Members' },
       { to: '/groups/incoming-additions', label: 'Incoming Group Member Additions' },
-    ],
-  },
-  {
-    label: '💳 Payments & Reconciliation',
-    items: [
-      { to: '/payments/history', label: 'Payment History' },
-      { to: '/payments/reconciliation', label: 'Reconciliation Queue' },
-      { to: '/payments/relock', label: 'Re-lock Accounts' },
-    ],
-  },
-  {
-    label: '📱 User & Subscription Management',
-    items: [
-      { to: '/users/active-riders', label: 'Active Riders List' },
-      { to: '/users/individual-riders', label: 'Individual Riders' },
-      { to: '/users/subscription-status', label: 'Subscription Status' },
-      { to: '/users/churn-analysis', label: 'Churn Analysis' },
-    ],
-  },
-  {
-    label: '📊 Subscriptions',
-    items: [
-      { to: '/subscription-management', label: '⚙️ Manage Subscriptions' },
-      { to: '/subscription-reports', label: '📈 Reports & Analytics' },
-    ],
-  },
-  {
-    label: '📈 Reporting',
-    items: [
-      { to: '/reporting/daily-revenue', label: 'Daily Revenue Report' },
-      { to: '/reporting/engagement', label: 'User Engagement Metrics' },
-      { to: '/reporting/system-health', label: 'System Health' },
     ],
   },
 ];

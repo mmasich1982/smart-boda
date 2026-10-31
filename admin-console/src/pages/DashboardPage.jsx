@@ -1,8 +1,8 @@
 // admin-console/src/pages/DashboardPage.jsx
-// "Top: Rider stats (active, subscribed, locked), Revenue chart" -- backed by
+// Main Stats Dashboard -- rider and group statistics only, backed by
 // GET /admin/dashboard/summary (backend/app/routers/admin_dashboard.py).
+// Payments, subscriptions, reporting and revenue data were removed along with their menus.
 import React, { useEffect, useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import api from '../api/client';
 
 function StatCard({ label, value, tone }) {
@@ -34,24 +34,11 @@ export default function DashboardPage() {
   return (
     <div>
       <h2>Main Stats Dashboard</h2>
-      <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
-        <StatCard label="Total Riders" value={summary.total_riders} />
-        <StatCard label="Active Riders" value={summary.active_riders} tone="var(--boda-orange)" />
-        <StatCard label="Subscribed" value={summary.subscribed_riders} tone="#1e9e6f" />
-        <StatCard label="Locked" value={summary.locked_riders} tone="#e0453f" />
-      </div>
-
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Revenue -- Last 14 Days</h3>
-        <ResponsiveContainer width="100%" height={280}>
-          <LineChart data={summary.revenue_last_14_days}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
-            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip formatter={(v) => `KSh ${Number(v).toLocaleString()}`} />
-            <Line type="monotone" dataKey="revenue" stroke="var(--boda-orange)" strokeWidth={2.5} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+      <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
+        <StatCard label="Total Riders" value={summary.total_riders ?? 0} />
+        <StatCard label="Active Riders" value={summary.active_riders ?? 0} tone="var(--boda-orange)" />
+        <StatCard label="Individual Riders" value={summary.individual_riders ?? 0} tone="#1e9e6f" />
+        <StatCard label="Groups" value={summary.total_groups ?? 0} tone="#1976d2" />
       </div>
     </div>
   );

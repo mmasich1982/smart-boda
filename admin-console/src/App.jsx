@@ -14,26 +14,7 @@ import { AUTH_UNAUTHORIZED_EVENT } from './api/client';
 
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
-import MasterDataDropdowns from './pages/MasterDataDropdowns';
-import ComplianceAndSavingsMasterData from './pages/ComplianceAndSavingsMasterData';
-import TripEntryRuleConfiguration from './pages/TripEntryRuleConfiguration';
-import MasterDataLegalContent from './pages/MasterDataLegalContent';
-import PaymentChannelMasterData from './pages/PaymentChannelMasterData';
-import MobileVerificationQueue from './pages/MobileVerificationQueue';
-import PinRecoveryQueue from './pages/PinRecoveryQueue';
-import DataExportRequestsQueue from './pages/DataExportRequestsQueue';
-import OutOfWindowCorrectionQueue from './pages/OutOfWindowCorrectionQueue';
-import PaymentHistory from './pages/PaymentHistory';
-import PaymentReconciliation from './pages/PaymentReconciliation';
-import ReLockAccounts from './pages/ReLockAccounts';
 import ActiveRidersList from './pages/ActiveRidersList';
-import SubscriptionStatus from './pages/SubscriptionStatus';
-import SubscriptionManagement from './pages/SubscriptionManagement';
-import SubscriptionReports from './pages/SubscriptionReports';
-import ChurnAnalysis from './pages/ChurnAnalysis';
-import DailyRevenueReport from './pages/DailyRevenueReport';
-import UserEngagementMetrics from './pages/UserEngagementMetrics';
-import SystemHealth from './pages/SystemHealth';
 import ManageGroupsAndMembers from './pages/ManageGroupsAndMembers';
 import IndividualRiders from './pages/IndividualRiders';   // Individual riders: pre-register a rider with no Treasurer / group
 import IncomingGroupMemberAdditions from './pages/IncomingGroupMemberAdditions';
@@ -138,9 +119,9 @@ class ErrorBoundary extends React.Component {
 // ============================================================================
 // AUDIT FIX (Admin Console §2, High): "Role is stored but never enforced" -- this now
 // actually checks currentAdminRole() against an allow-list, not just whether *someone*
-// is logged in. Applied below to Re-lock Accounts, PIN Recovery, Legal Content, and
-// Trip/Entry Rule Configuration, which the code itself already comments as
-// super-admin-only.
+// is logged in. Pass allowedRoles (e.g. ['super_admin']) to restrict a route to specific
+// roles. (The super-admin-only pages that used this -- Re-lock Accounts, PIN Recovery,
+// Legal Content and Trip/Entry Rule Configuration -- were removed from the console.)
 function RequireAuth({ children, allowedRoles }) {
   if (!isLoggedIn()) {
     console.log('🔐 Access denied: user not logged in, redirecting to /login');
@@ -339,45 +320,18 @@ function AppRoutes() {
       {/* DASHBOARD */}
       <Route path="/dashboard" element={<RequireAuth><Shell><DashboardPage /></Shell></RequireAuth>} />
 
-      {/* MASTER DATA ROUTES */}
-      <Route path="/master-data/dropdowns" element={<RequireAuth><Shell><MasterDataDropdowns /></Shell></RequireAuth>} />
-      <Route path="/master-data/compliance-savings" element={<RequireAuth><Shell><ComplianceAndSavingsMasterData /></Shell></RequireAuth>} />
-      <Route path="/master-data/trip-rules" element={<RequireAuth allowedRoles={['super_admin']}><Shell><TripEntryRuleConfiguration /></Shell></RequireAuth>} />
-      <Route path="/master-data/legal" element={<RequireAuth allowedRoles={['super_admin']}><Shell><MasterDataLegalContent /></Shell></RequireAuth>} />
-      <Route path="/master-data/payment-channels" element={<RequireAuth><Shell><PaymentChannelMasterData /></Shell></RequireAuth>} />
+      {/* MANAGE RIDERS ROUTES (moved from User & Subscription Management) */}
+      <Route path="/riders/active" element={<RequireAuth><Shell><ActiveRidersList /></Shell></RequireAuth>} />
+      <Route path="/riders/individual" element={<RequireAuth><Shell><IndividualRiders /></Shell></RequireAuth>} />
+      {/* Old URLs kept as redirects so existing bookmarks still work */}
+      <Route path="/users/active-riders" element={<Navigate to="/riders/active" replace />} />
+      <Route path="/users/individual-riders" element={<Navigate to="/riders/individual" replace />} />
 
-      {/* RIDER SUPPORT ROUTES */}
-      <Route path="/rider-support/mobile-verification" element={<RequireAuth><Shell><MobileVerificationQueue /></Shell></RequireAuth>} />
-      <Route path="/rider-support/pin-recovery" element={<RequireAuth><Shell><PinRecoveryQueue /></Shell></RequireAuth>} />
-      <Route path="/rider-support/data-export" element={<RequireAuth><Shell><DataExportRequestsQueue /></Shell></RequireAuth>} />
-      <Route path="/rider-support/out-of-window" element={<RequireAuth><Shell><OutOfWindowCorrectionQueue /></Shell></RequireAuth>} />
-
-      {/* PAYMENT ROUTES */}
-      <Route path="/payments/history" element={<RequireAuth><Shell><PaymentHistory /></Shell></RequireAuth>} />
-      <Route path="/payments/reconciliation" element={<RequireAuth><Shell><PaymentReconciliation /></Shell></RequireAuth>} />
-      <Route path="/payments/relock" element={<RequireAuth allowedRoles={['super_admin']}><Shell><ReLockAccounts /></Shell></RequireAuth>} />
-
-      {/* USER ROUTES */}
-      <Route path="/users/active-riders" element={<RequireAuth><Shell><ActiveRidersList /></Shell></RequireAuth>} />
-      <Route path="/users/subscription-status" element={<RequireAuth><Shell><SubscriptionStatus /></Shell></RequireAuth>} />
-      <Route path="/users/churn-analysis" element={<RequireAuth><Shell><ChurnAnalysis /></Shell></RequireAuth>} />
-
-      {/* SUBSCRIPTION ROUTES */}
-      <Route path="/subscription-status" element={<RequireAuth><Shell><SubscriptionStatus /></Shell></RequireAuth>} />
-      <Route path="/subscription-management" element={<RequireAuth><Shell><SubscriptionManagement /></Shell></RequireAuth>} />
-      <Route path="/subscription-reports" element={<RequireAuth><Shell><SubscriptionReports /></Shell></RequireAuth>} />
-
-      {/* REPORTING ROUTES */}
-      <Route path="/reporting/daily-revenue" element={<RequireAuth><Shell><DailyRevenueReport /></Shell></RequireAuth>} />
-      <Route path="/reporting/engagement" element={<RequireAuth><Shell><UserEngagementMetrics /></Shell></RequireAuth>} />
-      <Route path="/reporting/system-health" element={<RequireAuth><Shell><SystemHealth /></Shell></RequireAuth>} />
-
-      {/* CATCH-ALL - Redirect to dashboard if logged in, login otherwise */}
       {/* GROUP MANAGEMENT ROUTES */}
       <Route path="/groups/manage" element={<RequireAuth><Shell><ManageGroupsAndMembers /></Shell></RequireAuth>} />
-      <Route path="/users/individual-riders" element={<RequireAuth><Shell><IndividualRiders /></Shell></RequireAuth>} />
       <Route path="/groups/incoming-additions" element={<RequireAuth><Shell><IncomingGroupMemberAdditions /></Shell></RequireAuth>} />
 
+      {/* CATCH-ALL - Redirect to dashboard if logged in, login otherwise */}
       <Route path="*" element={<Navigate to={isLoggedIn() ? "/dashboard" : "/login"} replace />} />
     </Routes>
   );
