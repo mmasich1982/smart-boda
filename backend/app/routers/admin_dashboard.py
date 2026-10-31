@@ -313,6 +313,27 @@ def list_riders(status: str | None = None, page: int = 1, page_size: int = 20, d
     return {"items": items, "page": page, "total_pages": max(1, -(-total // page_size)), "total": total}
 
 
+@router.get("/riders/stats")
+def rider_stats(db: Session = Depends(get_db)):
+    """Headline numbers for the Active Riders screen."""
+    now = datetime.now(timezone.utc)
+    total = db.query(func.count(Rider.id)).scalar() or 0
+    active = db.query(func.count(Rider.id)).filter(Rider.registration_status == "active").scalar() or 0
+    joined_7 = db.query(func.count(Rider.id)).filter(
+        Rider.registration_status == "active", Rider.created_at >= now - timedelta(days=7)
+    ).scalar() or 0
+    joined_30 = db.query(func.count(Rider.id)).filter(
+        Rider.registration_status == "active", Rider.created_at >= now - timedelta(days=30)
+    ).scalar() or 0
+    return {
+        "total_riders": total,
+        "active_riders": active,
+        "not_yet_active_riders": total - active,     # still setting up their profile / PIN, or rejected
+        "active_joined_last_7_days": joined_7,
+        "active_joined_last_30_days": joined_30,
+    }
+
+
 @router.get("/riders/subscription-status")
 def subscription_status_breakdown(db: Session = Depends(get_db)):
     """Get subscription status breakdown for all riders"""

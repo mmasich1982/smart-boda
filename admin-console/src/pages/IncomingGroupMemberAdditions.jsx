@@ -34,11 +34,22 @@ export default function IncomingGroupMemberAdditions() {
   // The slot-requests endpoint returns the whole pending queue as a plain list, so it is paged here.
   const totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
   const currentPage = Math.min(page, totalPages);           // a request decided elsewhere can empty the last page
+  // Headline numbers for the pending queue, worked out from the list already loaded.
+  const extraSlots = allRows.reduce((n, r) => n + (Number(r.requested_slots) || 0), 0);
+  const groupsWaiting = new Set(allRows.map((r) => r.group_id)).size;
+  const oldest = allRows.reduce((m, r) => { const t = r.requested_at ? new Date(r.requested_at).getTime() : NaN; return Number.isNaN(t) ? m : Math.min(m, t); }, Infinity);
+  const oldestDays = Number.isFinite(oldest) ? Math.max(0, Math.floor((Date.now() - oldest) / 86400000)) : null;
+  const ready = !loading && !error;
+  const card = (t, v) => <div className="card" style={{ flex: 1, minWidth: 140 }}><div className="muted" style={{ fontSize: 12 }}>{t}</div><div style={{ fontSize: 26, fontWeight: 700 }}>{v ?? '—'}</div></div>;
   const rows = allRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   return (
     <div className="page">
       <h1>Incoming Group Member Additions</h1>
       <p className="muted">Treasurers whose groups reached their approved member limit ask for more slots here.</p>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+        {card('Pending requests', ready ? allRows.length : null)}{card('Extra slots requested', ready ? extraSlots : null)}
+        {card('Groups waiting', ready ? groupsWaiting : null)}{card('Oldest request (days)', ready && allRows.length ? oldestDays : null)}
+      </div>
       {loading && <p>Loading…</p>}
       {error && <p role="alert" style={{ color: 'red' }}>Couldn't load requests: {error}</p>}
       {actionError && <p role="alert" style={{ color: 'red' }}>Couldn't complete that: {actionError}</p>}

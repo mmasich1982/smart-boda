@@ -1,5 +1,6 @@
 // admin-console/src/pages/ActiveRidersList.jsx
-// "Active Riders List" -- backed by GET /admin/riders?status=active.
+// "Active Riders List" -- backed by GET /admin/riders?status=active, with headline numbers from
+// GET /admin/riders/stats.
 import React, { useState } from 'react';
 import api from '../api/client';
 import { useApiResource } from '../hooks/useApiResource';
@@ -12,12 +13,20 @@ export default function ActiveRidersList() {
     () => api.get('/admin/riders', { params: { status: 'active', page, page_size: 25 } }).then((res) => res.data),
     [page]
   );
+  const stats = useApiResource(() => api.get('/admin/riders/stats').then((res) => res.data), []);
+  const st = stats.data || {};
+  const card = (t, v) => <div className="card" style={{ flex: 1, minWidth: 140 }}><div className="muted" style={{ fontSize: 12 }}>{t}</div><div style={{ fontSize: 26, fontWeight: 700 }}>{v ?? '—'}</div></div>;
   const items = data?.items || [];
   const totalPages = data?.total_pages || 1;
 
   return (
     <div>
       <h2>Active Riders</h2>
+      {stats.error && <p role="alert" style={{ color: 'red' }}>Couldn't load rider statistics: {stats.error}</p>}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+        {card('Active riders', st.active_riders)}{card('Total riders', st.total_riders)}{card('Not yet active', st.not_yet_active_riders)}
+        {card('Joined last 7 days', st.active_joined_last_7_days)}{card('Joined last 30 days', st.active_joined_last_30_days)}
+      </div>
       {error && <p role="alert" style={{ color: 'red' }}>Couldn't load active riders: {error}</p>}
       {loading ? <p>Loading...</p> : (
         <>
