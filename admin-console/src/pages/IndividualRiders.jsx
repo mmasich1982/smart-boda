@@ -8,6 +8,7 @@ import { listIndividualRiders, createIndividualRider, removeIndividualRider, che
 import { useApiResource } from '../hooks/useApiResource';
 import ConfirmButton from '../components/ConfirmButton';
 import MaskedPhone from '../components/MaskedPhone';
+import Pagination from '../components/Pagination';
 import LocationCascade from '../components/LocationCascade';   // REUSED: the same county > sub-county > ward picker as Manage Groups
 
 const errText = (e, fallback) => {            // detail is a string for our errors, a LIST for a 422
@@ -25,13 +26,15 @@ const STATUS_LABEL = { awaiting_registration: '🟡 Awaiting rider registration'
 export default function IndividualRiders() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [form, setForm] = useState(null);
   const [errors, setErrors] = useState({});
   const [phoneWarn, setPhoneWarn] = useState(null);     // BLOCKING: the number already exists somewhere in Smart Boda
   const [phoneOk, setPhoneOk] = useState(false);
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
-  const riders = useApiResource(() => listIndividualRiders({ q: q || undefined, status: status || undefined }), [q, status]);
+  const riders = useApiResource(() => listIndividualRiders({ q: q || undefined, status: status || undefined, page, page_size: pageSize }), [q, status, page, pageSize]);
   const d = riders.data || {};
 
   // Look the number up while the Administrator types (the server enforces the same rule again on Save).
@@ -74,7 +77,11 @@ export default function IndividualRiders() {
   }
 
   async function remove(r) {
-    try { await removeIndividualRider(r.id); setMsg(`${r.full_name} was removed.`); riders.refresh(); }
+    try {
+      await removeIndividualRider(r.id); setMsg(`${r.full_name} was removed.`);
+      if ((d.items || []).length === 1 && page > 1) setPage(page - 1);   // removed the last row on this page: step back
+      else riders.refresh();
+    }
     catch (err) { setMsg(errText(err, 'Could not remove the rider.')); }
   }
 
@@ -90,8 +97,8 @@ export default function IndividualRiders() {
         {card('Pre-registered', (d.awaiting ?? 0) + (d.registered ?? 0))}{card('Awaiting registration', d.awaiting)}{card('Registered in app', d.registered)}
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        <input placeholder="Search name or phone…" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1, minWidth: 200, padding: 8 }} />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: 8 }}>
+        <input placeholder="Search name or phone…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} style={{ flex: 1, minWidth: 200, padding: 8 }} />
+        <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} style={{ padding: 8 }}>
           <option value="">All statuses</option><option value="awaiting_registration">Awaiting registration</option><option value="registered">Registered</option>
         </select>
         <button className="primary" onClick={() => { setForm(EMPTY); setErrors({}); setPhoneWarn(null); setPhoneOk(false); }}>+ New Individual Rider</button>
@@ -117,6 +124,8 @@ export default function IndividualRiders() {
         </table>
         {riders.loading && <p className="muted">Loading…</p>}
         {!riders.loading && (d.items || []).length === 0 && <p className="muted">No individual riders found.</p>}
+        <Pagination page={page} pageSize={pageSize} total={d.total || 0} disabled={riders.loading}
+          onPage={setPage} onPageSize={(n) => { setPageSize(n); setPage(1); }} />
       </div>
 
       {form && (

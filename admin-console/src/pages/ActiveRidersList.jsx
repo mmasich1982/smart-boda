@@ -22,13 +22,12 @@ export default function ActiveRidersList() {
       {loading ? <p>Loading...</p> : (
         <>
           <table>
-            <thead><tr><th>Name</th><th>Mobile</th><th>Verified</th><th>Joined</th></tr></thead>
+            <thead><tr><th>Name</th><th>Mobile</th><th>Joined</th></tr></thead>
             <tbody>
               {items.map((r) => (
                 <tr key={r.id}>
                   <td>{r.full_name}</td>
                   <td>{r.mobile_number}</td>
-                  <td>{r.mobile_verified ? '✅' : '—'}</td>
                   <td>{new Date(r.created_at).toLocaleDateString()}</td>
                 </tr>
               ))}

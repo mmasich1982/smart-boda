@@ -5,6 +5,7 @@ import { getGroupFinance, checkTreasurerPhone } from '../api/groups';   // add t
 import { useApiResource } from '../hooks/useApiResource';
 import ConfirmButton from '../components/ConfirmButton';
 import MaskedPhone from '../components/MaskedPhone';
+import Pagination from '../components/Pagination';
 import LocationCascade from '../components/LocationCascade';
 
 const errText = (e, fallback) => {            // detail is a string for our errors, a LIST for a 422
@@ -55,6 +56,8 @@ function Field({ k, label, form, setForm, errors, ...p }) {
 export default function ManageGroupsAndMembers() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [form, setForm] = useState(null);     // null = closed; object = create/edit dialog
   const [editId, setEditId] = useState(null);
   const [view, setView] = useState(null);     // read-only details
@@ -64,7 +67,7 @@ export default function ManageGroupsAndMembers() {
   const [phoneWarn, setPhoneWarn] = useState(null);      // BLOCKING: the number already belongs to a rider (and is not a valid pair)
   const [phonePair, setPhonePair] = useState(null);      // info only: the number completes a Merry-Go-Round + Table Banking pair
   const stats = useApiResource(getGroupStats, []);
-  const groups = useApiResource(() => listGroups({ q: q || undefined, status: status || undefined }), [q, status]);
+  const groups = useApiResource(() => listGroups({ q: q || undefined, status: status || undefined, page, page_size: pageSize }), [q, status, page, pageSize]);
   const refresh = () => { stats.refresh(); groups.refresh(); };
 
   // BLOCKING: a number that already belongs to a rider cannot be used for a new Treasurer (the server enforces it too),
@@ -128,8 +131,8 @@ export default function ManageGroupsAndMembers() {
         {card('Approved slots', s.total_approved_slots)}{card('Pending slot requests', s.pending_slot_requests)}
       </div>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-        <input placeholder="Search name, code or stage…" value={q} onChange={(e) => setQ(e.target.value)} style={{ flex: 1, minWidth: 200, padding: 8 }} />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ padding: 8 }}>
+        <input placeholder="Search name, code or stage…" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} style={{ flex: 1, minWidth: 200, padding: 8 }} />
+        <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} style={{ padding: 8 }}>
           <option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option>
         </select>
         <button className="primary" onClick={() => { setForm(EMPTY); setEditId(null); setOrigPhone(''); setPhoneWarn(null); setPhonePair(null); setErrors({}); }}>+ New Group</button>
@@ -158,6 +161,8 @@ export default function ManageGroupsAndMembers() {
           </tbody>
         </table>
         {!groups.loading && (groups.data?.items || []).length === 0 && <p className="muted">No groups found.</p>}
+        <Pagination page={page} pageSize={pageSize} total={groups.data?.total || 0} disabled={groups.loading}
+          onPage={setPage} onPageSize={(n) => { setPageSize(n); setPage(1); }} />
       </div>
 
       {view && (

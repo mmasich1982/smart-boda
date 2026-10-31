@@ -6,6 +6,7 @@ import React, { useState } from 'react';
 import { listSlotRequests, approveSlotRequest, declineSlotRequest } from '../api/groups';
 import { useApiResource } from '../hooks/useApiResource';
 import ConfirmButton from '../components/ConfirmButton';
+import Pagination from '../components/Pagination';
 
 const whyFailed = (e) => {
   const d = e?.response?.data?.detail;      // a string for our errors, a LIST for a 422
@@ -17,6 +18,8 @@ const whyFailed = (e) => {
 export default function IncomingGroupMemberAdditions() {
   const { data, loading, error, refresh } = useApiResource(() => listSlotRequests('pending'), []);
   const [actionError, setActionError] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Another admin may have decided the request first (the server answers 409). Show the reason
   // and reload the list instead of letting the rejection go unhandled.
@@ -27,7 +30,11 @@ export default function IncomingGroupMemberAdditions() {
     finally { refresh(); }
   }
 
-  const rows = data || [];
+  const allRows = data || [];
+  // The slot-requests endpoint returns the whole pending queue as a plain list, so it is paged here.
+  const totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);           // a request decided elsewhere can empty the last page
+  const rows = allRows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   return (
     <div className="page">
       <h1>Incoming Group Member Additions</h1>
@@ -50,7 +57,11 @@ export default function IncomingGroupMemberAdditions() {
               onConfirm={(reason) => act(() => declineSlotRequest(r.id, reason))} />
           </div>
         </div>))}
-      {!loading && !error && rows.length === 0 && <p className="muted">No pending requests. 🎉</p>}
+      {!loading && !error && allRows.length === 0 && <p className="muted">No pending requests. 🎉</p>}
+      {allRows.length > 0 && (
+        <Pagination page={currentPage} pageSize={pageSize} total={allRows.length} disabled={loading}
+          onPage={setPage} onPageSize={(n) => { setPageSize(n); setPage(1); }} pageSizes={[5, 10, 20, 50]} />
+      )}
     </div>
   );
 }
