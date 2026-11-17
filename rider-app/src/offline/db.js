@@ -306,6 +306,45 @@ export async function saveLocalAuthToken(token) {
   }
 }
 
+// ========== PERSISTENT SESSION (stay signed in until an explicit Logout) ==========
+// 'session_active' is written true when the person signs in (PIN) or finishes creating the PIN, and false ONLY by an explicit Logout.
+// Never written => a phone that was already signed in before this feature existed: treated as signed in (no surprise Sign-In screen).
+export async function markSessionActive() {
+  try {
+    await indexedDbAdapter.kvSet('session_active', true);
+    return true;
+  } catch (err) {
+    console.error('❌ markSessionActive error:', err);
+    return false;
+  }
+}
+
+/** True only when the person explicitly chose Logout on this phone. */
+export async function isLoggedOut() {
+  try {
+    return (await indexedDbAdapter.kvGet('session_active')) === false;
+  } catch (err) {
+    console.error('❌ isLoggedOut error:', err);
+    return false; // a storage hiccup must never throw a signed-in person out
+  }
+}
+
+/**
+ * Explicit Logout: forget the sign-in and the server token, but KEEP who this phone belongs to (rider_id, rider_status, saved PIN)
+ * so the Sign-In screen can greet the person and accept the PIN again. Records waiting to sync stay on the phone.
+ */
+export async function endSession() {
+  try {
+    await indexedDbAdapter.kvSet('session_active', false);
+    await indexedDbAdapter.kvSet('auth_token', null);
+    console.log('✅ Session ended (explicit logout)');
+    return true;
+  } catch (err) {
+    console.error('❌ endSession error:', err);
+    return false;
+  }
+}
+
 export async function clearSession() {
   try {
     await indexedDbAdapter.kvSet('auth_token', null);
@@ -867,6 +906,9 @@ export default {
   getLocalAuthToken,
   saveLocalAuthToken,
   clearSession,
+  markSessionActive,
+  isLoggedOut,
+  endSession,
   
   // Trip rules
   getCachedTripRuleConfig,

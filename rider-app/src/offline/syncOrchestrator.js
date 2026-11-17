@@ -37,6 +37,8 @@ import NetInfo from '@react-native-community/netinfo';
 import { db } from './db';
 // ✅ CHAMA: refresh group membership (Home tiles) and run the weekly 6-month retention cleanup after each sync check
 import { runChamaSyncCycle } from './chamaSyncService';
+// ✅ SMART BIZNA: refresh profile + tile permissions, suppliers, the Owner's team snapshot and statement requests after each sync check
+import { runBusinessSyncCycle } from './businessSyncService';
 // ✅ RETENTION: weekly six-month cleanup of trips, fuel, battery, maintenance, expenses, caches and daily summaries
 import { runScheduledRetention } from './retentionScheduler';
 
@@ -117,6 +119,9 @@ export async function performSyncCheck() {
 
     // ✅ CHAMA: membership refresh + six-month retention cleanup. Never throws, never blocks the sync result.
     runChamaSyncCycle().catch((e) => console.warn('⚠️ [SyncOrchestrator] Chama cycle skipped:', e?.message));
+
+    // ✅ SMART BIZNA: does nothing for riders (no business profile). Never throws, never blocks the sync result.
+    runBusinessSyncCycle().catch((e) => console.warn('⚠️ [SyncOrchestrator] Business cycle skipped:', e?.message));
 
     // ✅ RETENTION: runs at most once a week (returns at once when not due). Records still in the sync queue are never deleted.
     runScheduledRetention().catch((e) => console.warn('⚠️ [SyncOrchestrator] Retention cleanup skipped:', e?.message));

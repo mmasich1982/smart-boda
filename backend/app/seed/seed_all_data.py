@@ -24,6 +24,7 @@ from app.seed import seed_compliance_master_data
 from app.seed import seed_value_preview_config
 from app.seed import seed_ui_strings
 from app.seed import seed_individual_rider_strings   # Individual riders wording (updates/adds keys; run after seed_ui_strings)
+from app.seed import seed_smart_bizna                # Smart Bizna: business types + onboarding wording (run after the two above)
 
 def run_all_seeds():
     """Run all seed scripts in order."""
@@ -73,6 +74,10 @@ def run_all_seeds():
         logger.info("\n[+] Seeding Individual rider strings...")
         seed_individual_rider_strings.run()
         logger.info("✓ Individual rider strings seeded")
+        
+        logger.info("\n[+] Seeding Smart Bizna business types and strings...")
+        seed_smart_bizna.run()
+        logger.info("✓ Smart Bizna seeded")
         
         logger.info("\n" + "=" * 60)
         logger.info("✓ ALL SEEDS COMPLETED SUCCESSFULLY!")

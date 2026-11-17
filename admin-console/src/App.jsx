@@ -17,7 +17,13 @@ import DashboardPage from './pages/DashboardPage';
 import ActiveRidersList from './pages/ActiveRidersList';
 import ManageGroupsAndMembers from './pages/ManageGroupsAndMembers';
 import IndividualRiders from './pages/IndividualRiders';   // Individual riders: pre-register a rider with no Treasurer / group
+import RegisterBusiness from './pages/RegisterBusiness';   // Smart Bizna: Manage Businesses menu
+import BusinessesList from './pages/BusinessesList';
+import BusinessStatementRequests from './pages/BusinessStatementRequests';   // Smart Bizna: statements older than six months + check a code
+import BusinessTilePermissions from './pages/BusinessTilePermissions';
+import BusinessTypes from './pages/BusinessTypes';
 import IncomingGroupMemberAdditions from './pages/IncomingGroupMemberAdditions';
+import AdminAppAccess from './pages/AdminAppAccess';   // ADMIN APP: who may use the mobile app (Super Admin only)
 
 // ============================================================================
 // ERROR BOUNDARY COMPONENT
@@ -323,6 +329,15 @@ function AppRoutes() {
       {/* MANAGE RIDERS ROUTES (moved from User & Subscription Management) */}
       <Route path="/riders/active" element={<RequireAuth><Shell><ActiveRidersList /></Shell></RequireAuth>} />
       <Route path="/riders/individual" element={<RequireAuth><Shell><IndividualRiders /></Shell></RequireAuth>} />
+
+      {/* Manage Businesses (Smart Bizna) */}
+      <Route path="/businesses" element={<Navigate to="/businesses/list" replace />} />
+      <Route path="/businesses/register" element={<RequireAuth><Shell><RegisterBusiness /></Shell></RequireAuth>} />
+      <Route path="/businesses/list" element={<RequireAuth><Shell><BusinessesList /></Shell></RequireAuth>} />
+      <Route path="/businesses/permissions" element={<RequireAuth><Shell><BusinessTilePermissions /></Shell></RequireAuth>} />
+      <Route path="/businesses/types" element={<RequireAuth><Shell><BusinessTypes /></Shell></RequireAuth>} />
+      <Route path="/businesses/statements" element={<RequireAuth><Shell><BusinessStatementRequests /></Shell></RequireAuth>} />
+      <Route path="/admin-app/access" element={<RequireAuth allowedRoles={['super_admin']}><Shell><AdminAppAccess /></Shell></RequireAuth>} />
       {/* Old URLs kept as redirects so existing bookmarks still work */}
       <Route path="/users/active-riders" element={<Navigate to="/riders/active" replace />} />
       <Route path="/users/individual-riders" element={<Navigate to="/riders/individual" replace />} />

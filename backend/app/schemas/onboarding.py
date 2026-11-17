@@ -20,11 +20,12 @@ class BikeProfileRequest(BaseModel):
     mobile_number: Optional[str] = Field(default=None, max_length=15)
 
 class SetupProfileRequest(BaseModel):
-    """Setup My Profile: the rider types the mobile number their Group Treasurer registered, picks the fuel type and accepts the terms.
-    The full name and operating location come from the Treasurer's record, never from the rider."""
+    """Setup My Profile: the person types the mobile number an Admin (or their Group Treasurer) registered, makes ONE choice (fuel type for
+    a rider; a business user chooses NOTHING, because the Business Type was set by the Administrator) and accepts the terms. The full name and location come from the registration, never from the user."""
     device_id: Optional[str] = None
     mobile_number: str = Field(..., max_length=15)
-    fuel_type_code: str
+    fuel_type_code: Optional[str] = None            # a rider sends this ...
+    business_type_code: Optional[str] = None        # ... never sent: the Administrator set the Business Type at pre-registration (a business user sending it gets 422)
     consent_accepted: bool
     consent_content_version: str
     language_code: Optional[str] = None
@@ -77,6 +78,8 @@ class PinCreateRequest(BaseModel):
 class PinLoginRequest(BaseModel):
     rider_id: str
     pin: str = Field(..., min_length=4, max_length=4)
+    device_id: Optional[str] = None        # SMART APPS: this phone (an older app sends none and counts as one phone)
+    device_label: Optional[str] = None
 
 class PinRecoveryConfirmRequest(BaseModel):
     recovery_request_id: str  # must be Super-Admin-approved before this call is accepted

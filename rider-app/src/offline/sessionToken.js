@@ -12,23 +12,50 @@
 // (the token is fetched the next time the rider logs in while online).
 // ============================================================================
 import api from '../api/client';
-import { saveLocalAuthToken, getLocalAuthToken, getLocalRiderId } from './db';
+import { saveLocalAuthToken, getLocalAuthToken, getLocalRiderId, getLocalDeviceId } from './db';
+import { deviceLabel } from '../auth/deviceLabel';          // SMART APPS
 import { isOnlineNow } from './chamaConnectivity';
 
-/** @returns {Promise<{ok:boolean, reason?:string}>} */
+/** @returns {Promise<{ok:boolean, reason?:string, other?:{device_label?:string}}>}
+ *  SMART APPS: reason 'session_elsewhere' = the account is logged in on ANOTHER phone. This quiet call never takes the session from it;
+ *  only the Login screen's confirmed "Log in here" does. */
 export async function ensureRiderSession(riderId, pin) {
   try {
     if (!riderId || !pin) return { ok: false, reason: 'missing_credentials' };
     if (!(await isOnlineNow())) return { ok: false, reason: 'offline' };
 
-    const res = await api.post('/onboarding/pin/login', { rider_id: String(riderId), pin: String(pin) }, { timeout: 8000 });
+    const device_id = await getLocalDeviceId();
+    const res = await api.post('/onboarding/pin/login', { rider_id: String(riderId), pin: String(pin), device_id, device_label: deviceLabel() }, { timeout: 8000 });
     const data = res?.data;
     if (data?.ok && data?.token) {
       await saveLocalAuthToken(data.token);
       return { ok: true };
     }
     // {"ok": false, "error": "incorrect" | "locked"} - the server disagrees with the local PIN (e.g. PIN was reset elsewhere)
-    return { ok: false, reason: data?.error || 'rejected' };
+    return { ok: false, reason: data?.error || 'rejected', other: data?.error === 'session_elsewhere' ? { device_label: data.device_label } : undefined };
+  } catch (err) {
+    return { ok: false, reason: err?.message || 'request_failed' };
+  }
+}
+
+/**
+ * PERSISTENT SESSION: the person stays signed in until an explicit Logout, so the token must not run out under them.
+ * While online, swap the stored (still valid) token for a fresh one. Never throws and never signs anyone out:
+ * offline, no token, or a refusal simply leave things as they are.
+ * @returns {Promise<{ok:boolean, reason?:string}>}
+ */
+export async function renewRiderSession() {
+  try {
+    const token = await getLocalAuthToken();
+    if (!token) return { ok: false, reason: 'no_token' };
+    if (!(await isOnlineNow())) return { ok: false, reason: 'offline' };
+    const res = await api.post('/onboarding/session/refresh', null, { timeout: 8000 });
+    const data = res?.data;
+    if (data?.ok && data?.token) {
+      await saveLocalAuthToken(data.token);
+      return { ok: true };
+    }
+    return { ok: false, reason: 'rejected' };
   } catch (err) {
     return { ok: false, reason: err?.message || 'request_failed' };
   }
@@ -46,4 +73,4 @@ export async function hasRiderToken() {
   } catch { return false; }
 }
 
-export default { ensureRiderSession, hasRiderToken };
+export default { ensureRiderSession, renewRiderSession, hasRiderToken };

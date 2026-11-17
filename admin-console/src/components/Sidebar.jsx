@@ -17,11 +17,28 @@ const SECTIONS = [
     ],
   },
   {
+    // Smart Bizna: businesses and the people who work in them (Business Owner + Sales/Service Persons).
+    label: '🏪 Manage Businesses',
+    items: [
+      { to: '/businesses/register', label: 'Register a Business' },
+      { to: '/businesses/list', label: 'Businesses and Users' },
+      { to: '/businesses/permissions', label: 'Tile Permissions' },
+      { to: '/businesses/types', label: 'Business Types' },
+      { to: '/businesses/statements', label: 'Statement Requests' },
+    ],
+  },
+  {
     label: '👥 Manage Groups',
     items: [
       { to: '/groups/manage', label: 'Manage Groups and Members' },
       { to: '/groups/incoming-additions', label: 'Incoming Group Member Additions' },
     ],
+  },
+  {
+    // ADMIN APP: who may use the Smart Boda mobile app as an Administrator (Super Admin only).
+    label: '📱 Admin App',
+    superOnly: true,
+    items: [{ to: '/admin-app/access', label: 'Admin App Access' }],
   },
 ];
 
@@ -52,7 +69,7 @@ export default function Sidebar() {
         <div className="muted" style={{ fontSize: 12, textTransform: 'capitalize' }}>{(currentAdminRole() || '').replace('_', ' ')}</div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
-        {SECTIONS.map((section) => (
+        {SECTIONS.filter((section) => !section.superOnly || currentAdminRole() === 'super_admin').map((section) => (
           <div key={section.label} style={{ marginBottom: 18 }}>
             <div className="sidebar-title" style={{ fontWeight: 700, marginBottom: 6 }}>{section.label}</div>
             {section.items.map((item) => (

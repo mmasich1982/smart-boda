@@ -43,7 +43,7 @@ def create_pin(db: Session, rider_id: str, pin: str, pin_confirm: str):
     
     return {"ok": True}
 
-def verify_pin_login(db: Session, rider_id: str, pin: str):
+def verify_pin_login(db: Session, rider_id: str, pin: str, device_id: str = None, device_label: str = None):
     """
     Verify a rider's PIN during login and generate authentication token.
     
@@ -78,6 +78,8 @@ def verify_pin_login(db: Session, rider_id: str, pin: str):
     from app.auth import create_rider_token  # Import here to avoid circular dependency
     
     rider = db.query(Rider).get(rider_id)
+    if rider is None or not rider.pin_hash:        # SMART APPS: no such rider / no PIN yet is a wrong PIN, not a crash
+        return {"ok": False, "error": "incorrect"}
     
     # Check if account is locked
     if rider.pin_locked_until and datetime.now(timezone.utc) < rider.pin_locked_until:
@@ -104,8 +106,16 @@ def verify_pin_login(db: Session, rider_id: str, pin: str):
     rider.pin_locked_until = None  # clear any lock
     db.commit()
     
+    # SMART APPS: ONE ACTIVE SESSION PER USER. This quiet sign-in (the phone re-gets its token after a local PIN check) must never take the
+    # session from another phone: only the Login screen's explicit "sign in here" (POST /auth/login with takeover) does that.
+    from app.services import session_service
+    started = session_service.start_session(db, "rider", rider.id, device_id, device_label, takeover=False)
+    db.commit()
+    if not started["ok"]:
+        return {"ok": False, "error": "session_elsewhere", **session_service.describe_other(started["other"])}
+    
     # Generate JWT token for authenticated rider
-    token = create_rider_token(str(rider.id), rider.mobile_number)
+    token = create_rider_token(str(rider.id), rider.mobile_number, started["session"].id)
     
     return {
         "ok": True,
@@ -136,6 +146,8 @@ def reset_pin_via_recovery(db: Session, rider_id: str, new_pin: str, new_pin_con
     rider.pin_hash = hash_pin(new_pin)  # EXC-SB04-008: reuse of the old PIN is explicitly allowed in MVP0
     rider.pin_attempts_left = MAX_PIN_ATTEMPTS
     rider.pin_locked_until = None
+    from app.services import session_service
+    session_service.revoke_all(db, "rider", rider.id, "pin_reset")        # SMART APPS: a new PIN signs the account out everywhere
     db.commit()
     
     return {"ok": True}

@@ -16,7 +16,7 @@ import logging
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from sqlalchemy import text, and_, or_
 from sqlalchemy.orm import Session
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.routers import sb08_financial_history, sb19_financial_history
 from app.routers import admin_groups
 from app.routers import chama_treasurer, chama_member
@@ -76,10 +76,60 @@ app.add_middleware(
     allow_origins=allow_origins,           # Specific origins, not "*"
     allow_credentials=True,                 # Enable credentials (cookies, auth headers)
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-Business-Id", "X-Device-Id"],   # X-Device-Id: which phone a token refresh comes from (one active session per user)   # X-Business-Id: which of an Owner's businesses a request is for
     expose_headers=["Content-Length", "Content-Range"],
     max_age=600,                            # Preflight cache 10 minutes
 )
+
+# ============================================================================
+# SMART APPS: ONE ACTIVE SESSION PER USER, enforced on EVERY request that carries a session token.
+# The app sends its token with every call, so a phone whose session was replaced (login on another phone), ended (logout) or reset (PIN)
+# is refused here with 401 {"code": "session_replaced" | "session_ended"} -- including on the older Smart Boda routes that never check a token themselves.
+# This is defined BEFORE ensure_cors_headers so that the 401 still gets its CORS headers (the web app could not read it otherwise).
+# REQUIRE_SESSION_ON_RIDER_ROUTES=true additionally refuses calls that carry NO token on those routes (turn on once every phone runs the new app).
+# ============================================================================
+from jose import jwt as _jwt, JWTError as _JWTError
+from fastapi import HTTPException as _HTTPException
+from starlette.concurrency import run_in_threadpool as _run_in_threadpool
+from app.auth import SECRET_KEY as _SECRET_KEY, ALGORITHM as _ALGORITHM
+from app.services import session_service as _session_service
+
+_SESSION_GUARD_EXEMPT = ("/auth/", "/onboarding/", "/admin/", "/docs", "/redoc", "/openapi.json", "/health", "/legal", "/location-data", "/static", "/webhooks") + tuple(
+    p.strip() for p in os.getenv("SESSION_GUARD_EXEMPT_PREFIXES", "").split(",") if p.strip())
+
+
+def _check_session_sync(payload, kind):
+    db = SessionLocal()
+    try:
+        _session_service.guard_payload(db, payload, kind)
+        return None
+    except _HTTPException as e:
+        return e
+    finally:
+        db.close()
+
+
+@app.middleware("http")
+async def session_guard(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    auth = request.headers.get("authorization", "")
+    scheme, _, value = auth.partition(" ")
+    has_bearer = scheme.lower() == "bearer" and bool(value.strip())
+    if has_bearer and not path.startswith(("/auth/", "/onboarding/pin/login")):
+        try:
+            payload = _jwt.decode(value.strip(), _SECRET_KEY, algorithms=[_ALGORITHM])
+        except _JWTError:
+            payload = None                        # expired or invalid: the route itself decides
+        if payload and payload.get("sid"):
+            kind = "admin" if payload.get("typ") == "admin_app" else "rider"
+            err = await _run_in_threadpool(_check_session_sync, payload, kind)
+            if err is not None:
+                return JSONResponse(status_code=err.status_code, content={"detail": err.detail})
+    elif not has_bearer and _session_service.REQUIRE_SESSION_ON_RIDER_ROUTES and not path.startswith(_SESSION_GUARD_EXEMPT):
+        return JSONResponse(status_code=401, content={"detail": _session_service.error_for(None) | {"code": "session_required"}})
+    return await call_next(request)
 
 @app.middleware("http")
 async def ensure_cors_headers(request: Request, call_next):
@@ -99,7 +149,7 @@ async def ensure_cors_headers(request: Request, call_next):
         origin = request.headers.get("origin")
         headers = {
             "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
-            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With, X-Business-Id, X-Device-Id",
         }
         if origin in allow_origins:
             headers["Access-Control-Allow-Origin"] = origin
@@ -268,6 +318,25 @@ app.include_router(chama_mgr.router)
 # ---- Individual riders: admin pre-registers a rider with no Treasurer / group ----
 from app.routers import admin_individual_riders
 app.include_router(admin_individual_riders.router)     # admin: /admin/individual-riders
+
+# ---- Smart Bizna: business users onboard through Setup My Profile ----
+from app.routers import admin_businesses, admin_business_types, business_types
+app.include_router(admin_businesses.router)            # admin: /admin/businesses
+app.include_router(admin_business_types.router)        # admin: /admin/business-types (master data)
+app.include_router(business_types.router)              # public: GET /onboarding/business-types
+from app.routers import business_ops, business_lipa_later, admin_business_statements
+app.include_router(business_ops.router)               # Smart Bizna user app: /business/...
+app.include_router(business_lipa_later.router)        # Smart Bizna Lipa Later (business tables): /business/lipa-later/...
+app.include_router(admin_business_statements.router)  # admin: /admin/business-statements (requests + check a code)
+
+# ---- Admin App: an Administrator signs in to the mobile app with mobile number + PIN ----
+from app.routers import admin_app_auth
+app.include_router(admin_app_auth.router)              # /admin/app/... (setup, PIN, login, dashboard, console access list)
+
+# ---- Smart Apps: mobile number + PIN login, one active session per user, "set up my account on this phone" ----
+from app.routers import auth_login, restore
+app.include_router(auth_login.router)                  # /auth/login, /auth/logout, /auth/session
+app.include_router(restore.router)                     # /restore/rider/trips
 
 # ---- Subscriptions Payment Router Registration ----
 from app.routers import subscriptions_payment

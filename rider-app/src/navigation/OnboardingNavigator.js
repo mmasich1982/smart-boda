@@ -24,25 +24,35 @@ import CreatePinScreen from '../screens/onboarding/CreatePinScreen';
 // ✅ CRITICAL FIX: Import PinLoginScreen from /auth/ path (NOT /onboarding/)
 // The /auth/ version has proper null-checking for route.params
 import PinLoginScreen from '../screens/auth/PinLoginScreen';
+import RestoreAccountScreen from '../screens/auth/RestoreAccountScreen';      // SMART APPS: set up my account on this phone
+import { installSessionLostHandler } from '../auth/sessionLost';            // SMART APPS: one active session per user
 
 // ✅ FORGOT PIN SCREENS (if they exist in auth folder)
 import ForgotPinScreen from '../screens/auth/ForgotPinScreen';
 import ForgotPinConfirmationScreen from '../screens/auth/ForgotPinConfirmationScreen';
 
 // ✅ MAIN APP NAVIGATOR
-import MainNavigator from './MainNavigator';
+import UserTypeRouter from './UserTypeRouter';   // SMART BIZNA: rider -> MainNavigator, business -> BusinessNavigator
 
 // DATABASE
-import { getLocalRiderStatus } from '../offline/db';
+import { getLocalRiderStatus, isLoggedOut } from '../offline/db';
+
+// PERSISTENT SESSION: cold-start rule + root navigation handle + silent token renewal
+import { resolveStartRoute } from '../utils/startRoute';
+import { navigationRef } from './rootNavigation';
+import { renewRiderSession } from '../offline/sessionToken';
 
 const Stack = createNativeStackNavigator();
 
+installSessionLostHandler();     // a 401 {code: session_replaced | session_ended} from the server sends this phone to the Login screen
+
 /**
  * INITIALIZATION LOGIC
- * Determines which screen to show on cold start:
- * 1. LanguageSelection - first time ever
- * 2. PinLogin - returning registered rider
- * 3. Mid-onboarding step - resume where left off
+ * Determines which screen to show on cold start (rules in utils/startRoute.js):
+ * 1. PinLogin          - first time ever (the Login screen; Register there leads to LanguageSelection)
+ * 2. Home              - registered person who has NOT chosen Logout (no Sign-In screen)
+ * 3. PinLogin          - registered person who explicitly chose Logout
+ * 4. Mid-onboarding step - resume where left off
  */
 function useInitialRoute() {
   const [route, setRoute] = React.useState(null);
@@ -52,33 +62,19 @@ function useInitialRoute() {
     (async () => {
       try {
         const status = await getLocalRiderStatus();
-        
-        if (!status) {
-          // First time user
-          setRoute('LanguageSelection');
-          return;
-        }
-        
-        if (status.registration_status === 'active') {
-          // Returning registered user
-          setRoute('PinLogin');
-          return;
-        }
+        const loggedOut = await isLoggedOut();
+        const start = resolveStartRoute(status, loggedOut);
+        setRoute(start);
 
-        // Mid-onboarding - resume at exact step
-        const stepToScreen = {
-          valuePreview: 'ValuePreview',
-          setupProfile: 'SetupProfile',
-          createPin: 'CreatePin',
-        };
-        
-        const resumeScreen = stepToScreen[status.onboarding_step];
-        setRoute(resumeScreen || 'LanguageSelection');
+        // Opening straight on Home: quietly renew the server token in the background (online only, never blocks, never signs out)
+        if (start === 'Home' && !(status && status.user_type === 'admin')) {     // ADMIN APP: an Administrator's token is renewed by the Admin Home, not by the rider route
+          renewRiderSession().catch(() => {});
+        }
       } catch (err) {
         console.error('Failed to load rider status during initialization:', err);
         setError(err);
-        // Fallback to first-time user experience
-        setRoute('LanguageSelection');
+        // Fallback: the Login screen (it has Register for a new person)
+        setRoute('PinLogin');
       }
     })();
   }, []);
@@ -104,7 +100,7 @@ function LoadingScreen() {
         fontWeight: '600',
         marginBottom: 12,
       }}>
-        🏍️ Loading Smart Boda...
+        Loading Smart Apps...
       </Text>
       <Text style={{
         fontSize: 12,
@@ -199,7 +195,7 @@ export default function OnboardingNavigator() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
         initialRouteName={initialRoute}
         screenOptions={{
@@ -232,6 +228,10 @@ export default function OnboardingNavigator() {
           component={PinLoginScreen} 
         />
         <Stack.Screen 
+          name="RestoreAccount" 
+          component={RestoreAccountScreen} 
+        />
+        <Stack.Screen 
           name="ForgotPin" 
           component={ForgotPinScreen} 
         />
@@ -244,7 +244,7 @@ export default function OnboardingNavigator() {
         {/* This is what PinLoginScreen navigates to after successful login */}
         <Stack.Screen
           name="Home"
-          component={MainNavigator}
+          component={UserTypeRouter}
           options={{
             animationEnabled: false, // Smooth transition without animation
           }}
@@ -267,7 +267,7 @@ export default function OnboardingNavigator() {
  * - "ForgotPinConfirmation" → Confirmation screen
  * - "TermsOfService" → Legal screen
  * - "DataPrivacy" → Privacy screen
- * - "Home" → Main app (MainNavigator) - returned riders go here after login
+ * - "Home" → Main app (MainNavigator) - returned riders go here after login, and straight away on every app start until they choose Logout
  * 
  * What happens after successful PIN login:
  * PinLoginScreen calls:

@@ -10,6 +10,7 @@ from jose import JWTError, jwt
 import bcrypt
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.services import session_service       # SMART APPS: one active session per user
 from app.models.admin_user import AdminUser
 from app.models.rider import Rider
 
@@ -28,7 +29,18 @@ if not SECRET_KEY:
     )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 8  # one admin shift
+
+# Riders stay signed in on their phone until they choose Logout (persistent session), so a rider token must outlive a shift.
+# The phone also renews it silently (POST /onboarding/session/refresh) every time the app opens online, so for anyone
+# who uses the app it never runs out. Admin tokens above are NOT affected. Override with the RIDER_TOKEN_EXPIRE_DAYS env var.
+RIDER_TOKEN_EXPIRE_DAYS = int(os.getenv("RIDER_TOKEN_EXPIRE_DAYS", "90"))
 COOKIE_NAME = "sb_admin_session"
+
+# ADMIN APP: the mobile app signs in with mobile number + PIN and keeps a Bearer token (a phone has no httpOnly cookie jar to rely on).
+# The token carries typ="admin_app", is checked by get_current_admin below, and so opens EVERY existing admin route (same guards, same roles).
+# A shift-length default; the app swaps a still-valid token for a fresh one each time it opens online (POST /admin/app/session/refresh).
+ADMIN_APP_TOKEN_EXPIRE_HOURS = int(os.getenv("ADMIN_APP_TOKEN_EXPIRE_HOURS", "12"))
+ADMIN_APP_TOKEN_TYPE = "admin_app"
 
 # Use bcrypt directly instead of passlib to avoid passlib's backend initialization issues
 # Passlib tries to detect wrap bugs by hashing test passwords, which fails if the password is > 72 bytes
@@ -176,6 +188,22 @@ def create_access_token(admin: AdminUser) -> str:
     logger.debug(f"JWT token created for {admin.email}, expires in {ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
     return token
 
+def create_admin_app_token(admin: AdminUser, sid: str = None) -> str:
+    """ADMIN APP: Bearer token for an Administrator who signed in to the mobile app with mobile number + PIN."""
+    expire = datetime.now(timezone.utc) + timedelta(hours=ADMIN_APP_TOKEN_EXPIRE_HOURS)
+    payload = {
+        "sub": str(admin.id),
+        "email": admin.email,
+        "name": admin.name,
+        "role": admin.role,
+        "typ": ADMIN_APP_TOKEN_TYPE,
+        "iat": datetime.now(timezone.utc),
+        "exp": expire,
+    }
+    if sid:                       # SMART APPS: one active session per Administrator too
+        payload["sid"] = str(sid)
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
 def set_session_cookie(response, token: str) -> None:
     """
     Set an httpOnly session cookie with JWT token.
@@ -221,38 +249,59 @@ def clear_session_cookie(response) -> None:
 
 def _decode_token(request: Request) -> dict:
     """
-    Decode JWT from session cookie.
-    
-    ? CORRECTED: Better error handling and logging
+    Decode the admin's JWT: the httpOnly session cookie (console) or, failing that, a Bearer token issued to the mobile app.
+
+    ADMIN APP: a Bearer token is accepted ONLY when it carries typ="admin_app", so a rider's token can never open an admin route.
     """
     token = request.cookies.get(COOKIE_NAME)
-    
-    # Log cookie presence for debugging
+    from_header = False
+    if not token:
+        auth_header = request.headers.get("authorization") or ""
+        scheme, _, value = auth_header.partition(" ")
+        if scheme.lower() == "bearer" and value.strip():
+            token, from_header = value.strip(), True
+
     if not token:
         available_cookies = list(request.cookies.keys())
-        logger.warning(f"No session cookie found. Available cookies: {available_cookies}")
+        logger.warning(f"No session cookie or bearer token found. Available cookies: {available_cookies}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    
-    logger.debug(f"? Session cookie found, decoding JWT...")
-    
+
     try:
         decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        logger.debug(f"? JWT decoded successfully for user: {decoded.get('email')}")
-        return decoded
     except JWTError as e:
         logger.warning(f"Token decode failed: {str(e)}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
 
+    if from_header and decoded.get("typ") != ADMIN_APP_TOKEN_TYPE:
+        logger.warning("A bearer token without typ=admin_app was presented to an admin route")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
+    return decoded
+
 def get_current_admin(request: Request, db: Session = Depends(get_db)) -> AdminUser:
     """Get the current authenticated admin from the session cookie."""
     payload = _decode_token(request)
-    admin = db.query(AdminUser).get(payload["sub"])
+    try:
+        admin = db.query(AdminUser).get(payload["sub"])
+    except Exception:                       # a malformed id in a token is a 401, never a 500
+        db.rollback()
+        admin = None
     if not admin:
         logger.warning(f"Admin user not found in database: {payload['sub']}")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account not found")
     if not admin.is_active:
         logger.warning(f"Login attempt on disabled account: {admin.email}")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
+    if payload.get("typ") == ADMIN_APP_TOKEN_TYPE:
+        # ADMIN APP: a phone token stops working the moment a Super Admin switches the app off for this person or resets their PIN
+        # (a token issued before the current PIN was set is refused too). Console cookie tokens carry no typ and are not affected.
+        if not (admin.app_access_enabled and admin.app_pin_hash):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
+        pin_set = admin.app_pin_set_at
+        if pin_set:
+            pin_set = pin_set if pin_set.tzinfo else pin_set.replace(tzinfo=timezone.utc)
+            if int(pin_set.timestamp()) - int(payload.get("iat") or 0) > 2:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired session")
+        session_service.guard_payload(db, payload, "admin")      # SMART APPS: one active session per Administrator
     return admin
 
 def require_admin(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:
@@ -270,7 +319,7 @@ def require_super_admin(admin: AdminUser = Depends(get_current_admin)) -> AdminU
 # RIDER AUTHENTICATION (Bearer tokens in Authorization header)
 # ============================================================================
 
-def create_rider_token(rider_id: str, mobile_number: str) -> str:
+def create_rider_token(rider_id: str, mobile_number: str, sid: str = None) -> str:
     """
     Create JWT token for a rider after successful PIN login.
     
@@ -281,12 +330,14 @@ def create_rider_token(rider_id: str, mobile_number: str) -> str:
     Returns:
         Encoded JWT token string
     """
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(days=RIDER_TOKEN_EXPIRE_DAYS)
     payload = {
         "sub": str(rider_id),
         "mobile_number": mobile_number,
         "exp": expire,
     }
+    if sid:                       # SMART APPS: the session this token belongs to (one active session per user); see services/session_service.py
+        payload["sid"] = str(sid)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 def verify_token(authorization: str = Header(None)) -> dict:
@@ -319,12 +370,17 @@ def verify_token(authorization: str = Header(None)) -> dict:
     
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
+    if payload.get("typ") == ADMIN_APP_TOKEN_TYPE:        # ADMIN APP: an administrator's token is never a rider's token
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token"
+        )
+    return payload
 
 def get_current_rider(
     token: dict = Depends(verify_token),
@@ -365,5 +421,9 @@ def get_current_rider(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Rider account not found"
         )
+    
+    # SMART APPS: ONE ACTIVE SESSION PER USER. A token whose session was replaced (login on another phone), ended (logout) or reset (PIN) is refused here,
+    # with a code the app understands (detail.code = session_replaced | session_ended).
+    session_service.guard_payload(db, token, "rider")
     
     return rider

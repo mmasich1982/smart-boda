@@ -9,7 +9,7 @@
 // ✅ CRITICAL FIX (25 AUG 2026): Now syncs created_at from rider data to fix retention window
 // ✅ NEW (26 AUG 2026): Saves PIN to IndexedDB locally for offline-first login
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import OnboardingProgressBar from '../../components/OnboardingProgressBar';
 import DigitBoxInput from '../../components/DigitBoxInput';
@@ -17,14 +17,25 @@ import PrimaryButton from '../../components/PrimaryButton';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import api from '../../api/client';
-import { saveRiderAccountSummary, saveLocalBikeProfile, saveLocalRiderStatus, saveLocalRiderId } from '../../offline/db';
+import { saveRiderAccountSummary, saveLocalBikeProfile, saveLocalRiderStatus, saveLocalRiderId, markSessionActive, getLocalRiderStatus, getLocalDeviceId } from '../../offline/db';
+import { saveAdminSession } from '../../admin/adminSession';        // ADMIN APP
 import { updateRiderOnboardingDate } from '../../offline/tripsRepository';
 import { savePinLocally } from '../../offline/pinUtility';
 import { ensureRiderSession } from '../../offline/sessionToken';
 import { refreshMembership } from '../../offline/chamaSyncService';
 
 export default function CreatePinScreen({ route, navigation }) {
-  const { riderId } = route.params || {};
+  const { riderId, adminId, userType, mobile: adminMobile } = route.params || {};
+  // ADMIN APP: an Administrator reaches this screen with adminId (or, when the app was closed half-way, from the saved status). They get the same
+  // two-step Create / Confirm PIN screen; the PIN goes to /admin/app/pin/create and is NEVER kept on the phone.
+  const [adminCtx, setAdminCtx] = useState(userType === 'admin' && adminId ? { id: adminId, mobile: adminMobile } : null);
+  useEffect(() => {
+    if (riderId || adminCtx) return undefined;
+    let live = true;
+    getLocalRiderStatus().then((st) => { if (live && st && st.user_type === 'admin' && st.admin_id) setAdminCtx({ id: st.admin_id, mobile: st.mobile_number }); }).catch(() => {});
+    return () => { live = false; };
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  const isAdmin = !!adminCtx;
   const { t } = useTranslation();
   const { showToast } = useToast();
   const [stage, setStage] = useState('enter'); // 'enter' | 'confirm'
@@ -171,6 +182,22 @@ export default function CreatePinScreen({ route, navigation }) {
       setIsLoading(true);
       setError(null);
 
+      if (isAdmin) {
+        const ares = await api.post('/admin/app/pin/create', { admin_id: adminCtx.id, mobile_number: adminCtx.mobile, pin: draft, pin_confirm: confirmDraft, device_id: await getLocalDeviceId() });   // SMART APPS: this phone holds the session
+        if (ares?.data?.ok && ares.data.token) {
+          await saveAdminSession({ token: ares.data.token, admin: ares.data.admin });     // token + who they are; stays signed in until Logout
+          showToast(t('pin.created_success') || 'PIN created successfully');
+          navigation.replace('Home');
+          return;
+        }
+        if (ares?.data?.error === 'mismatch') {
+          setError(t('pin.mismatch')); setStage('enter'); setDraft(''); setConfirmDraft('');
+          return;
+        }
+        setError(t('pin.error_create') || 'Failed to create PIN');
+        return;
+      }
+
       // FIXED: Improved request format and error handling
       const res = await api.post(
         '/onboarding/pin/create',
@@ -201,6 +228,7 @@ export default function CreatePinScreen({ route, navigation }) {
         // /chama/me/* call (including the Treasurer "Enter your Chama Code" check) returned 401 and Home never saw the invite.
         // Get the token now (we know the PIN), then pull Chama membership so the card is on Home the first time it opens.
         await ensureRiderSession(riderId, draft);
+        await markSessionActive();   // PERSISTENT SESSION: a person who has just registered stays signed in on the next app start
         await refreshMembership();
 
         // FIXED: Navigate to Home after data is cached
@@ -242,6 +270,7 @@ export default function CreatePinScreen({ route, navigation }) {
         errorMsg = 'Network error. Please check your internet connection.';
       }
       
+      if (isAdmin && typeof err.response?.data?.detail === 'string' && [404, 409, 422].includes(err.response?.status)) errorMsg = err.response.data.detail;   // ADMIN APP: the server says exactly what is wrong
       setError(errorMsg);
     } finally {
       setIsLoading(false);

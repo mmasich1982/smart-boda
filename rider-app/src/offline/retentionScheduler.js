@@ -90,6 +90,9 @@ export async function readUnsyncedIds() {
     if (!q || q.status === 'synced') return;
     if (q.id) ids.add(String(q.id));
     if (q.data && q.data.id) ids.add(String(q.data.id));
+    // SMART BIZNA records are identified by their client id (and a queued correction / void by the record it points at)
+    if (q.data && q.data.client_id) ids.add(String(q.data.client_id));
+    if (q.data && q.data.record_client_id) ids.add(String(q.data.record_client_id));
   });
   return ids;
 }
@@ -246,6 +249,15 @@ export async function runScheduledRetention({ force = false, now = Date.now() } 
     await step('trips', () => cleanupOldTrips(riderId, { unsyncedIds }));
     await step('legacyStores', () => cleanupOldData());
     await step('financial', () => performRetentionCycleCleanup(riderId));
+    // SMART BIZNA: sales/services, purchases, expenses, suppliers, the Owner's team snapshot, Lipa Later payments, saved statements and finished
+    // statement requests. Never removes anything still in the sync queue, nor a Lipa Later sale that is not fully paid.
+    // MULTIPLE BUSINESSES: each business is cleaned in its OWN store (never only "the open one"). unsyncedIds covers every business, so it can only keep more.
+    await step('business', async () => {
+      const repo = await import('./businessRepository');
+      const out = {};
+      for (const b of await repo.registry.getMine()) out[b.business_id] = await (await repo.scoped(b.business_id)).runRetention({ unsyncedIds, nowMs: now });
+      return out;
+    });
 
     await indexedDbAdapter.kvSet(RETENTION_SCHEDULE_KEY, {
       lastRunAt: now,

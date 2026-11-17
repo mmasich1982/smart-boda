@@ -9,20 +9,21 @@
 // ✅ PART 5: Tiles by membership and role (hasGroup / isTreasurer)
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert, Linking, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Linking, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from '../i18n/LocalizationProvider';
 import { useToast } from '../components/Toast';
 import { getQueuedRecords } from '../offline/syncQueue';
-import { getActiveBikeProfile, getRiderAccountSummary, clearSession, getLocalRiderId } from '../offline/db';
+import { getActiveBikeProfile, getRiderAccountSummary, getLocalRiderId } from '../offline/db';
 import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
 import HeroFareCard from '../components/HeroFareCard';
 // NOTE: Subscription banners and account-lock enforcement removed - the app is always open.
 // ✅ CHAMA: system-driven membership (IndexedDB copy first, server is the authority) + logout cleanup
 import useChamaMembership from '../hooks/useChamaMembership';
 import { useGroupText } from './chama/groupText';
-import { clearChamaOnLogout } from '../offline/chamaSyncService';
+import { performLogout } from '../offline/logout';        // PERSISTENT SESSION: explicit Logout is the only way back to Sign-In
+import { confirmAction } from '../utils/confirmDialog';
 
 const ENERGY_TILE_BY_FUEL = {
   petrol: { emoji: '⛽', label: 'home.tile_fuel_motorcycle', route: 'FuelHub' },
@@ -393,29 +394,17 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
     }
   }, [navigation]);
 
+  // PERSISTENT SESSION: the ONLY way to reach the Sign-In screen from Home. Asks first, ends the session, then shows Sign-In.
   const handleLogout = useCallback(async () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
-      { text: 'Cancel', onPress: () => {} },
-      {
-        text: 'Logout',
-        onPress: async () => {
-          try {
-            await clearChamaOnLogout();   // remove this rider's Chama data from the phone
-            await clearSession();
-            if (navigation && navigation.reset) {
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-              });
-            }
-          } catch (err) {
-            console.error('Logout error:', err);
-            showToast('Error logging out', 'error');
-          }
-        },
-      },
-    ]);
-  }, [navigation, showToast]);
+    const yes = await confirmAction({ title: 'Logout', message: 'Are you sure you want to logout?', confirmText: 'Logout' });
+    if (!yes) return;
+    try {
+      await performLogout();
+    } catch (err) {
+      console.error('Logout error:', err);
+      showToast('Error logging out', 'error');
+    }
+  }, [showToast]);
 
   const handleNavigateTile = useCallback((route) => {
     if (navigation && navigation.navigate) {
@@ -651,7 +640,8 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
 
             <TouchableOpacity
               style={[styles.settingsListItem, styles.logoutListItem]}
-              onPress={() => navigation.navigate('PinLogin')}
+              testID="row-logout"
+              onPress={handleLogout}
             >
               <Text style={[styles.settingsListLabel, styles.logoutText]}>🚪 Logout</Text>
               <Text style={styles.settingsListArrow}>›</Text>

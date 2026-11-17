@@ -41,6 +41,7 @@
 // ✅ FEATURE: Queue statistics and diagnostic tools
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
+import { withBusinessHeader } from './businessQueueHeaders';
 import api from '../api/client';
 
 // ============================================================================
@@ -107,6 +108,55 @@ const RECORD_TYPE_VALIDATORS = {
     requiredFields: ['rider_id', 'amount', 'customerPhone'],
     requiredEndpointParams: ['rider_id'],
     description: 'Lipa Later Trip Recording',
+  },
+  // ---- SMART BIZNA record types (journeys D to O). Every one is idempotent on client_id, so a retry can never duplicate. ----
+  sale_service_entry: {
+    priority: PRIORITY_LEVELS.HIGH,
+    requiredFields: ['rider_id', 'business_id', 'client_id', 'total'],
+    requiredEndpointParams: [],
+    description: 'Smart Bizna New Sale/Service',
+  },
+  purchase_entry: {
+    priority: PRIORITY_LEVELS.HIGH,
+    requiredFields: ['rider_id', 'business_id', 'client_id', 'total'],
+    requiredEndpointParams: [],
+    description: 'Smart Bizna Business Purchase (calculator amount; a Lipa Later purchase carries the supplier details)',
+  },
+  expense_entry: {
+    priority: PRIORITY_LEVELS.NORMAL,
+    requiredFields: ['rider_id', 'business_id', 'client_id', 'details', 'amount'],
+    requiredEndpointParams: [],
+    description: 'Smart Bizna Business Expense',
+  },
+  supplier_lipa_payment: {
+    priority: PRIORITY_LEVELS.HIGH,
+    requiredFields: ['rider_id', 'business_id', 'client_id', 'purchase_client_id', 'amount'],
+    requiredEndpointParams: [],
+    description: 'Smart Bizna payment made to a supplier (business tables; names its purchase by client id)',
+  },
+  record_correction: {
+    priority: PRIORITY_LEVELS.HIGH,
+    requiredFields: ['rider_id', 'business_id', 'client_id', 'record_client_id'],
+    requiredEndpointParams: [],
+    description: 'Smart Bizna Correction of a record (24-hour window)',
+  },
+  record_void: {
+    priority: PRIORITY_LEVELS.HIGH,
+    requiredFields: ['rider_id', 'business_id', 'client_id', 'record_client_id', 'reason'],
+    requiredEndpointParams: [],
+    description: 'Smart Bizna Void of a record (24-hour window)',
+  },
+  business_statement_request: {
+    priority: PRIORITY_LEVELS.NORMAL,
+    requiredFields: ['rider_id', 'business_id', 'client_id', 'statement_type', 'period_from', 'period_to'],
+    requiredEndpointParams: [],
+    description: 'Smart Bizna request for a statement older than six months',
+  },
+  business_lipa_payment: {
+    priority: PRIORITY_LEVELS.HIGH,
+    requiredFields: ['rider_id', 'business_id', 'client_id', 'sale_client_id', 'amount'],
+    requiredEndpointParams: [],
+    description: 'Smart Bizna Lipa Later payment (business tables; names its sale by client id)',
   },
   lipa_later_payment: {
     priority: PRIORITY_LEVELS.CRITICAL,
@@ -631,6 +681,7 @@ export async function processPendingSync() {
 
         // Attempt to POST the item to the backend
         // ✅ FIXED: Pass requestConfig to include custom headers when needed
+        requestConfig = withBusinessHeader(item, requestConfig);   // MULTIPLE BUSINESSES: a business item goes to the business it was made in
         const response = await api.post(syncEndpoint, item.data, requestConfig);
 
         // Mark as synced

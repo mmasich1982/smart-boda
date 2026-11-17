@@ -14,6 +14,8 @@ import { useTranslation } from '../../i18n/LocalizationProvider';
 // NOTE: the language list itself is 100% Super Admin master data (language_master, is_active=true) —
 // this screen never hardcodes "English"/"Kiswahili"; MVP0 simply has two rows active today.
 // FIXED: NO Smart Boda branding header (appears in app-topbar only)
+// Smart Bizna (prototype v45): the first two screens carry NO brand (neither Smart Boda nor Smart Bizna) because nobody's type is
+// known yet; the wording speaks to business owners and the hero uses the shop watermark.
 // FIXED: NO language pre-selection on app launch
 export default function LanguageSelectionScreen({ navigation }) {
   const { languages } = useMasterData();
@@ -30,9 +32,10 @@ export default function LanguageSelectionScreen({ navigation }) {
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
-      {/* Per cleaned.html: Hero band with moto watermarks, NO branding header */}
+      {/* Prototype v45: hero band with the shop watermark, NO branding header */}
       <HeroBand 
-        eyebrow="🤝 Riders all over Kenya use this app" 
+        watermark="🏪"
+        eyebrow="🤝 Business owners all over Kenya use this app" 
         title="Karibu! Welcome 👋" 
         subtitle="Pick your language. It only takes one tap." 
       />
@@ -44,6 +47,11 @@ export default function LanguageSelectionScreen({ navigation }) {
         onPress={handleContinue} 
         disabled={!selected}
       />
+
+      {/* SMART APPS: this screen now opens from Register on the Login screen; a registered person can go back */}
+      <TouchableOpacity onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.replace('PinLogin'))} accessibilityRole="button" style={styles.loginLink}>
+        <Text style={styles.loginLinkText}>Already registered? Log in</Text>
+      </TouchableOpacity>
       
       <CustomerCareFooter />
     </ScrollView>
@@ -52,4 +60,6 @@ export default function LanguageSelectionScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f6f4ef' },
+  loginLink: { alignItems: 'center', paddingVertical: 14 },
+  loginLinkText: { color: '#e5650a', fontWeight: '700', fontSize: 14 },
 });

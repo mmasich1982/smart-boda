@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.models.boda_group import BodaGroup, GroupMember
+from app.models.business import Business, BusinessUser
 from app.models.individual_rider import IndividualRiderPreRegistration as Pre, AWAITING, REGISTERED
 from app.models.pin_recovery_request import PinRecoveryRequest
 from app.models.rider import Rider
@@ -26,14 +27,20 @@ def find_preregistration(db: Session, phone):
     return db.query(Pre).filter(Pre.phone_key == k).first()
 
 
-def find_phone_conflict(db: Session, phone):
+def find_phone_conflict(db: Session, phone, allow_owner_reuse: bool = False):
     """None when the number exists NOWHERE in Smart Boda; otherwise {"where": code, "message": text for the Administrator}.
-    Looks at: the rider table, earlier pre-registrations, group members (ANY status), group Treasurer phones (ANY status)
-    and PIN-recovery requests. A rider's customers (Lipa Later) are third parties, not riders, so they are not checked."""
+    Looks at: the rider table, earlier pre-registrations, group members (ANY status), group Treasurer phones (ANY status),
+    business users (Smart Bizna, ANY status) and PIN-recovery requests. A rider's customers (Lipa Later) are third parties, not riders, so they are not checked."""
     k = phone_key(phone)
     if len(k) != 9:
         return None
+    # MULTIPLE BUSINESSES: when the Administrator is adding another business for an EXISTING Business Owner, that Owner's own number (their
+    # business_user rows, all OWNER, and the rider account linked to them) is not a clash. Staff numbers, riders and everything else still are.
+    own = db.query(BusinessUser).filter(BusinessUser.phone_key == k).all() if allow_owner_reuse else []
+    reuse = bool(own) and all(o.role == "OWNER" for o in own)
     r = db.query(Rider).filter(rider_mobile_key() == k).first()
+    if r and reuse and any(o.rider_id == r.id for o in own):
+        r = None
     if r:
         name = (r.full_name or "").strip() or "no name yet"
         return {"where": "rider", "message": f"This number already belongs to a rider account ({name}, status: {r.registration_status or 'pending'})."}
@@ -47,6 +54,10 @@ def find_phone_conflict(db: Session, phone):
     g = db.query(BodaGroup).filter(_digits_key(BodaGroup.treasurer_phone) == k).first()
     if g:
         return {"where": "treasurer", "message": f"This number is the Treasurer number of the group \u201c{g.group_name}\u201d."}
+    bz = (db.query(BusinessUser, Business).join(Business, Business.id == BusinessUser.business_id)
+          .filter(BusinessUser.phone_key == k).first())
+    if bz and not reuse:
+        return {"where": "business_user", "message": f"This number is already registered to a business user ({bz[0].full_name}) of \u201c{bz[1].business_name}\u201d."}
     if db.query(PinRecoveryRequest.id).filter(_digits_key(PinRecoveryRequest.mobile_number) == k).first():
         return {"where": "pin_recovery", "message": "This number appears in a PIN recovery request."}
     return None
@@ -68,6 +79,8 @@ def is_unlinked_individual(db: Session, rider) -> bool:
     """True for a rider who has never been added to any group and is linked to no Treasurer (any status). Such a rider
     may still be named the Treasurer of a NEW group by the Administrator."""
     k = phone_key(rider.mobile_number)
+    if len(k) == 9 and db.query(db.query(BusinessUser.id).filter(BusinessUser.phone_key == k).exists()).scalar():
+        return False                                  # a business user is never an 'individual rider' (no business + motorcycle account)
     q = db.query(GroupMember.id).filter(GroupMember.linked_rider_id == rider.id)
     if db.query(q.exists()).scalar():
         return False

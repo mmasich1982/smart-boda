@@ -1,9 +1,9 @@
 // rider-app/public/sw.js
-// Service worker for the Smart Boda PWA. This is what makes the app installable and
+// Service worker for the Smart Apps PWA. This is what makes the app installable and
 // usable with no connectivity — the actual offline data (trips, fuel entries, etc.) is
 // already handled by src/offline/LocalStore.js's IndexedDB adapter; this worker's job is
 // purely to cache the APP SHELL (JS/CSS/HTML/icons) so the app itself loads with no network.
-const CACHE_NAME = 'smart-boda-shell-v1';
+const CACHE_NAME = 'smart-apps-shell-v2';     // SMART APPS: renamed so an installed app drops the old SB icons and fetches the SA ones
 const APP_SHELL = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (event) => {
@@ -29,7 +29,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   const isApiCall = url.pathname.startsWith('/trips') || url.pathname.startsWith('/onboarding')
     || url.pathname.startsWith('/financial') || url.pathname.startsWith('/fuel-maintenance')
-    || url.pathname.startsWith('/compliance') || url.pathname.startsWith('/admin');
+    || url.pathname.startsWith('/compliance') || url.pathname.startsWith('/admin')
+    || url.pathname.startsWith('/auth') || url.pathname.startsWith('/restore');       // SMART APPS: login, session and restore calls are never cached
   if (event.request.method !== 'GET' || isApiCall || url.origin !== self.location.origin) {
     return; // let the network handle it directly — this is app-shell caching only
   }

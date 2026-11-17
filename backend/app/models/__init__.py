@@ -65,6 +65,11 @@ from app.models.target_streak import TargetStreak
 from app.models.trip import Trip
 from app.models.boda_group import (BodaGroup, GroupSlotRequest, AppNotification, GroupMember)
 from app.models.individual_rider import IndividualRiderPreRegistration   # Individual riders
+from app.models.business import BusinessTypeMaster, Business, BusinessUser   # Smart Bizna
+from app.models.business_ops import (BusinessSale, BusinessPurchase, BusinessExpense,
+                                      BusinessStatementRequest)
+from app.models.business_lipa_later import (BusinessLipaLaterRecord, BusinessLipaLaterPayment, BusinessSupplierLipaRecord,
+                                            BusinessSupplierLipaPayment)   # Smart Bizna records
 from app.models.chama_finance import (
     ChamaConfig, ChamaCategory, ChamaContribution,
     ChamaLoanApplication, ChamaLoan, ChamaLoanPayment,
@@ -142,4 +147,15 @@ __all__ = [
     "CorrectionReasonMaster",
     "TripEntryRuleConfig",
     "IndividualRiderPreRegistration",
+    "BusinessTypeMaster",
+    "Business",
+    "BusinessUser",
+    "BusinessSale",
+    "BusinessPurchase",
+    "BusinessExpense",
+    "BusinessLipaLaterRecord",
+    "BusinessLipaLaterPayment",
+    "BusinessSupplierLipaRecord",
+    "BusinessSupplierLipaPayment",
+    "BusinessStatementRequest",
 ]

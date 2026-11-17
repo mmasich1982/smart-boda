@@ -1,7 +1,7 @@
 {
-  "name": "Smart Boda - Rider Income Tracker",
-  "short_name": "Smart Boda",
-  "description": "Track trips, fuel, maintenance, and savings — works fully offline. Complete financial management for motorcycle riders.",
+  "name": "Smart Apps",
+  "short_name": "Smart Apps",
+  "description": "Smart Boda, Smart Bizna, Smart Cabz, and more in one app. Track your income, expenses and savings — works fully offline.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

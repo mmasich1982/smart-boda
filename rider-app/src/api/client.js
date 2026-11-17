@@ -5,7 +5,7 @@
 
 import axios from 'axios';
 import Constants from 'expo-constants';
-import { getLocalAuthToken } from '../offline/db';
+import { getLocalAuthToken, getLocalDeviceId } from '../offline/db';
 import NetInfo from '@react-native-community/netinfo';
 
 // EXPO_PUBLIC_API_BASE_URL is read at build time via rider-app/app.json's "extra" block
@@ -30,12 +30,25 @@ NetInfo.addEventListener(state => {
   lastNetworkStatus = state;
 });
 
+// SMART APPS: ONE ACTIVE SESSION PER USER. When the server says this phone's session was replaced (the account was used on another phone)
+// or ended, the app must stop and show the Login screen. The handler is set by the app shell (src/auth/sessionLost.js) so this file stays free of navigation.
+let sessionLostHandler = null;
+export const setSessionLostHandler = (fn) => { sessionLostHandler = fn; };
+
+// A login call must never carry an old (maybe revoked) token: it would be refused before the person could sign in again.
+const NO_TOKEN_URLS = ['/auth/login', '/onboarding/pin/login'];
+let cachedDeviceId = null;
+
 // Attach the rider's auth token (set at PIN login) to every outgoing request, when present.
+// SMART APPS: every request also says WHICH PHONE it comes from (X-Device-Id), so a token from before sessions existed can be adopted into one.
 api.interceptors.request.use(async (config) => {
   try {
-    const token = await getLocalAuthToken();
+    config.headers = config.headers || {};
+    if (!cachedDeviceId) cachedDeviceId = await getLocalDeviceId();
+    if (cachedDeviceId) config.headers['X-Device-Id'] = cachedDeviceId;
+    const skip = NO_TOKEN_URLS.some((u) => (config.url || '').endsWith(u));
+    const token = skip ? null : await getLocalAuthToken();
     if (token) {
-      config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${token}`;
     }
   } catch {
@@ -50,6 +63,12 @@ api.interceptors.request.use(async (config) => {
 api.interceptors.response.use(
   response => response,
   error => {
+    // SMART APPS: a 401 that carries a session code means this phone is no longer the one signed-in session
+    const detail = error.response?.data?.detail;
+    if (error.response?.status === 401 && detail && typeof detail === 'object' && typeof detail.code === 'string' && detail.code.startsWith('session_')) {
+      try { if (sessionLostHandler) sessionLostHandler(detail.code, detail.message); } catch { /* never let the handler break a request */ }
+    }
+
     // Check if this is an expected offline error
     const isOfflineError = 
       error.code === 'ECONNABORTED' ||

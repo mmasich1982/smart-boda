@@ -8,7 +8,9 @@
 #
 # Who may set up: only a number that a Treasurer registered in a group, that the administrator named as a group's Treasurer,
 # or that the administrator pre-registered as an INDIVIDUAL rider (no Treasurer, no group; see admin_individual_riders.py).
-# Everyone else is told to ask their Group Treasurer or Smart Boda, so the app cannot be joined by guessing a number.
+# or that the administrator registered as a BUSINESS user (Smart Bizna: the Business Owner or a Sales/Service Person).
+# Everyone else is told to ask their Admin or Group Treasurer, so the app cannot be joined by guessing a number.
+# A rider chooses a FUEL TYPE; a business user chooses a BUSINESS TYPE. The server never accepts the wrong one.
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -17,20 +19,22 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.bike_profile import BikeProfile
+from app.models.business import BusinessTypeMaster
 from app.models.boda_group import BodaGroup, GroupMember
 from app.models.master_data import FuelTypeMaster, LanguageMaster
 from app.models.rider import Rider
 from app.routers.mobile_number import validate_mobile_number
 from app.schemas.onboarding import SetupProfileRequest
+from app.services.business_service import business_registration, mark_business_registered
 from app.services.group_member_link_service import find_rider_id_by_mobile, link_members_for_rider
 from app.services.group_roles import phone_key, same_phone
 from app.services.individual_rider_service import find_preregistration, mark_registered
+from app.services import admin_app_service            # ADMIN APP: an Administrator may also set up in the app
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/onboarding", tags=["Setup My Profile"])
 
-NOT_FOUND = ("We could not find this mobile number. Ask your Group Treasurer to register you in the group, "
-             "or contact Smart Boda to be added as an individual rider, then try again.")
+NOT_FOUND = ("We could not find this mobile number. Ask your Admin or your Group Treasurer to register you, then try again.")
 
 
 def find_registration(db: Session, mobile: str):
@@ -59,20 +63,40 @@ def _clean(mobile):
     return normalized
 
 
+def _business_type_name(db: Session, code):
+    """The display name of the Business Type the Smart Bizna Administrator chose (shown to the business user read-only, like their name)."""
+    if not code:
+        return None
+    bt = db.query(BusinessTypeMaster).filter_by(code=code).first()           # any type, active or not: it was chosen at pre-registration
+    return bt.display_name if bt else None
+
+
 @router.get("/profile-lookup/{mobile_number}")
 def profile_lookup(mobile_number: str, db: Session = Depends(get_db)):
     """Shows the rider their own name once they type their number. 404 = no Treasurer has registered this number.
     409 = this number already has a finished account (the rider should log in)."""
     normalized = _clean(mobile_number)
+    adm = admin_app_service.lookup(db, normalized)           # ADMIN APP: checked first; an Administrator with app access gets the same name look-up as a rider
+    if adm["state"] == "already_set_up":
+        raise HTTPException(409, "This mobile number is already set up. Please log in with your PIN.")
+    if adm["state"] == "found":
+        return admin_app_service.lookup_payload(adm["admin"], normalized)
     rid = find_rider_id_by_mobile(db, normalized)
     if rid:
         r = db.get(Rider, rid)
         if r and r.registration_status == "active":
             raise HTTPException(409, "This mobile number is already set up. Please log in with your PIN.")
     reg = find_registration(db, normalized)
-    if not reg:
+    if reg:
+        return {"found": True, "full_name": reg[0], "mobile_number": normalized, "source": reg[4], "user_type": "rider",
+                "role": None, "business_name": None, "business_type_code": None, "business_type_name": None}
+    biz = business_registration(db, normalized)                 # Smart Bizna: Business Owner or Sales/Service Person
+    if not biz:
         raise HTTPException(404, NOT_FOUND)
-    return {"found": True, "full_name": reg[0], "mobile_number": normalized, "source": reg[4]}
+    bu, b = biz
+    return {"found": True, "full_name": bu.full_name, "mobile_number": normalized, "source": "business", "user_type": "business",
+            "role": bu.role, "business_name": b.business_name, "business_type_code": b.business_type_code,
+            "business_type_name": _business_type_name(db, b.business_type_code)}
 
 
 @router.post("/setup-profile")
@@ -83,12 +107,23 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
     normalized = _clean(payload.mobile_number)
     if not payload.consent_accepted:
         raise HTTPException(422, "You must accept the Terms and Privacy Notice to continue.", headers={"X-Error-Code": "CONSENT_REQUIRED"})
-    if not db.query(FuelTypeMaster).filter_by(code=payload.fuel_type_code, is_active=True).first():
-        raise HTTPException(422, "Please choose the fuel type of your motorcycle.")
     reg = find_registration(db, normalized)
-    if not reg:
+    biz = None if reg else business_registration(db, normalized)
+    if not biz and payload.business_type_code is None and not db.query(FuelTypeMaster).filter_by(code=payload.fuel_type_code, is_active=True).first():
+        raise HTTPException(422, "Please choose the fuel type of your motorcycle.")      # a rider's request: checked first, as always
+    if not reg and not biz:
         raise HTTPException(404, NOT_FOUND)
-    name, county_id, sub_county_id, ward_id, _src = reg
+    if biz:                                                     # Smart Bizna user: nothing to choose, they only finish the registration
+        if payload.fuel_type_code:
+            raise HTTPException(422, "A business user does not choose a fuel type.")
+        if payload.business_type_code:                          # the Business Type was chosen by the Administrator at pre-registration:
+            raise HTTPException(422, "The business type is set by the Administrator.")      # no business user is shown it or sends it
+        # the person's location is the business location the Administrator set (County, Sub-county, Ward)
+        name, county_id, sub_county_id, ward_id, _src = biz[0].full_name, biz[1].county_id, biz[1].sub_county_id, biz[1].ward_id, "business"
+    else:
+        if payload.business_type_code:
+            raise HTTPException(422, "A rider does not choose a business type.")
+        name, county_id, sub_county_id, ward_id, _src = reg
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     lang = payload.language_code if payload.language_code and db.query(LanguageMaster).filter_by(code=payload.language_code).first() else None
     try:
@@ -105,12 +140,15 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
         rider.registration_status, rider.onboarding_step, rider.updated_at = "verified_incomplete", "createPin", now
         if lang: rider.language_code = lang
         db.flush()
-        bp = db.query(BikeProfile).filter_by(rider_id=rider.id, is_active=True).first()
-        if bp: bp.fuel_type_code = payload.fuel_type_code
-        else: db.add(BikeProfile(rider_id=rider.id, fuel_type_code=payload.fuel_type_code, submitted_at=now,
-                                 sync_status="synced", is_active=True))
-        link_members_for_rider(db, rider)
-        mark_registered(db, rider)                            # an individual rider's waiting record becomes "registered"
+        if biz:
+            mark_business_registered(db, biz[0], biz[1], rider)   # no bike, no group
+        else:
+            bp = db.query(BikeProfile).filter_by(rider_id=rider.id, is_active=True).first()
+            if bp: bp.fuel_type_code = payload.fuel_type_code
+            else: db.add(BikeProfile(rider_id=rider.id, fuel_type_code=payload.fuel_type_code, submitted_at=now,
+                                     sync_status="synced", is_active=True))
+            link_members_for_rider(db, rider)
+            mark_registered(db, rider)                        # an individual rider's waiting record becomes "registered"
         db.commit()
     except HTTPException:
         db.rollback(); raise
@@ -122,5 +160,10 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
         logger.error(f"setup_profile failed for {normalized}: {e}", exc_info=True)
         raise HTTPException(500, "We could not save your profile. Please try again.")
     return {"status": "confirmed", "rider_id": str(rider.id), "full_name": rider.full_name,
-            "mobile_number": rider.mobile_number, "fuel_type_code": payload.fuel_type_code,
-            "county_id": county_id, "sub_county_id": sub_county_id, "ward_id": ward_id, "source": _src, "next_step": "createPin"}
+            "mobile_number": rider.mobile_number, "fuel_type_code": None if biz else payload.fuel_type_code,
+            "county_id": county_id, "sub_county_id": sub_county_id, "ward_id": ward_id, "source": _src, "next_step": "createPin",
+            "user_type": "business" if biz else "rider", "role": biz[0].role if biz else None,
+            "business_id": str(biz[1].id) if biz else None, "business_name": biz[1].business_name if biz else None,
+            "business_user_id": str(biz[0].id) if biz else None,    # lets a brand-new phone record offline before the first /business/me
+            "business_type_code": biz[1].business_type_code if biz else None,
+            "business_type_name": _business_type_name(db, biz[1].business_type_code) if biz else None}

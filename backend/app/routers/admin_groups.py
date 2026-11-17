@@ -18,6 +18,7 @@ from app.services.group_roles import same_phone, phone_key
 from app.services.group_member_link_service import rider_mobile_key
 from app.models.rider import Rider
 from app.services.individual_rider_service import is_unlinked_individual
+from app.services.business_service import find_business_user
 
 # Same guard style as payment_admin.py: every route below needs a logged-in admin.
 router = APIRouter(prefix="/admin/groups", tags=["admin-groups"],
@@ -163,6 +164,8 @@ def _phone_taken_message(r: Rider) -> str:
 def _require_unused_phone(db: Session, phone, group_type, exclude_id=None):
     """BLOCKS saving: a newly assigned Treasurer phone must not already belong to a rider account.
     The ONE exception is a pair: the same Treasurer already runs an active group of the OTHER type."""
+    if find_business_user(db, phone):
+        raise HTTPException(409, "This number belongs to a Smart Bizna business user, so it cannot be a group Treasurer.")
     r = _rider_with_phone(db, phone)
     if not r:
         return
@@ -178,6 +181,10 @@ def phone_check(phone: str, group_type: Optional[str] = None, exclude_group_id: 
                 db: Session = Depends(get_db)):
     """Used by the form to show the result before the administrator presses Save. The same rule is enforced
     again on create and update, so this check can never be bypassed."""
+    bz = find_business_user(db, phone)
+    if bz:
+        return {"has_account": True, "pair_ok": False, "rider_name": bz[0].full_name, "status": bz[0].status,
+                "message": "This number belongs to a Smart Bizna business user, so it cannot be a group Treasurer."}
     r = _rider_with_phone(db, phone)
     if not r:
         return {"has_account": False}

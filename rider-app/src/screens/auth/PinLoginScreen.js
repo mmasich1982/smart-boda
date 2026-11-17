@@ -19,7 +19,8 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput,
   ActivityIndicator, Alert, Animated, Dimensions
 } from 'react-native';
-import { getLocalRiderStatus, saveLocalAuthToken } from '../../offline/db';
+import { getLocalRiderStatus, saveLocalAuthToken, markSessionActive } from '../../offline/db';
+import { confirmAction } from '../../utils/confirmDialog';
 import BackLink from '../../components/BackLink';
 import PrimaryButton from '../../components/PrimaryButton';
 import { useToast } from '../../components/Toast';
@@ -27,6 +28,11 @@ import colors from '../../theme/colors';
 import api from '../../api/client';
 import { verifyPinLocally, getLoginAttempts, savePinLocally } from '../../offline/pinUtility';
 import { ensureRiderSession } from '../../offline/sessionToken';
+// SMART APPS: the Login screen asks for the MOBILE NUMBER and the PIN (rules in auth/loginRules.js)
+import { isPhone, choosePath, messageFor, takeoverQuestion, MESSAGES } from '../../auth/loginRules';
+import { loginWithMobile } from '../../auth/loginApi';
+import { completeLogin } from '../../auth/completeLogin';
+import { getRevoked, takeNotice } from '../../auth/sessionFlags';
 // ✅ REMOVED: checkAndEnforceLock, ensureFreeTrial imports - this is now HomeScreen's responsibility
 
 const { width } = Dimensions.get('window');
@@ -271,6 +277,12 @@ export default function PinLoginScreen({ navigation, route }) {
   const [verifying, setVerifying] = useState(false);
   const [riderName, setRiderName] = useState('');
   const [riderId, setRiderId] = useState(null);
+  // SMART APPS: the number the person logs in with. After onboarding on this phone it is the number their Admin or Treasurer linked to them,
+  // so after Logout only the PIN is typed. On a new phone it starts empty. (route.params.mobile may pre-fill it.)
+  const [mobile, setMobile] = useState((route && route.params && route.params.mobile) || '');
+  const [identity, setIdentity] = useState(null);        // what this phone already holds (saved status)
+  const [revoked, setRevoked] = useState(null);          // the server ended this phone's session: the PIN on the phone no longer opens the app
+  const [notice, setNotice] = useState((route && route.params && route.params.notice) || null);
 
   const pinInputRefs = useRef([]);
   const shakeAnimation = useRef(new Animated.Value(0)).current;
@@ -290,6 +302,11 @@ export default function PinLoginScreen({ navigation, route }) {
         if (status?.riderName) {
           setRiderName(status.riderName);
         }
+        setIdentity(status || null);
+        if (status?.full_name && !status?.riderName) setRiderName(status.full_name);
+        if (status?.mobile_number && !(route?.params?.mobile)) setMobile(status.mobile_number);      // default to the number linked to this person
+        setRevoked(await getRevoked());
+        if (!route?.params?.notice) setNotice(await takeNotice());
         if (status?.rider_id) {
           setRiderId(status.rider_id);
         }
@@ -404,93 +421,55 @@ export default function PinLoginScreen({ navigation, route }) {
       showToast('Please enter a 4-digit PIN', 'error');
       return;
     }
+    if (!isPhone(mobile)) { showToast(MESSAGES.needNumber, 'error'); return; }
+    setNotice(null);
+
+    // SMART APPS: which check applies. This phone already belongs to that person and the server has not ended its session -> the quick check
+    // against the PIN kept on the phone (works offline). Anything else (a new phone, another number, an Administrator, an ended session) -> the server.
+    if (choosePath({ mobile, status: identity, revoked }) === 'server') { await serverLogin(pin, false); return; }
 
     try {
       setVerifying(true);
       triggerShake();
-
       console.log(`[PinLogin] Verifying PIN locally for rider ${riderId}...`);
 
-      // ✅ PRIMARY: Verify against locally stored PIN (offline-first)
+      // PRIMARY: verify against the PIN saved on this phone (offline-first)
       const localResult = await verifyPinLocally(riderId, pin);
-      
+
       if (localResult.success) {
-        console.log('[PinLogin] ✅ PIN verified offline');
+        console.log('[PinLogin] PIN verified offline');
+        // The server token (online only, never throws). SMART APPS: if the account is logged in on ANOTHER phone the quiet call refuses to take
+        // the session; the person is asked whether to log in here instead.
+        const sess = await ensureRiderSession(riderId, pin);
+        if (!sess.ok && sess.reason === 'session_elsewhere') {
+          setVerifying(false);
+          const yes = await confirmAction(takeoverQuestion(sess.other));
+          if (yes) await serverLogin(pin, true);
+          else setPinDraft(['', '', '', '']);
+          return;
+        }
         showToast('✅ Logged in successfully', 'success');
-
-        // FIX: get the server Bearer token (online only, never throws) so /chama/me/* works and the Treasurer card can show.
-        await ensureRiderSession(riderId, pin);
-
-        // ✅ SIMPLIFIED: Just navigate to Home - let HomeScreen handle subscription checks
-        // HomeScreen.useFocusEffect() will automatically check for account lock
-        // and redirect to AccountLockedScreen if needed
-        setTimeout(() => {
-          console.log('[PinLogin] Navigating to Home - subscription checks deferred to HomeScreen');
-          navigation.replace('Home');
-        }, 600);
+        await markSessionActive();   // PERSISTENT SESSION: stay signed in until an explicit Logout
+        setTimeout(() => { navigation.replace('Home'); }, 600);
         return;
       }
 
-      // ✅ SECONDARY: If offline validation failed, try API (when online)
       if (localResult.isLocked) {
-        // Account is locked - show lockout message
         setPinLockedUntil(Date.now() + (localResult.minutesRemaining * 60000));
         setPinAttemptsLeft(0);
         showToast(localResult.message, 'error');
         return;
       }
 
-      // Local validation failed but account not locked - try API as fallback
-      console.log('[PinLogin] Local validation failed, attempting API fallback...');
-      try {
-        // FIX: the old '/auth/pin/verify' route does not exist in the backend (always 404). The real server check is
-        // POST /onboarding/pin/login, which returns HTTP 200 for BOTH right and wrong PINs, so success is judged ONLY by
-        // { ok: true, token } - never by the HTTP status.
-        const apiResponse = await api.post(
-          '/onboarding/pin/login',
-          { rider_id: String(riderId), pin: String(pin) },
-          { timeout: 8000 }
-        );
-        const apiData = apiResponse?.data;
-
-        if (apiData?.ok && apiData?.token) {
-          console.log('[PinLogin] ✅ PIN verified via API');
-          await saveLocalAuthToken(apiData.token);           // Bearer token for /chama/me/* (Treasurer card, tiles)
-          await savePinLocally(riderId, pin).catch(() => {}); // server accepted it: refresh the phone copy (e.g. PIN reset elsewhere)
-          showToast('✅ Logged in successfully', 'success');
-
-          // Reset local attempts on successful API verification
-          await loadAttempts();
-
-          // ✅ SIMPLIFIED: Navigate to Home immediately
-          // Let HomeScreen handle subscription lock checks via useFocusEffect
-          setTimeout(() => {
-            console.log('[PinLogin] Navigating to Home - subscription checks deferred to HomeScreen');
-            navigation.replace('Home');
-          }, 600);
-          return;
-        }
-        if (apiData?.error === 'locked') {
-          showToast('Too many wrong attempts. Please try again later.', 'error');
-        }
-      } catch (apiErr) {
-        console.warn('[PinLogin] API fallback also failed:', apiErr.message);
-        // Both local and API failed - use local error message
-      }
-
-      // Update UI with attempt info from local verification
+      // The PIN on this phone says no. The server may know better (e.g. the PIN was reset elsewhere): ask it with the number + PIN.
+      setVerifying(false);
+      const res = await loginWithMobile({ mobile, pin, takeover: false });
+      if (res.ok || res.error === 'active_elsewhere') { await handleServerAnswer(res, pin); return; }
       setPinAttemptsLeft(localResult.attemptsRemaining);
-      
-      if (localResult.attemptsRemaining === 0 && localResult.isLocked) {
-        // Lock account if needed
-        setPinLockedUntil(Date.now() + 15 * 60 * 1000);
-      }
-
-      // Show error and trigger shake
+      if (localResult.attemptsRemaining === 0 && localResult.isLocked) setPinLockedUntil(Date.now() + 15 * 60 * 1000);
       triggerShake();
       setPinDraft(['', '', '', '']);
       showToast(localResult.message, 'error');
-
     } catch (err) {
       console.error('[PinLogin] Unexpected error:', err);
       triggerShake();
@@ -500,7 +479,45 @@ export default function PinLoginScreen({ navigation, route }) {
     }
   };
 
+  /** SMART APPS: log in with the server (new phone, another number, Administrator, or a session the server ended). Needs the internet. */
+  const serverLogin = async (pin, takeover) => {
+    try {
+      setVerifying(true);
+      const res = await loginWithMobile({ mobile, pin, takeover });
+      await handleServerAnswer(res, pin);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleServerAnswer = async (res, pin) => {
+    if (res.ok && res.token) {
+      const done = await completeLogin(res, pin);
+      if (!done.ok) { triggerShake(); setPinDraft(['', '', '', '']); showToast(messageFor(done), 'error'); return; }
+      showToast('✅ Logged in successfully', 'success');
+      setTimeout(() => {
+        if (done.next === 'RestoreAccount') navigation.replace('RestoreAccount', { userType: done.userType, riderId: done.riderId });
+        else navigation.replace('Home');
+      }, 400);
+      return;
+    }
+    if (res.error === 'active_elsewhere') {
+      const yes = await confirmAction(takeoverQuestion(res));         // ONE active session per person: log in here, log out there
+      if (yes) await serverLogin(pin, true); else setPinDraft(['', '', '', '']);
+      return;
+    }
+    triggerShake();
+    setPinDraft(['', '', '', '']);
+    if (res.error === 'locked') { setPinLockedUntil(Date.now() + (res.minutes || 15) * 60000); setPinAttemptsLeft(0); }
+    else if (typeof res.attempts_left === 'number') setPinAttemptsLeft(res.attempts_left);
+    showToast(messageFor(res), 'error');
+  };
+
   const handleForgotPin = () => {
+    if (!riderId) {       // SMART APPS: on a phone that does not hold the account yet there is nothing to recover from here
+      showToast('To reset your PIN, please call support: +254 757 334481', 'error');
+      return;
+    }
     navigation.navigate('ForgotPin', {
       riderId: riderId,
       riderName: riderName,
@@ -512,7 +529,7 @@ export default function PinLoginScreen({ navigation, route }) {
       <View style={styles.centerContainer}>
         <ActivityIndicator size="large" color={colors.bodaOrange} />
         <Text style={{ marginTop: 12, fontSize: 14, color: colors.inkSoft }}>
-          Loading Smart Boda...
+          Loading Smart Apps...
         </Text>
       </View>
     );
@@ -526,6 +543,18 @@ export default function PinLoginScreen({ navigation, route }) {
         riderName={riderName}
         riderInitial={riderInitial}
       />
+
+      {/* SMART APPS: why the person is back here (e.g. the account was used on another device) */}
+      {notice ? (
+        <View style={[styles.banner, styles.bannerLocked]}><Text style={styles.bannerText}>{notice}</Text></View>
+      ) : null}
+
+      {/* SMART APPS: the MOBILE NUMBER, above the PIN. Filled in for the person this phone belongs to; empty on a new phone. */}
+      <View style={styles.mobileBox}>
+        <Text style={styles.mobileLabel}>Mobile number</Text>
+        <TextInput style={styles.mobileInput} value={mobile} onChangeText={setMobile} keyboardType="phone-pad" placeholder="0712345678"
+          placeholderTextColor="#9aa0ab" autoCapitalize="none" autoCorrect={false} accessibilityLabel="Mobile number" editable={!verifying} />
+      </View>
 
       {/* PIN INPUT SECTION */}
       <View style={styles.pinInputSection}>
@@ -555,13 +584,13 @@ export default function PinLoginScreen({ navigation, route }) {
                 editable={!isLocked && !verifying}
                 placeholder="•"
                 placeholderTextColor={colors.line}
-                secureTextEntry={false}
+                secureTextEntry={choosePath({ mobile, status: identity, revoked }) === 'server'}
               />
             </Animated.View>
           ))}
         </View>
 
-        <Text style={styles.pinHint}>Tap to reveal</Text>
+        {choosePath({ mobile, status: identity, revoked }) !== 'server' && <Text style={styles.pinHint}>Tap to reveal</Text>}
       </View>
 
       {/* ATTEMPTS INDICATOR */}
@@ -586,7 +615,7 @@ export default function PinLoginScreen({ navigation, route }) {
       <PrimaryButton
         label={verifying ? 'Verifying...' : 'Log In →'}
         onPress={() => verifyPin(pinDraft.join(''))}
-        disabled={isLocked || verifying || pinDraft.join('').length < 4}
+        disabled={isLocked || verifying || pinDraft.join('').length < 4 || !isPhone(mobile)}
         style={{ marginHorizontal: 20, marginVertical: 16 }}
       />
 
@@ -597,6 +626,11 @@ export default function PinLoginScreen({ navigation, route }) {
         disabled={isLocked || loading}
       >
         <Text style={styles.forgotPinText}>Forgot PIN? 🆘</Text>
+      </TouchableOpacity>
+
+      {/* SMART APPS: a new person registers here: Language Selection, then the existing onboarding journey */}
+      <TouchableOpacity style={styles.registerButton} onPress={() => navigation.navigate('LanguageSelection')} disabled={verifying} accessibilityRole="button">
+        <Text style={styles.registerText}>New to Smart Apps? <Text style={{ fontWeight: '800' }}>Register</Text></Text>
       </TouchableOpacity>
 
       {/* CUSTOMER CARE FOOTER */}
@@ -784,6 +818,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
   },
+  mobileBox: { marginHorizontal: 20, marginTop: 12 },
+  mobileLabel: { fontSize: 10.5, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.4, color: '#5b606c', marginBottom: 6 },
+  mobileInput: { borderWidth: 1.5, borderColor: '#e7e4db', borderRadius: 11, paddingHorizontal: 12, paddingVertical: 12, fontSize: 16, color: '#1a1c20', backgroundColor: '#fff' },
+  registerButton: { alignItems: 'center', paddingVertical: 14, marginHorizontal: 20, marginTop: 4, borderRadius: 12, borderWidth: 1.5, borderColor: colors.bodaOrange },
+  registerText: { color: colors.bodaOrange, fontSize: 15 },
   forgotPinText: {
     fontSize: 13,
     color: colors.bodaOrange,

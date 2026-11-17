@@ -3,9 +3,11 @@
 # This fixes the blank screen issue after PIN creation by providing
 # the frontend with necessary data to initialize the home screen
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import Header, APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.auth import get_current_rider, create_rider_token, verify_token
+from app.services import session_service      # SMART APPS: one active session per user
 from app.models.rider import Rider
 from app.models.bike_profile import BikeProfile
 from app.models.pin_recovery_request import PinRecoveryRequest
@@ -85,7 +87,24 @@ def get_rider_details(rider_id: str, db: Session = Depends(get_db)):
 
 @router.post("/pin/login")
 def pin_login(payload: PinLoginRequest, db: Session = Depends(get_db)):
-    return verify_pin_login(db, payload.rider_id, payload.pin)
+    return verify_pin_login(db, payload.rider_id, payload.pin, payload.device_id, payload.device_label)
+
+@router.post("/session/refresh")
+def session_refresh(rider: Rider = Depends(get_current_rider), token: dict = Depends(verify_token), x_device_id: str = Header(None), db: Session = Depends(get_db)):
+    """
+    PERSISTENT SESSION: swap a still-valid rider token for a fresh one, so a rider who keeps using the app is never
+    asked to sign in again. Needs a valid Bearer token (no PIN is sent or stored); an expired or bad token gets 401 as usual.
+    """
+    sid = token.get("sid")
+    if not sid:
+        # SMART APPS: a token from before this release has no session. Adopt this phone into one (never taking it from another phone):
+        # if another phone already holds the session this old token is finished.
+        started = session_service.start_session(db, "rider", rider.id, x_device_id, None, takeover=False)
+        db.commit()
+        if not started["ok"]:
+            raise HTTPException(status_code=401, detail=session_service.error_for("replaced"))
+        sid = started["session"].id
+    return {"ok": True, "token": create_rider_token(str(rider.id), rider.mobile_number, sid)}
 
 # BR-SB04-007: recovery ALWAYS requires manual Super Admin verification against the registered number —
 # same Rider Account Support queue used for mobile-number verification cases.

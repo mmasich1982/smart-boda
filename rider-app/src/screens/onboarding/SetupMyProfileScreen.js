@@ -1,13 +1,16 @@
 // rider-app/src/screens/onboarding/SetupMyProfileScreen.js
-// SETUP MY PROFILE: replaces "Set Up Your Bike" + Mobile Number + Profile Confirmation.
-//   1. The rider types the MOBILE NUMBER their Group Treasurer registered.
-//   2. We look it up and show their FULL NAME directly below (read-only: it comes from the Treasurer's record).
-//   3. They choose their FUEL TYPE (this still decides "Fuel Motorcycle" vs "Charge Battery" on Home).
+// SETUP MY PROFILE (screen 3 of onboarding, Smart Boda + Smart Bizna). One screen, two kinds of person:
+//   1. The person types the MOBILE NUMBER an Admin (or their Group Treasurer) registered.
+//   2. We look it up and show their FULL NAME directly below (read-only: it comes from the registration).
+//   3. Only once the number is found, a rider gets ONE choice:
+//        a rider (group member, Treasurer, individual rider)          -> FUEL TYPE (still decides "Fuel Motorcycle" vs "Charge Battery")
+//        a business user (Business Owner or Sales/Service Person)    -> NO choice: the BUSINESS TYPE the Admin chose is shown read-only under the name
 //   4. They accept the Terms / Privacy Notice, then continue to Create Your Login PIN.
-// The rider account is created on the server by POST /onboarding/setup-profile; the rider_id it returns is stored locally
-// (saveLocalRiderId -> getLocalRiderId) exactly as before, so CreatePin and Home behave unchanged.
-// The fuel profile is also queued ('bike_profile') so the sync queue / orchestrator keep the server in step if the
-// connection drops right after this screen.
+// The account is created on the server by POST /onboarding/setup-profile; the rider_id it returns is stored locally
+// (saveLocalRiderId -> getLocalRiderId) exactly as before, so CreatePin behaves unchanged.
+// A rider's fuel profile is also queued ('bike_profile') exactly as before. A business user has no bike; the server already holds the
+// business type, and the business sync queue arrives with the Smart Bizna Home release.
+// The rules live in utils/setupProfileLogic.js (unit-tested).
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import Checkbox from 'expo-checkbox';
@@ -27,21 +30,36 @@ import {
   getLocalLanguage,
 } from '../../offline/db';
 import { enqueue } from '../../offline/syncQueue';
+import {
+  KENYA_MSISDN,
+  cleanMobile,
+  userTypeFromLookup,
+  businessTypeLabel,
+  showBusinessTypeField,
+  nameHintKey,
+  NAME_HINT_DEFAULTS,
+  canContinue,
+  buildSetupBody,
+  localStatusFrom,
+} from '../../utils/setupProfileLogic';
 
-export const KENYA_MSISDN = /^(\+254|254|0)(7|1)\d{8}$/;
-export const cleanMobile = (v) => (v || '').replace(/[\s-]/g, '');
+export { KENYA_MSISDN, cleanMobile };   // kept as exports of this screen, as before
+
+const NOT_FOUND_DEFAULT = 'We could not find this number. Ask your Admin or your Group Treasurer to register you, then try again.';
 
 export default function SetupMyProfileScreen({ navigation }) {
   const { fuelTypes } = useMasterData();
-  const { t, hasTranslation } = useTranslation();
+  const { t } = useTranslation();
   const { showToast } = useToast();
   const [mobile, setMobile] = useState('');
   const [mobileError, setMobileError] = useState(null);
   const [lookup, setLookup] = useState('idle'); // idle | looking | found | notfound | registered | offline
   const [fullName, setFullName] = useState('');
-  const [source, setSource] = useState('');   // member | treasurer | individual (pre-registered by Smart Boda, no group)
+  const [source, setSource] = useState('');       // member | treasurer | individual | business
+  const [userType, setUserType] = useState('rider'); // rider | business (decided by the server from the number)
+  const [businessTypeName, setBusinessTypeName] = useState('');   // business user: the type the Administrator chose, shown READ-ONLY
   const [fuelType, setFuelType] = useState('');
-  const [fuelError, setFuelError] = useState(null);
+  const [typeError, setTypeError] = useState(null);
   const [consent, setConsent] = useState(false);
   const [consentError, setConsentError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -51,10 +69,11 @@ export default function SetupMyProfileScreen({ navigation }) {
   // Look the number up as soon as it is a complete Kenyan number.
   useEffect(() => {
     const m = cleanMobile(mobile);
-    setSaveError(null);
-    if (!m) { setMobileError(null); setLookup('idle'); setFullName(''); return; }
+    setSaveError(null); setTypeError(null);
+    setFuelType(''); setUserType('rider'); setBusinessTypeName('');
+    if (!m) { setMobileError(null); setLookup('idle'); setFullName(''); setSource(''); return; }
     if (!KENYA_MSISDN.test(m)) {
-      setLookup('idle'); setFullName('');
+      setLookup('idle'); setFullName(''); setSource('');
       setMobileError(m.length >= 10 ? t('setup.mobile_invalid') || 'Enter a valid Kenyan mobile number.' : null);
       return;
     }
@@ -67,11 +86,13 @@ export default function SetupMyProfileScreen({ navigation }) {
         if (mine !== seq.current) return;
         setFullName(res.data.full_name || '');
         setSource(res.data.source || '');
+        setUserType(userTypeFromLookup(res.data));
+        setBusinessTypeName(businessTypeLabel(res.data));
         setLookup('found');
       } catch (err) {
         if (mine !== seq.current) return;
         const status = err.response?.status;
-        if (status === 404) { setLookup('notfound'); setMobileError(t('setup.mobile_not_found') || 'We could not find this number. Ask your Group Treasurer to register you, or contact Smart Boda to be added as an individual rider, then try again.'); }
+        if (status === 404) { setLookup('notfound'); setMobileError(t('setup.mobile_not_found') || NOT_FOUND_DEFAULT); }
         else if (status === 409) { setLookup('registered'); setMobileError(t('setup.already_registered') || 'This number is already set up. Please log in with your PIN.'); }
         else if (status === 400) { setLookup('idle'); setMobileError(t('setup.mobile_invalid') || 'Enter a valid Kenyan mobile number.'); }
         else { setLookup('offline'); }
@@ -86,7 +107,11 @@ export default function SetupMyProfileScreen({ navigation }) {
       if (!mobileError) setMobileError(KENYA_MSISDN.test(cleanMobile(mobile)) ? null : (t('setup.mobile_invalid') || 'Enter a valid Kenyan mobile number.'));
       ok = false;
     }
-    if (!fuelType) { setFuelError(t('setup.fuel_required') || 'Please select the fuel type of your motorcycle.'); ok = false; } else setFuelError(null);
+    // A rider chooses the fuel type. A business user (Owner or Sales/Service Person) chooses NOTHING: the Business Type was set by the Administrator
+    // at pre-registration, so they only confirm the number, accept the terms and finish.
+    if (userType !== 'business' && userType !== 'admin') {      // ADMIN APP: an Administrator chooses nothing either
+      if (!fuelType) { setTypeError(t('setup.fuel_required') || 'Please select the fuel type of your motorcycle.'); ok = false; } else setTypeError(null);
+    } else setTypeError(null);
     if (!consent) { setConsentError(t('profile.consent_required')); ok = false; } else setConsentError(null);
     return ok;
   }
@@ -95,38 +120,37 @@ export default function SetupMyProfileScreen({ navigation }) {
     if (saving || !validate()) return;
     setSaving(true); setSaveError(null);
     try {
-      const language_code = (await getLocalLanguage()) || undefined;
-      const res = await api.post('/onboarding/setup-profile', {
-        mobile_number: cleanMobile(mobile),
-        fuel_type_code: fuelType,
-        consent_accepted: true,
-        consent_content_version: CURRENT_TERMS_VERSION,
-        language_code,
-      });
+      const language = (await getLocalLanguage()) || undefined;
+      if (userType === 'admin') {
+        // ADMIN APP: an Administrator (admin_user table). Same screen, same terms, but no fuel type / business type, and no rider record:
+        // the server only notes the consent and the person goes on to create the app PIN.
+        const ares = await api.post('/admin/app/setup-profile', {
+          mobile_number: mobile, consent_accepted: true, consent_content_version: CURRENT_TERMS_VERSION, language_code: language,
+        });
+        await saveLocalRiderStatus(localStatusFrom({ ...ares.data, user_type: 'admin' }, fullName));   // kept under admin_id, never rider_id
+        showToast(t('setup.saved') || 'Profile saved. Now create your login PIN.');
+        navigation.navigate('CreatePin', { adminId: ares.data.admin_id, userType: 'admin', mobile: ares.data.mobile_number });
+        return;
+      }
+      const res = await api.post('/onboarding/setup-profile', buildSetupBody({
+        mobile, userType, fuelType, language, termsVersion: CURRENT_TERMS_VERSION,
+      }));
       const riderId = res.data.rider_id;
-      const name = res.data.full_name || fullName;
       const submittedAt = new Date().toISOString();
       // rider_id is generated by the server, stored locally and used by CreatePin / Home / syncQueue from here on.
-      await saveLocalRiderStatus({
-        rider_id: riderId,
-        onboarding_step: 'createPin',
-        registration_status: 'verified_incomplete',
-        mobile_number: res.data.mobile_number,
-        full_name: name,
-        county_id: res.data.county_id,
-        sub_county_id: res.data.sub_county_id,
-        ward_id: res.data.ward_id,
-      });
+      await saveLocalRiderStatus(localStatusFrom(res.data, fullName));
       await saveLocalRiderId(riderId);
       console.log('[SetupMyProfile] Saved rider_id:', riderId);
-      const record = { fuel_type_code: fuelType, mobile_number: res.data.mobile_number, submitted_at: submittedAt };
-      await saveLocalBikeProfile(record);
-      await enqueue('bike_profile', record);
+      if (res.data.user_type !== 'business') {
+        const record = { fuel_type_code: fuelType, mobile_number: res.data.mobile_number, submitted_at: submittedAt };
+        await saveLocalBikeProfile(record);
+        await enqueue('bike_profile', record);
+      }
       showToast(t('setup.saved') || 'Profile saved. Now create your login PIN.');
       navigation.navigate('CreatePin', { riderId });
     } catch (err) {
       const status = err.response?.status;
-      if (status === 404) setMobileError(t('setup.mobile_not_found') || 'We could not find this number. Ask your Group Treasurer to register you, or contact Smart Boda to be added as an individual rider, then try again.');
+      if (status === 404) setMobileError(t('setup.mobile_not_found') || NOT_FOUND_DEFAULT);
       else if (status === 409) setMobileError(t('setup.already_registered') || 'This number is already set up. Please log in with your PIN.');
       else setSaveError(t('setup.save_error') || 'We could not save your profile. Please try again.');
       console.error('Error saving profile:', err?.message || err);
@@ -135,11 +159,9 @@ export default function SetupMyProfileScreen({ navigation }) {
     }
   }
 
-  const nameHint = lookup === 'looking' ? (t('setup.looking_up') || 'Looking up your number…')
-    : lookup === 'offline' ? (t('setup.need_connection') || 'Connect to the internet to find your name, then continue.')
-    : lookup === 'found' && source === 'individual' ? ((typeof hasTranslation === 'function' && hasTranslation('setup.name_hint_individual')) ? t('setup.name_hint_individual') : 'This is the name Smart Boda registered for you.')
-    : lookup === 'found' ? (t('setup.name_hint') || 'This is the name your Group Treasurer registered.')
-    : (t('setup.name_waiting') || 'Enter your mobile number to see your name.');
+  const hintKey = nameHintKey(lookup, source);
+  const nameHint = t(hintKey) || NAME_HINT_DEFAULTS[hintKey];
+  const showType = lookup === 'found';   // the one choice appears only once the number is found (prototype v45)
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -147,7 +169,7 @@ export default function SetupMyProfileScreen({ navigation }) {
       <OnboardingProgressBar currentStep="setupProfile" />
       <View style={styles.eyebrow}><Text style={styles.eyebrowText}>{t('setup.eyebrow') || '🔑 Almost there'}</Text></View>
       <Text style={styles.title}>{t('setup.title') || 'Setup My Profile'}</Text>
-      <Text style={styles.sub}>{t('setup.subtitle') || 'Enter the mobile number your Group Treasurer registered. We find your name, you choose your fuel type, and you are set.'}</Text>
+      <Text style={styles.sub}>{t('setup.subtitle') || 'Enter the mobile number your Admin or Group Treasurer registered. We find your name, you complete one choice, and you are set.'}</Text>
 
       <FormField
         label={t('setup.mobile_label') || 'Mobile Number'}
@@ -170,17 +192,33 @@ export default function SetupMyProfileScreen({ navigation }) {
           helperText={nameHint}
         />
         {lookup === 'looking' && <ActivityIndicator size="small" color="#ffc107" style={styles.spinner} />}
+        {lookup === 'registered' && (          /* ADMIN APP: an Administrator already set up (on another phone, or after Logout) signs in with number + PIN */
+          <Text style={styles.link} onPress={() => navigation.navigate('PinLogin', { adminMode: true, mobile })}>Administrator? Log in with your number and PIN →</Text>
+        )}
       </View>
 
-      <DropdownField
-        label={t('setup.fuel_label') || 'Fuel Type'}
-        value={fuelType}
-        onValueChange={setFuelType}
-        placeholder="Select..."
-        options={fuelTypes.map((f) => ({ label: f.display_name, value: f.code }))}
-        error={fuelError}
-        required={true}
-      />
+      {showBusinessTypeField(lookup, userType) && (        /* read-only, fetched from the server exactly like the name: the Administrator chose it */
+        <FormField
+          label={t('setup.business_type_label') || 'Business Type'}
+          value={businessTypeName}
+          onChangeText={() => {}}
+          editable={false}
+          placeholder="—"
+          helperText={t('setup.business_type_hint') || 'This is the business type your Admin registered.'}
+        />
+      )}
+
+      {showType && userType === 'rider' && (
+        <DropdownField
+          label={t('setup.fuel_label') || 'Fuel Type'}
+          value={fuelType}
+          onValueChange={(v) => { setFuelType(v); setTypeError(null); }}
+          placeholder="Select..."
+          options={fuelTypes.map((f) => ({ label: f.display_name, value: f.code }))}
+          error={typeError}
+          required={true}
+        />
+      )}
 
       <View style={styles.checkboxRow}>
         <Checkbox value={consent} onValueChange={setConsent} color={consent ? '#ffc107' : undefined} />
@@ -197,14 +235,14 @@ export default function SetupMyProfileScreen({ navigation }) {
 
       <View style={styles.trustNote}>
         <Text>🔒</Text>
-        <Text style={styles.trustNoteText}>{t('setup.trust_note') || 'Your name and group come from your Treasurer. Your details are kept private on your phone and our secure servers.'}</Text>
+        <Text style={styles.trustNoteText}>{t('setup.trust_note') || 'Your name comes from your Admin or Group Treasurer registration. Your details are kept private on your phone and our secure servers.'}</Text>
       </View>
 
       <PrimaryButton
         label={t('setup.continue') || 'Continue →'}
         glow
         onPress={handleContinue}
-        disabled={saving || lookup !== 'found' || !fuelType || !consent}
+        disabled={!canContinue({ lookup, userType, fuelType, consent, saving })}
       />
     </ScrollView>
   );

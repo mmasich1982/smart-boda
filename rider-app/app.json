@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Smart Boda",
+    "name": "Smart Apps",
     "slug": "smart-boda-rider-app",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -14,8 +14,8 @@
     },
     "web": {
       "favicon": "./assets/favicon.png",
-      "name": "Smart Boda",
-      "shortName": "Smart Boda",
+      "name": "Smart Apps",
+      "shortName": "Smart Apps",
       "lang": "en",
       "scope": "/",
       "startUrl": "/",
@@ -23,7 +23,7 @@
       "orientation": "portrait",
       "themeColor": "#ff7a1a",
       "backgroundColor": "#f6f4ef",
-      "description": "Track trips, fuel, maintenance, and savings — works fully offline."
+      "description": "Smart Boda, Smart Bizna, Smart Cabz and more in one app — works fully offline."
     },
     "extra": {
       "apiBaseUrl": "http://localhost:8000"
