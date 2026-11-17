@@ -12,6 +12,8 @@ import api from '../../api/client';
 import { getLocalRiderId } from '../../offline/db';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
+import { vt, brandName } from '../../vehicle/vehicleStore';      // SMART CABZ
+
 
 export default function MaintenanceHubScreen({ navigation }) {
   const { state } = useRider();
@@ -116,7 +118,7 @@ export default function MaintenanceHubScreen({ navigation }) {
     return (
       <ScrollView style={styles.container}>
         <BackLink onPress={handleBackPress} label="← Home" />
-        <Text style={styles.title}>Service Motorcycle</Text>
+        <Text style={styles.title}>{vt('Service Motorcycle')}</Text>
         <ActivityIndicator size="large" color="#ffc107" style={{ marginTop: 40 }} />
       </ScrollView>
     );
@@ -126,7 +128,7 @@ export default function MaintenanceHubScreen({ navigation }) {
     <ScrollView style={styles.container}>
       <BackLink onPress={handleBackPress} label="← Home" />
       
-      <Text style={styles.title}>Service Motorcycle</Text>
+      <Text style={styles.title}>{vt('Service Motorcycle')}</Text>
 
       {/* CRITICAL ERROR ONLY - Never show status/offline info */}
       {criticalError && (

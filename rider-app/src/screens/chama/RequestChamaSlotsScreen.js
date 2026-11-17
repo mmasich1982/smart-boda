@@ -9,6 +9,8 @@ import { useToast } from '../../components/Toast';
 import colors from '../../theme/colors';
 import { requestSlots, apiError } from '../../api/groupsClient';
 import { useGroupText } from './groupText';
+import { vt, brandName } from '../../vehicle/vehicleStore';      // SMART CABZ
+
 
 function RequestChamaSlotsScreen({ navigation, route }) {
   const groupId = route.params?.groupId;
@@ -23,7 +25,7 @@ function RequestChamaSlotsScreen({ navigation, route }) {
     setBusy(true);
     try {
       await requestSlots({ requested_slots: slots, reason: why.trim() }, groupId);
-      showToast('📨 Request sent to the Smart Boda Administrator.', 'success');
+      showToast(vt('📨 Request sent to the Smart Boda Administrator.'), 'success');
       navigation.goBack();
     } catch (e) { showToast(apiError(e, 'Could not send the request.'), 'warn'); }
     finally { setBusy(false); }
@@ -32,7 +34,7 @@ function RequestChamaSlotsScreen({ navigation, route }) {
     <ScrollView style={{ flex: 1, backgroundColor: colors.cream }} contentContainerStyle={{ padding: 16 }}>
       <BackLink onPress={() => navigation.goBack()} />
       <Text style={s.title}>📈 {gt('group.title_request_slots', 'Request Additional Member Slots')}</Text>
-      <Text style={s.sub}>Goes to the Smart Boda Administrator for approval.</Text>
+      <Text style={s.sub}>{vt('Goes to the Smart Boda Administrator for approval.')}</Text>
       <View style={s.card}>
         <FormField label="Number of Additional Member Slots Requested" required value={n} onChangeText={setN} keyboardType="number-pad" placeholder="e.g. 5" maxLength={3} />
         <FormField label="Reason" required value={why} onChangeText={setWhy} placeholder="Why do you need more slots?" maxLength={300} />

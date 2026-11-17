@@ -8,6 +8,8 @@
 // - Exposes `strings` in useTranslation hook for component usage
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { useAudience } from '../vehicle/vehicleStore';          // SMART CABZ
+import { textFor } from '../vehicle/vehicleWords';
 import * as Localization from 'expo-localization';
 import api from '../api/client';
 import { getCachedTranslations, setCachedTranslations, getLocalLanguage, saveLocalLanguage } from '../offline/db';
@@ -298,6 +300,7 @@ export function useTranslation() {
 
   // ✅ ULTRA-SAFE: Multiple fallbacks - ensure we always have translations
   const strings = ctx?.strings || getFallbackForLanguage(ctx?.languageCode || 'en') || {};
+  const audience = useAudience();      // SMART CABZ: rider / driver / business; the screen re-draws when it changes
   
   const t = (key, vars = {}) => {
     let text = strings[key];
@@ -313,7 +316,8 @@ export function useTranslation() {
       text = text.replace(`{${k}}`, String(v));
     });
     
-    return text;
+    // SMART CABZ: the words of the signed-in kind of user (a rider's text is returned unchanged)
+    return textFor(key, text, audience, ctx?.languageCode || 'en');
   };
 
   const currentLanguageCode = ctx?.languageCode || 'en';

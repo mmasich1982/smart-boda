@@ -300,6 +300,8 @@ def list_riders(status: str | None = None, page: int = 1, page_size: int = 20, d
         q = q.filter(Rider.registration_status == "active")
     total = q.count()
     rows = q.order_by(Rider.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    from app.models.business import BusinessUser                       # SMART CABZ: each person's kind (rider / driver / business) beside their vehicle type
+    biz_ids = {str(x[0]) for x in db.query(BusinessUser.rider_id).filter(BusinessUser.rider_id.in_([r.id for r in rows])).all()} if rows else set()
     items = [
         {
             "id": str(r.id),
@@ -308,6 +310,8 @@ def list_riders(status: str | None = None, page: int = 1, page_size: int = 20, d
             "registration_status": r.registration_status,
             "mobile_verified": r.mobile_verified,
             "created_at": r.created_at,
+            "vehicle_type": r.vehicle_type,
+            "kind": "business" if str(r.id) in biz_ids else ("driver" if r.vehicle_type == "car" else "rider"),
         }
         for r in rows
     ]

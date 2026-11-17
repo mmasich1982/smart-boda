@@ -11,6 +11,7 @@
  */
 // rider-app/src/utils/pdfGenerator.js
 import * as Print from 'expo-print';
+import { brandName } from '../vehicle/vehicleStore';      // SMART CABZ
 
 /**
  * Generate statement PDF
@@ -76,7 +77,7 @@ function generateStatementHTML(statement) {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Smart Boda Statement</title>
+        <title>${brandName()} Statement</title>
         <style>
           * {
             margin: 0;
@@ -184,7 +185,7 @@ function generateStatementHTML(statement) {
       <body>
         <div class="container">
           <div class="header">
-            <h1>Smart Boda Digital — Earnings Statement</h1>
+            <h1>${brandName()} Digital — Earnings Statement</h1>
           </div>
 
           <div class="metadata">
@@ -221,7 +222,7 @@ function generateStatementHTML(statement) {
 
           <div class="footer">
             <p>This is an automatically generated statement.</p>
-            <p>For inquiries or support, contact Smart Boda customer service.</p>
+            <p>For inquiries or support, contact ${brandName()} customer service.</p>
           </div>
         </div>
       </body>
@@ -265,7 +266,7 @@ function generateDetailedReportHTML(statement, transactions) {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Smart Boda Detailed Report</title>
+        <title>${brandName()} Detailed Report</title>
         <style>
           * {
             margin: 0;
@@ -391,7 +392,7 @@ function generateDetailedReportHTML(statement, transactions) {
       </head>
       <body>
         <div class="container">
-          <h1>Smart Boda Digital — Detailed Earnings Report</h1>
+          <h1>${brandName()} Digital — Detailed Earnings Report</h1>
 
           <div class="metadata">
             <div class="metadata-line">📅 Period: ${startDate} - ${endDate}</div>
@@ -430,7 +431,7 @@ function generateDetailedReportHTML(statement, transactions) {
 
           <div class="footer">
             <p>This is an automatically generated detailed report.</p>
-            <p>For inquiries or support, contact Smart Boda customer service.</p>
+            <p>For inquiries or support, contact ${brandName()} customer service.</p>
           </div>
         </div>
       </body>
@@ -507,7 +508,7 @@ function generateGroupStatementHTML(st) {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Smart Boda Group Statement</title>
+        <title>${brandName()} Group Statement</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Roboto, sans-serif;
@@ -531,7 +532,7 @@ function generateGroupStatementHTML(st) {
       </head>
       <body>
         <div class="container">
-          <h1>Smart Boda Digital — Group Statement</h1>
+          <h1>${brandName()} Digital — Group Statement</h1>
           <div class="metadata">
             <div>🏷️ ${esc(st.group)} · Code ${esc(st.group_code)}</div>
             <div>📅 Period: ${esc(st.from)} to ${esc(st.to)}</div>
@@ -553,7 +554,7 @@ function generateGroupStatementHTML(st) {
           <div class="verification"><strong>Statement reference:</strong> ${esc(st.reference)}</div>
           <div class="footer">
             <p>This is an automatically generated statement.</p>
-            <p>For inquiries or support, contact Smart Boda customer service.</p>
+            <p>For inquiries or support, contact ${brandName()} customer service.</p>
           </div>
         </div>
       </body>

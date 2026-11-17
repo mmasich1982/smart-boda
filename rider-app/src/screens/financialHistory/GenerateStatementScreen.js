@@ -19,6 +19,8 @@ import {
 import { addToSyncQueue } from '../../offline/syncQueue';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import api from '../../api/client';
+import { vt, brandName } from '../../vehicle/vehicleStore';      // SMART CABZ
+
 
 // ✅ FIXED: Map display names to backend codes (must match statement_purpose_master.code in DB)
 const STATEMENT_PURPOSES = [
@@ -78,7 +80,7 @@ export default function GenerateStatementScreen({ navigation, route }) {
       hasLoadedRef.current = true;
 
       if (!financialSummary.isWithinRetention) {
-        showToast('Data beyond 6-month window. Contact Smart Boda Admin for historical data.', 'info');
+        showToast(vt('Data beyond 6-month window. Contact Smart Boda Admin for historical data.'), 'info');
       }
     } catch (err) {
       console.error('❌ Load summary error:', err);

@@ -25,6 +25,7 @@
  */
 
 import indexedDbAdapter from './adapters/indexedDbAdapter';
+import { vt } from '../vehicle/vehicleStore';      // SMART CABZ
 
 const FINANCIAL_STORE = 'financialHistory';
 const STATEMENTS_STORE = 'statements';
@@ -454,7 +455,7 @@ export async function getTransactionsByDateRange(riderId, startTime, endTime) {
       return {
         transactions: [],
         isWithinRetention: false,
-        message: 'Data beyond 6-month retention window. Contact Smart Boda Admin.'
+        message: vt('Data beyond 6-month retention window. Contact Smart Boda Admin.')
       };
     }
 

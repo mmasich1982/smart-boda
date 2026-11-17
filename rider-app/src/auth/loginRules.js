@@ -38,6 +38,7 @@ export function statusFromLogin(res) {
   return {
     rider_id: res.rider_id, user_type: res.user_type === 'business' ? 'business' : 'rider', mobile_number: res.mobile_number || p.mobile_number,
     full_name: p.full_name || '', registration_status: 'active', onboarding_step: 'done', language_code: p.language_code || null,
+    vehicle_type: p.vehicle_type || 'motorcycle',        // SMART CABZ: a new phone opens as Smart Boda or Smart Cabz
   };
 }
 

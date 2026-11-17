@@ -25,6 +25,7 @@ import CreatePinScreen from '../screens/onboarding/CreatePinScreen';
 // The /auth/ version has proper null-checking for route.params
 import PinLoginScreen from '../screens/auth/PinLoginScreen';
 import RestoreAccountScreen from '../screens/auth/RestoreAccountScreen';      // SMART APPS: set up my account on this phone
+import { setAudienceFromStatus } from '../vehicle/vehicleStore';          // SMART CABZ
 import { installSessionLostHandler } from '../auth/sessionLost';            // SMART APPS: one active session per user
 
 // ✅ FORGOT PIN SCREENS (if they exist in auth folder)
@@ -62,6 +63,7 @@ function useInitialRoute() {
     (async () => {
       try {
         const status = await getLocalRiderStatus();
+        setAudienceFromStatus(status);                       // SMART CABZ: Smart Boda / Smart Cabz / Smart Bizna words from the first frame
         const loggedOut = await isLoggedOut();
         const start = resolveStartRoute(status, loggedOut);
         setRoute(start);

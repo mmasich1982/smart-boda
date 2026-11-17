@@ -16,9 +16,11 @@ const errText = (e, fallback) => {            // detail is a string for our erro
   return String(x.msg || fallback).replace(/^Value error,\s*/, '');
 };
 
-const EMPTY = { group_name: '', group_type: '', county_id: null, sub_county_id: null, ward_id: null, stage_name: '',
+const EMPTY = { group_name: '', group_type: '', members_type: '', treasurer_kind: '', county_id: null, sub_county_id: null, ward_id: null, stage_name: '',
   approved_slots: 10, treasurer_name: '', treasurer_phone: '',
- };
+ };   // SMART CABZ: Group Members Type is chosen first and has no default
+const MEMBERS_LABEL = { riders: 'Riders', business: 'Business', drivers: 'Drivers', mixed: 'Mixed' };
+const KIND_LABEL = { rider: 'Motorcycle rider', driver: 'Car driver', business: 'Business user' };
 
 function GroupFinance({ id }) {
   const [f, setF] = useState(null);
@@ -56,6 +58,7 @@ function Field({ k, label, form, setForm, errors, ...p }) {
 export default function ManageGroupsAndMembers() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [membersFilter, setMembersFilter] = useState('');      // SMART CABZ
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [form, setForm] = useState(null);     // null = closed; object = create/edit dialog
@@ -67,7 +70,7 @@ export default function ManageGroupsAndMembers() {
   const [phoneWarn, setPhoneWarn] = useState(null);      // BLOCKING: the number already belongs to a rider (and is not a valid pair)
   const [phonePair, setPhonePair] = useState(null);      // info only: the number completes a Merry-Go-Round + Table Banking pair
   const stats = useApiResource(getGroupStats, []);
-  const groups = useApiResource(() => listGroups({ q: q || undefined, status: status || undefined, page, page_size: pageSize }), [q, status, page, pageSize]);
+  const groups = useApiResource(() => listGroups({ q: q || undefined, status: status || undefined, members_type: membersFilter || undefined, page, page_size: pageSize }), [q, status, membersFilter, page, pageSize]);
   const refresh = () => { stats.refresh(); groups.refresh(); };
 
   // BLOCKING: a number that already belongs to a rider cannot be used for a new Treasurer (the server enforces it too),
@@ -75,32 +78,36 @@ export default function ManageGroupsAndMembers() {
   // Skipped while editing if the phone is unchanged.
   const phoneNow = form?.treasurer_phone || '';
   const typeNow = form?.group_type || '';
+  const mtNow = form?.members_type || '';             // SMART CABZ
+  const tkNow = form?.treasurer_kind || '';
   useEffect(() => {
     const clean = phoneNow.replace(/ /g, '');
-    if (!form || !typeNow || !/^(\+254|0)(7|1)[0-9]{8}$/.test(clean) || (editId && clean === (origPhone || '').replace(/ /g, ''))) {
+    if (!form || !typeNow || !mtNow || (mtNow === 'mixed' && !tkNow) || !/^(\+254|0)(7|1)[0-9]{8}$/.test(clean) || (editId && clean === (origPhone || '').replace(/ /g, ''))) {
       setPhoneWarn(null); setPhonePair(null); return undefined;
     }
     let cancelled = false;
     const t = setTimeout(() => {
-      checkTreasurerPhone(clean, typeNow, editId || undefined)
+      checkTreasurerPhone(clean, typeNow, editId || undefined, mtNow, mtNow === 'mixed' ? tkNow : undefined)
         .then((r) => {
           if (cancelled) return;
-          setPhoneWarn(r?.has_account && !r.pair_ok ? r : null);
+          setPhoneWarn(r && !r.pair_ok && (r.has_account || mtNow === 'business') ? r : null);
           setPhonePair(r?.has_account && r.pair_ok ? r : null);
         })
         .catch(() => { if (!cancelled) { setPhoneWarn(null); setPhonePair(null); } });
     }, 400);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [phoneNow, typeNow, !!form, editId, origPhone]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phoneNow, typeNow, mtNow, tkNow, !!form, editId, origPhone]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   function validate(f) {
     const e = {};
     if (!f.group_name.trim()) e.group_name = 'Group name is required';
+    if (!f.members_type) e.members_type = 'Choose the Group Members Type';        // SMART CABZ
+    if (f.members_type === 'mixed' && !f.treasurer_kind) e.treasurer_kind = 'Choose the Treasurer type';
     if (!f.group_type) e.group_type = 'Choose Merry-Go-Round or Table Banking';
     if (!f.county_id) e.county_id = 'Please select a county';
     if (!f.sub_county_id) e.sub_county_id = 'Please select a sub-county';
     if (!f.ward_id) e.ward_id = 'Please select a ward';
-    if (!f.stage_name.trim()) e.stage_name = 'Stage name is required';
+    if (f.members_type === 'riders' && !(f.stage_name || '').trim()) e.stage_name = 'Stage name is required';      // SMART CABZ: only a Riders group has a stage
     if (!(Number(f.approved_slots) >= 1)) e.approved_slots = 'Enter at least 1 slot';
     if (!f.treasurer_name.trim()) e.treasurer_name = 'Treasurer name is required';
     if (!/^(\+254|0)(7|1)[0-9]{8}$/.test(f.treasurer_phone.replace(/ /g, ''))) e.treasurer_phone = 'Enter a valid number, e.g. 0712345678';
@@ -113,7 +120,8 @@ export default function ManageGroupsAndMembers() {
     setErrors(e);
     if (Object.keys(e).length) return;
     try {
-      const body = { ...form, group_type: form.group_type || null, approved_slots: Number(form.approved_slots) };
+      const body = { ...form, group_type: form.group_type || null, approved_slots: Number(form.approved_slots),
+        stage_name: form.members_type === 'riders' ? form.stage_name : null, treasurer_kind: form.members_type === 'mixed' ? form.treasurer_kind : null };
       const saved = editId ? await updateGroup(editId, body) : await createGroup(body);
       setMsg(editId ? 'Group updated.' : `Group created. Group Code: ${saved.group_code}`);
       setForm(null); setEditId(null); setPhoneWarn(null); setPhonePair(null); refresh();
@@ -135,17 +143,20 @@ export default function ManageGroupsAndMembers() {
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} style={{ padding: 8 }}>
           <option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option>
         </select>
+        <select value={membersFilter} onChange={(e) => { setMembersFilter(e.target.value); setPage(1); }} style={{ padding: 8 }} aria-label="Members Type">
+          <option value="">All Members Types</option><option value="riders">Riders</option><option value="business">Business</option><option value="drivers">Drivers</option><option value="mixed">Mixed</option>
+        </select>
         <button className="primary" onClick={() => { setForm(EMPTY); setEditId(null); setOrigPhone(''); setPhoneWarn(null); setPhonePair(null); setErrors({}); }}>+ New Group</button>
       </div>
       {groups.loading && <p>Loading…</p>}
       {groups.error && <p role="alert" style={{ color: 'red' }}>Couldn't load groups: {groups.error}</p>}
       <div className="card" style={{ overflowX: 'auto' }}>
         <table>
-          <thead><tr><th>Code</th><th>Group</th><th>Type</th><th>Stage</th><th>Location</th><th>Slots (used/approved)</th><th>Treasurer</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Code</th><th>Group</th><th>Type</th><th>Members</th><th>Stage</th><th>Location</th><th>Slots (used/approved)</th><th>Treasurer</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
             {(groups.data?.items || []).map((g) => (
               <tr key={g.id}>
-                <td><b>{g.group_code}</b></td><td>{g.group_name}</td><td>{g.group_type === 'mgr' ? 'Merry-Go-Round' : g.group_type === 'tb' ? 'Table Banking' : '—'}</td><td>{g.stage_name}</td>
+                <td><b>{g.group_code}</b></td><td>{g.group_name}</td><td>{g.group_type === 'mgr' ? 'Merry-Go-Round' : g.group_type === 'tb' ? 'Table Banking' : '—'}</td><td>{MEMBERS_LABEL[g.members_type] || 'Riders'}</td><td>{g.stage_name}</td>
                 <td>{g.ward}, {g.sub_county}, {g.county}</td>
                 <td>{g.slots_used}/{g.approved_slots}{g.shared_with ? <div className="muted" style={{ fontSize: 11 }}>🔗 shared with {g.shared_with}</div> : null}</td>
                 <td>{g.treasurer_name} · <MaskedPhone value={g.treasurer_phone} /></td>
@@ -168,7 +179,7 @@ export default function ManageGroupsAndMembers() {
       {view && (
         <div className="card" style={{ marginTop: 12 }}>
           <h3>{view.group_name} · {view.group_code}</h3>
-          <p>Stage: {view.stage_name}<br />Location: {view.ward}, {view.sub_county}, {view.county}<br />
+          <p>Members: {MEMBERS_LABEL[view.members_type] || 'Riders'}{view.treasurer_kind ? ` (Treasurer: ${KIND_LABEL[view.treasurer_kind]})` : ''}<br />{view.stage_name ? <>Stage: {view.stage_name}<br /></> : null}Location: {view.ward}, {view.sub_county}, {view.county}<br />
             Slots: {view.slots_used} used of {view.approved_slots} ({view.slots_available} available)<br />
             Treasurer: {view.treasurer_name} ({view.treasurer_phone})<br />
             Registered: {view.registered_at} · Status: {view.status}</p>
@@ -179,6 +190,15 @@ export default function ManageGroupsAndMembers() {
       {form && (
         <div className="card" style={{ marginTop: 12 }}>
           <h3>{editId ? 'Edit Group' : 'Create New Group'}</h3>
+          <label style={{ display: 'block', margin: '8px 0' }}>Group Members Type *
+            <select value={form.members_type || ''} onChange={(e) => setForm({ ...form, members_type: e.target.value, treasurer_kind: '' })} style={{ display: 'block', padding: 8 }}>
+              <option value="">Select…</option>
+              <option value="riders">Riders (motorcycle riders)</option><option value="business">Business (Smart Bizna business users)</option>
+              <option value="drivers">Drivers (car drivers)</option><option value="mixed">Mixed (riders, drivers and business users)</option>
+            </select>
+            {errors.members_type && <span role="alert" style={{ color: 'red' }}>{errors.members_type}</span>}
+            {editId && <div className="muted" style={{ fontSize: 12 }}>The Members Type can be changed only while the group has no members besides its Treasurer.</div>}
+          </label>
           <Field form={form} setForm={setForm} errors={errors} k="group_name" label="Group Name" maxLength={120} />
           <label style={{ display: 'block', margin: '8px 0' }}>Group Type *
             <select value={form.group_type || ''} onChange={(e) => setForm({ ...form, group_type: e.target.value })} style={{ display: 'block' }}>
@@ -190,8 +210,15 @@ export default function ManageGroupsAndMembers() {
           </label>
           <LocationCascade value={form} errors={errors}
             onChange={(loc) => setForm({ ...form, ...loc })} />
-          <Field form={form} setForm={setForm} errors={errors} k="stage_name" label="Stage Name" maxLength={120} placeholder="Where riders wait for customers" />
+          {form.members_type === 'riders' && <Field form={form} setForm={setForm} errors={errors} k="stage_name" label="Stage Name" maxLength={120} placeholder="Where riders wait for customers" />}
           <Field form={form} setForm={setForm} errors={errors} k="approved_slots" label="Number of Approved Member Slots" type="number" min="1" />
+          {form.members_type === 'mixed' && (
+            <label style={{ display: 'block', margin: '8px 0' }}>Treasurer type *
+              <select value={form.treasurer_kind || ''} onChange={(e) => setForm({ ...form, treasurer_kind: e.target.value })} style={{ display: 'block', padding: 8 }}>
+                <option value="">Select…</option><option value="rider">Motorcycle rider</option><option value="driver">Car driver</option><option value="business">Business user</option>
+              </select>
+              {errors.treasurer_kind && <span role="alert" style={{ color: 'red' }}>{errors.treasurer_kind}</span>}
+            </label>)}
           <Field form={form} setForm={setForm} errors={errors} k="treasurer_name" label="Treasurer Name" maxLength={80} />
           <Field form={form} setForm={setForm} errors={errors} k="treasurer_phone" label="Treasurer Phone Number" placeholder="0712345678" />
           {phoneWarn && (

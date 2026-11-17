@@ -42,6 +42,8 @@ import {
   buildSetupBody,
   localStatusFrom,
 } from '../../utils/setupProfileLogic';
+import { vt, brandName, setAudienceFromStatus } from '../../vehicle/vehicleStore';      // SMART CABZ
+
 
 export { KENYA_MSISDN, cleanMobile };   // kept as exports of this screen, as before
 
@@ -87,6 +89,7 @@ export default function SetupMyProfileScreen({ navigation }) {
         setFullName(res.data.full_name || '');
         setSource(res.data.source || '');
         setUserType(userTypeFromLookup(res.data));
+        setAudienceFromStatus({ user_type: res.data.user_type, vehicle_type: res.data.vehicle_type });      // SMART CABZ: a driver's number reads car / driver from here on
         setBusinessTypeName(businessTypeLabel(res.data));
         setLookup('found');
       } catch (err) {
@@ -110,7 +113,7 @@ export default function SetupMyProfileScreen({ navigation }) {
     // A rider chooses the fuel type. A business user (Owner or Sales/Service Person) chooses NOTHING: the Business Type was set by the Administrator
     // at pre-registration, so they only confirm the number, accept the terms and finish.
     if (userType !== 'business' && userType !== 'admin') {      // ADMIN APP: an Administrator chooses nothing either
-      if (!fuelType) { setTypeError(t('setup.fuel_required') || 'Please select the fuel type of your motorcycle.'); ok = false; } else setTypeError(null);
+      if (!fuelType) { setTypeError(t('setup.fuel_required') || vt('Please select the fuel type of your motorcycle.')); ok = false; } else setTypeError(null);
     } else setTypeError(null);
     if (!consent) { setConsentError(t('profile.consent_required')); ok = false; } else setConsentError(null);
     return ok;

@@ -21,6 +21,7 @@ class Rider(Base):
     pin_locked_until = Column(DateTime(timezone=True))
     onboarding_step = Column(String(30), default="valuePreview")
     registration_status = Column(String(20), default="pending")
+    vehicle_type = Column(String(12), nullable=False, default="motorcycle", server_default="motorcycle")   # SMART CABZ: motorcycle -> Smart Boda, car -> Smart Cabz
     is_treasurer = Column(Boolean, nullable=False, default=False)   # set at Profile Confirmation
     
     # ✅ ENHANCED: Location fields for rider's operating location (County, Sub-County, Ward)

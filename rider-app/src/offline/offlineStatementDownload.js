@@ -14,6 +14,7 @@ import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { addToSyncQueue } from './syncQueue';
+import { brandName } from '../vehicle/vehicleStore';      // SMART CABZ
 
 /**
  * ✅ Generate detailed HTML for statement PDF
@@ -32,7 +33,7 @@ function renderStatementHtml(statement) {
     <html>
       <head>
         <meta charset="UTF-8" />
-        <title>Smart Boda Financial Statement</title>
+        <title>${brandName()} Financial Statement</title>
         <style>
           body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -126,7 +127,7 @@ function renderStatementHtml(statement) {
       </head>
       <body>
         <div class="container">
-          <h1>Smart Boda — Financial Statement</h1>
+          <h1>${brandName()} — Financial Statement</h1>
           
           <div class="header-info">
             <div class="info-row">
@@ -166,7 +167,7 @@ function renderStatementHtml(statement) {
 
           <div class="footer">
             <p>This statement was generated on your device and is valid for 6 months from creation.</p>
-            <p>For inquiries, contact Smart Boda Customer Support.</p>
+            <p>For inquiries, contact ${brandName()} Customer Support.</p>
           </div>
         </div>
       </body>
@@ -242,7 +243,7 @@ export async function downloadStatementOffline(statementId, riderId) {
       await Sharing.shareAsync(uri, {
         mimeType: 'application/pdf',
         UTType: 'com.adobe.pdf',
-        dialogTitle: `Smart Boda Statement - ${statementId}`,
+        dialogTitle: `${brandName()} Statement - ${statementId}`,
       });
     } else {
       console.warn('⚠️ Sharing not available on this device');

@@ -8,6 +8,7 @@
 // ✅ FIXED: View Yesterday button now navigates to YesterdayNetProfit screen
 // ✅ PART 5: Tiles by membership and role (hasGroup / isTreasurer)
 
+import { useAudience, brandName, brandIcon } from '../vehicle/vehicleStore';      // SMART CABZ: Smart Boda / Smart Cabz / Smart Bizna and its icon
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Linking, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
@@ -48,9 +49,9 @@ function LoadingSkeleton() {
       <View style={styles.topBar}>
         <View style={styles.brand}>
           <View style={styles.logo}>
-            <Text style={styles.logoText}>🏍️</Text>
+            <Text style={styles.logoText}>{brandIcon()}</Text>
           </View>
-          <Text style={styles.brandName}>Smart Boda</Text>
+          <Text style={styles.brandName}>{brandName()}</Text>
         </View>
       </View>
       <View style={styles.screenBody}>
@@ -109,6 +110,7 @@ class HomeScreenErrorBoundary extends React.Component {
 }
 
 export default function HomeScreen({ navigation: passedNavigation, route }) {
+  useAudience();      // SMART CABZ: re-draw when the kind of user changes
   const { t } = useTranslation();
   const { showToast } = useToast();
 
@@ -443,9 +445,9 @@ export default function HomeScreen({ navigation: passedNavigation, route }) {
         <View style={styles.topBar}>
           <View style={styles.brand}>
             <View style={styles.logo}>
-              <Text style={styles.logoText}>🏍️</Text>
+              <Text style={styles.logoText}>{brandIcon()}</Text>
             </View>
-            <Text style={styles.brandName}>Smart Boda</Text>
+            <Text style={styles.brandName}>{brandName()}</Text>
           </View>
           <TouchableOpacity
             style={styles.notifBell}

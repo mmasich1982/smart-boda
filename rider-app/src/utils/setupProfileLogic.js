@@ -62,6 +62,7 @@ export function localStatusFrom(res, fallbackName) {
       full_name: res.full_name || fallbackName, role: res.role, user_type: 'admin' };
   }
   const base = {
+    vehicle_type: res.vehicle_type || 'motorcycle',      // SMART CABZ
     rider_id: res.rider_id,
     onboarding_step: 'createPin',
     registration_status: 'verified_incomplete',

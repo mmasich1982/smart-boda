@@ -9,6 +9,7 @@ import { saveAdminSession } from '../admin/adminSession';
 import { sameIdentity, canSwitchAccount, statusFromLogin } from './loginRules';
 import { wipeLocalUserData, pendingUploadCount } from './localIdentity';
 import { clearRevoked } from './sessionFlags';
+import { setAudienceFromStatus } from '../vehicle/vehicleStore';      // SMART CABZ
 
 export async function completeLogin(res, pin) {
   const status = (await getLocalRiderStatus().catch(() => null)) || null;
@@ -32,6 +33,9 @@ export async function completeLogin(res, pin) {
     if (p.language_code) { try { await saveLocalLanguage(p.language_code); } catch { /* ignore */ } }
     if (p.fuel_type_code) { try { await saveLocalBikeProfile({ fuel_type_code: p.fuel_type_code }); } catch { /* ignore */ } }
   }
+  const fresh = statusFromLogin(res);
+  if (same) await saveLocalRiderStatus({ ...status, vehicle_type: fresh.vehicle_type, user_type: fresh.user_type });     // SMART CABZ: the type may have been changed by an Administrator
+  setAudienceFromStatus(fresh);
   await savePinLocally(res.rider_id, pin).catch(() => {});        // so the next Logout / Login on this phone needs only the PIN, offline too
   await markSessionActive();
   await clearRevoked();

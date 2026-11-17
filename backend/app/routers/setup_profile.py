@@ -30,6 +30,7 @@ from app.services.group_member_link_service import find_rider_id_by_mobile, link
 from app.services.group_roles import phone_key, same_phone
 from app.services.individual_rider_service import find_preregistration, mark_registered
 from app.services import admin_app_service            # ADMIN APP: an Administrator may also set up in the app
+from app.services import group_kinds as GK, vehicle_words      # SMART CABZ: vehicle type and the words that follow it
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/onboarding", tags=["Setup My Profile"])
@@ -54,6 +55,23 @@ def find_registration(db: Session, mobile: str):
     if pre:
         return pre.full_name, pre.county_id, pre.sub_county_id, pre.ward_id, "individual"       # location chosen by the Administrator
     return None
+
+
+def vehicle_for(db: Session, mobile: str, source) -> str:
+    """SMART CABZ: the vehicle type a person starts with. An individual rider: the Administrator's choice. A group member: what the Treasurer
+    recorded (driver -> car). A group's Treasurer: the Treasurer kind the Administrator chose. Everyone else: motorcycle (as always)."""
+    k = phone_key(mobile)
+    if source == "individual":
+        pre = find_preregistration(db, mobile)
+        return pre.vehicle_type if pre else "motorcycle"
+    if source == "member":
+        m = (db.query(GroupMember).filter(GroupMember.phone_key == k, GroupMember.status == "active").order_by(GroupMember.created_at).first())
+        return GK.vehicle_of(m.member_kind) if m else "motorcycle"
+    if source == "treasurer":
+        for g in db.query(BodaGroup).filter(BodaGroup.status == "active").order_by(BodaGroup.created_at).all():
+            if same_phone(g.treasurer_phone, mobile):
+                return GK.vehicle_of(g.treasurer_kind)
+    return "motorcycle"
 
 
 def _clean(mobile):
@@ -86,11 +104,12 @@ def profile_lookup(mobile_number: str, db: Session = Depends(get_db)):
         r = db.get(Rider, rid)
         if r and r.registration_status == "active":
             raise HTTPException(409, "This mobile number is already set up. Please log in with your PIN.")
-    reg = find_registration(db, normalized)
+    biz = business_registration(db, normalized)                 # SMART CABZ: a business user stays a business user even when a Treasurer has added them to a group
+    reg = None if biz else find_registration(db, normalized)
     if reg:
         return {"found": True, "full_name": reg[0], "mobile_number": normalized, "source": reg[4], "user_type": "rider",
+                "vehicle_type": vehicle_for(db, normalized, reg[4]),
                 "role": None, "business_name": None, "business_type_code": None, "business_type_name": None}
-    biz = business_registration(db, normalized)                 # Smart Bizna: Business Owner or Sales/Service Person
     if not biz:
         raise HTTPException(404, NOT_FOUND)
     bu, b = biz
@@ -107,10 +126,11 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
     normalized = _clean(payload.mobile_number)
     if not payload.consent_accepted:
         raise HTTPException(422, "You must accept the Terms and Privacy Notice to continue.", headers={"X-Error-Code": "CONSENT_REQUIRED"})
-    reg = find_registration(db, normalized)
-    biz = None if reg else business_registration(db, normalized)
+    biz = business_registration(db, normalized)                 # SMART CABZ: business first (see profile_lookup)
+    reg = None if biz else find_registration(db, normalized)
+    vehicle = vehicle_for(db, normalized, reg[4]) if reg else "motorcycle"
     if not biz and payload.business_type_code is None and not db.query(FuelTypeMaster).filter_by(code=payload.fuel_type_code, is_active=True).first():
-        raise HTTPException(422, "Please choose the fuel type of your motorcycle.")      # a rider's request: checked first, as always
+        raise HTTPException(422, vehicle_words.convert("Please choose the fuel type of your motorcycle.", "driver" if vehicle == "car" else "rider"))      # a rider's request: checked first, as always
     if not reg and not biz:
         raise HTTPException(404, NOT_FOUND)
     if biz:                                                     # Smart Bizna user: nothing to choose, they only finish the registration
@@ -135,13 +155,16 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
             rider = Rider(id=uuid.uuid4(), mobile_number=normalized, mobile_verified=False, created_at=now)
             db.add(rider)
         rider.full_name = name
+        if not biz:
+            rider.vehicle_type = vehicle                       # SMART CABZ
         rider.county_id, rider.sub_county_id, rider.ward_id = county_id, sub_county_id, ward_id
         rider.consent_accepted_at, rider.consent_content_version = now, payload.consent_content_version
         rider.registration_status, rider.onboarding_step, rider.updated_at = "verified_incomplete", "createPin", now
         if lang: rider.language_code = lang
         db.flush()
         if biz:
-            mark_business_registered(db, biz[0], biz[1], rider)   # no bike, no group
+            mark_business_registered(db, biz[0], biz[1], rider)   # no bike
+            link_members_for_rider(db, rider)                     # SMART CABZ: a business user a Treasurer added to a group is linked to it now
         else:
             bp = db.query(BikeProfile).filter_by(rider_id=rider.id, is_active=True).first()
             if bp: bp.fuel_type_code = payload.fuel_type_code
@@ -160,7 +183,7 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
         logger.error(f"setup_profile failed for {normalized}: {e}", exc_info=True)
         raise HTTPException(500, "We could not save your profile. Please try again.")
     return {"status": "confirmed", "rider_id": str(rider.id), "full_name": rider.full_name,
-            "mobile_number": rider.mobile_number, "fuel_type_code": None if biz else payload.fuel_type_code,
+            "mobile_number": rider.mobile_number, "fuel_type_code": None if biz else payload.fuel_type_code, "vehicle_type": rider.vehicle_type,
             "county_id": county_id, "sub_county_id": sub_county_id, "ward_id": ward_id, "source": _src, "next_step": "createPin",
             "user_type": "business" if biz else "rider", "role": biz[0].role if biz else None,
             "business_id": str(biz[1].id) if biz else None, "business_name": biz[1].business_name if biz else None,

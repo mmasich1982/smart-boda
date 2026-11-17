@@ -12,6 +12,8 @@ import BackLink from '../../components/BackLink';
 import { useToast } from '../../components/Toast';
 import useMasterData from '../../hooks/useMasterData';
 import api from '../../api/client';
+import { vt, brandName } from '../../vehicle/vehicleStore';      // SMART CABZ
+
 
 const STEP_PIN = 'pin', STEP_DETAILS = 'details', STEP_CONFIRMED = 'confirmed';
 
@@ -76,7 +78,7 @@ export default function DataExportRequestScreen({ riderId, navigation }) {
 
       {step === STEP_DETAILS && (
         <>
-          <Text style={styles.sub}>Request a full copy of everything Smart Boda has recorded about you.</Text>
+          <Text style={styles.sub}>{vt('Request a full copy of everything Smart Boda has recorded about you.')}</Text>
           <FormField label="Email Address" value={email} onChangeText={setEmail}
             keyboardType="email-address" placeholder="you@example.com" error={emailError} />
           <DropdownField label="Reason for Export" value={reason} onValueChange={setReason}

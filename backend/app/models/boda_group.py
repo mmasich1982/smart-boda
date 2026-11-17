@@ -12,7 +12,9 @@ class BodaGroup(Base):
     county_id = Column(Integer, ForeignKey("counties.id"), nullable=False)
     sub_county_id = Column(Integer, ForeignKey("sub_counties.id"), nullable=False)
     ward_id = Column(Integer, ForeignKey("wards.id"), nullable=False)
-    stage_name = Column(String(120), nullable=False)
+    stage_name = Column(String(120), nullable=True)                      # SMART CABZ: only a Riders group has a stage name
+    members_type = Column(String(10), nullable=False, default="riders", server_default="riders")      # riders | business | drivers | mixed
+    treasurer_kind = Column(String(10), nullable=False, default="rider", server_default="rider")      # rider | driver | business
     approved_slots = Column(Integer, nullable=False)
     treasurer_name = Column(String(80), nullable=False)
     treasurer_phone = Column(String(15), nullable=False)
@@ -67,6 +69,7 @@ class GroupMember(Base):
     phone_key = Column(String(9), nullable=False)       # last 9 digits of the mobile number: the link to the rider account
     linked_rider_id = Column(UUID(as_uuid=True), ForeignKey("rider.id"))
     link_status = Column(String(15), nullable=False, default="awaiting_signup")
+    member_kind = Column(String(10), nullable=False, default="rider", server_default="rider")         # SMART CABZ: what a brand-new member becomes: rider | driver | business
     linked_at = Column(DateTime(timezone=True))
     status = Column(String(10), nullable=False, default="active")
     created_at = Column(DateTime(timezone=True), server_default=func.now())

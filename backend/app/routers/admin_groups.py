@@ -4,7 +4,7 @@ from uuid import UUID as RowId   # NOT "UUID": star-imports of the models bring 
 from datetime import datetime, timezone
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -19,6 +19,8 @@ from app.services.group_member_link_service import rider_mobile_key
 from app.models.rider import Rider
 from app.services.individual_rider_service import is_unlinked_individual
 from app.services.business_service import find_business_user
+from app.services.individual_rider_service import find_preregistration
+from app.services import group_kinds as GK                    # SMART CABZ: Group Members Type rules
 
 # Same guard style as payment_admin.py: every route below needs a logged-in admin.
 router = APIRouter(prefix="/admin/groups", tags=["admin-groups"],
@@ -38,7 +40,9 @@ class GroupIn(BaseModel):
     county_id: int
     sub_county_id: int
     ward_id: int
-    stage_name: str = Field(min_length=2, max_length=120)
+    stage_name: Optional[str] = Field(default=None, max_length=120)       # SMART CABZ: asked only for a Riders group
+    members_type: Literal["riders", "business", "drivers", "mixed"] = "riders"    # SMART CABZ: who may be in this group
+    treasurer_kind: Optional[Literal["rider", "driver", "business"]] = None       # SMART CABZ: only chosen for a Mixed group; otherwise set from the Members Type
     group_type: Literal["mgr", "tb"]                      # Merry-Go-Round or Table Banking, chosen by the administrator (required)
     approved_slots: int = Field(ge=1, le=1000)
     treasurer_name: str = Field(min_length=2, max_length=80)
@@ -46,6 +50,20 @@ class GroupIn(BaseModel):
     @field_validator("treasurer_phone")
     @classmethod
     def _p(cls, v): return _phone(v)                       # FORMAT ONLY
+
+    @model_validator(mode="after")
+    def _members_type_rules(self):
+        if self.members_type == "riders":                  # today's rule: a Riders group has a stage name
+            if not self.stage_name or len(self.stage_name.strip()) < 2:
+                raise ValueError("Stage name is required")
+            self.stage_name = self.stage_name.strip()
+        else:                                              # Business, Drivers and Mixed groups have no stage name
+            self.stage_name = None
+        kind = GK.treasurer_kind_for(self.members_type, self.treasurer_kind)
+        if kind is None:
+            raise ValueError("Choose the Treasurer type (motorcycle rider, car driver or business user).")
+        self.treasurer_kind = kind
+        return self
 
 class DecisionIn(BaseModel):
     approved_slots: Optional[int] = Field(default=None, ge=1, le=200)
@@ -82,7 +100,7 @@ def _row(db, g: BodaGroup) -> dict:
             "county_id": g.county_id, "county": c.county_name if c else None,
             "sub_county_id": g.sub_county_id, "sub_county": s.sub_county_name if s else None,
             "ward_id": g.ward_id, "ward": w.ward_name if w else None,
-            "stage_name": g.stage_name, "group_type": g.group_type, "approved_slots": POOL.pool_allowance(db, g), "slots_used": used,
+            "stage_name": g.stage_name, "members_type": g.members_type, "treasurer_kind": g.treasurer_kind, "group_type": g.group_type, "approved_slots": POOL.pool_allowance(db, g), "slots_used": used,
             "slots_available": POOL.pool_allowance(db, g) - used,
             "treasurer_name": g.treasurer_name, "treasurer_phone": g.treasurer_phone,
             "registered_at": g.registered_at.isoformat() if g.registered_at else None,
@@ -102,7 +120,7 @@ def stats(db: Session = Depends(get_db)):
 
 @router.get("")
 def list_groups(q: Optional[str] = None, status: Optional[str] = None,
-                county_id: Optional[int] = None, page: int = Query(1, ge=1),
+                county_id: Optional[int] = None, members_type: Optional[str] = None, page: int = Query(1, ge=1),
                 page_size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
     qry = db.query(BodaGroup)
     if q:
@@ -111,6 +129,7 @@ def list_groups(q: Optional[str] = None, status: Optional[str] = None,
                              BodaGroup.stage_name.ilike(like)))
     if status in ("active", "inactive"): qry = qry.filter(BodaGroup.status == status)
     if county_id: qry = qry.filter(BodaGroup.county_id == county_id)
+    if members_type in GK.MEMBERS_TYPES: qry = qry.filter(BodaGroup.members_type == members_type)     # SMART CABZ
     total = qry.count()
     items = qry.order_by(BodaGroup.created_at.desc()).offset((page-1)*page_size).limit(page_size).all()
     return {"total": total, "page": page, "page_size": page_size, "items": [_row(db, g) for g in items]}
@@ -118,7 +137,7 @@ def list_groups(q: Optional[str] = None, status: Optional[str] = None,
 @router.post("", status_code=201)
 def create_group(body: GroupIn, db: Session = Depends(get_db), admin: AdminUser = Depends(require_admin)):
     _check_location(db, body)
-    _require_unused_phone(db, body.treasurer_phone, body.group_type)       # a new Treasurer number must be unique (no existing rider)
+    _require_treasurer(db, body)                                           # SMART CABZ: the Treasurer rules for this Members Type (a Riders group is exactly as before)
     POOL.require_free_type(db, body.treasurer_phone, body.group_type)      # one group of each type per Treasurer
     g = BodaGroup(**body.model_dump(), group_code=_new_code(db), status="active",
                   created_by_admin_id=admin.id)
@@ -176,9 +195,8 @@ def _require_unused_phone(db: Session, phone, group_type, exclude_id=None):
         return                                                         # allowed: an individual rider (in no group, linked to no Treasurer) may become a Treasurer
     raise HTTPException(409, _phone_taken_message(r))
 
-@router.get("/phone-check")
-def phone_check(phone: str, group_type: Optional[str] = None, exclude_group_id: Optional[RowId] = None,
-                db: Session = Depends(get_db)):
+def _phone_check_base(phone: str, group_type: Optional[str] = None, exclude_group_id: Optional[RowId] = None,
+                      db: Session = Depends(get_db)):
     """Used by the form to show the result before the administrator presses Save. The same rule is enforced
     again on create and update, so this check can never be bypassed."""
     bz = find_business_user(db, phone)
@@ -207,6 +225,58 @@ def phone_check(phone: str, group_type: Optional[str] = None, exclude_group_id: 
         return {**base, "pair_ok": True,
                 "message": f"This number belongs to {name}, an individual rider who is in no group. They can be named the Treasurer of this group."}
     return {**base, "pair_ok": False, "message": _phone_taken_message(r)}
+
+# ---- SMART CABZ: Treasurer and member kinds ----
+def _kind_of_phone(db: Session, phone):
+    """What this number already is: ('business' | 'driver' | 'rider', name) or None when nothing in the system knows it."""
+    bz = find_business_user(db, phone)
+    if bz:
+        return "business", bz[0].full_name
+    r = _rider_with_phone(db, phone)
+    if r:
+        return GK.kind_of(r.vehicle_type), (r.full_name or "").strip() or "no name yet"
+    pre = find_preregistration(db, phone)
+    if pre:
+        return GK.kind_of(pre.vehicle_type), pre.full_name
+    return None
+
+
+def _require_treasurer(db: Session, body: GroupIn, exclude_id=None, phone_changed: bool = True):
+    """BLOCKS saving. A Riders / Drivers Treasurer is a NEW number (today's rule); a Business Treasurer is an EXISTING business user;
+    in a Mixed group the kind the Administrator chose applies. The Treasurer's two groups (Merry-Go-Round + Table Banking) must match."""
+    kind = body.treasurer_kind
+    known = _kind_of_phone(db, body.treasurer_phone)
+    if kind == "business":
+        if not (known and known[0] == "business"):
+            raise HTTPException(409, "This number is not a registered Smart Bizna business user. Register this person's business first.")
+        POOL.require_free_type(db, body.treasurer_phone, body.group_type, exclude_id)
+    else:
+        if phone_changed:
+            _require_unused_phone(db, body.treasurer_phone, body.group_type, exclude_id)      # the rules that exist today
+        if known and known[0] != kind:
+            raise HTTPException(409, f"This number belongs to {GK.KIND_WORDS[known[0]]}, so it cannot be the Treasurer of this group ({GK.KIND_WORDS[kind]}).")
+    partner = _pair_partner(db, body.treasurer_phone, body.group_type, exclude_id)
+    if partner and not GK.pair_matches(partner.members_type, partner.treasurer_kind, body.members_type, body.treasurer_kind):
+        raise HTTPException(409, "A Treasurer's two groups (Merry-Go-Round and Table Banking) must have the same Members Type.")
+
+
+@router.get("/phone-check")
+def phone_check(phone: str, group_type: Optional[str] = None, exclude_group_id: Optional[RowId] = None,
+                members_type: Optional[str] = None, treasurer_kind: Optional[str] = None, db: Session = Depends(get_db)):
+    """The Treasurer number check, now aware of the Members Type. For Riders (or no Members Type) it is exactly the check that existed."""
+    kind = GK.treasurer_kind_for(members_type or "riders", treasurer_kind)
+    if kind is None:
+        return {"has_account": False, "pair_ok": False, "message": "Choose the Treasurer type first."}
+    known = _kind_of_phone(db, phone)
+    if kind == "business":
+        if known and known[0] == "business":
+            return {"has_account": True, "pair_ok": True, "rider_name": known[1],
+                    "message": f"This number belongs to {known[1]}, a Smart Bizna business user. They can be named the Treasurer of this group."}
+        return {"has_account": bool(known), "pair_ok": False, "message": "This number is not a registered Smart Bizna business user. Register this person's business first."}
+    res = _phone_check_base(phone, group_type, exclude_group_id, db)
+    if res.get("pair_ok") and known and known[0] != kind:
+        return {**res, "pair_ok": False, "message": f"This number belongs to {GK.KIND_WORDS[known[0]]}, so it cannot be the Treasurer of this group ({GK.KIND_WORDS[kind]})."}
+    return res
 
 # ---- Slot-request queue (must be declared BEFORE /{group_id}) ----
 @router.get("/slot-requests")
@@ -289,13 +359,18 @@ def update_group(group_id: RowId, body: GroupIn, db: Session = Depends(get_db)):
     if body.approved_slots < POOL.slots_used(db, g):
         raise HTTPException(422, "Approved slots cannot be lower than members already enrolled.")
     _check_location(db, body)
+    if (body.members_type != g.members_type) and not GK.can_change_members_type(_own_members(db, g.id)):
+        raise HTTPException(409, "This group already has members, so its Members Type cannot change.")        # SMART CABZ
     if body.group_type != g.group_type and _own_members(db, g.id):
         raise HTTPException(409, "This group already has members, so its type cannot change.")
     if body.group_type != g.group_type:
         POOL.require_free_type(db, body.treasurer_phone, body.group_type, exclude_id=g.id)
     old_phone = g.treasurer_phone
-    if not same_phone(body.treasurer_phone, old_phone):
-        _require_unused_phone(db, body.treasurer_phone, body.group_type, exclude_id=g.id)   # only when the number is being changed
+    _changed_phone = not same_phone(body.treasurer_phone, old_phone)
+    if _changed_phone or body.members_type != g.members_type or body.treasurer_kind != g.treasurer_kind:
+        if not _changed_phone and body.treasurer_kind != g.treasurer_kind and body.members_type == g.members_type:
+            raise HTTPException(409, "The Treasurer type cannot change unless the Treasurer is changed.")
+        _require_treasurer(db, body, exclude_id=g.id, phone_changed=_changed_phone)      # SMART CABZ: only when the number or the Members Type changes
     person_changed = (body.treasurer_name != g.treasurer_name) or not same_phone(body.treasurer_phone, old_phone)
     if body.group_type != g.group_type:
         POOL.unlink_all(db, g)                                           # a type change leaves the old pair

@@ -12,8 +12,9 @@
 // (the token is fetched the next time the rider logs in while online).
 // ============================================================================
 import api from '../api/client';
-import { saveLocalAuthToken, getLocalAuthToken, getLocalRiderId, getLocalDeviceId } from './db';
+import { saveLocalAuthToken, getLocalAuthToken, getLocalRiderId, getLocalDeviceId, getLocalRiderStatus, saveLocalRiderStatus } from './db';
 import { deviceLabel } from '../auth/deviceLabel';          // SMART APPS
+import { setAudienceFromStatus } from '../vehicle/vehicleStore';      // SMART CABZ
 import { isOnlineNow } from './chamaConnectivity';
 
 /** @returns {Promise<{ok:boolean, reason?:string, other?:{device_label?:string}}>}
@@ -53,6 +54,13 @@ export async function renewRiderSession() {
     const data = res?.data;
     if (data?.ok && data?.token) {
       await saveLocalAuthToken(data.token);
+      if (data.vehicle_type) {                       // SMART CABZ: a Super Admin may have changed this person's vehicle type; the Home follows
+        try {
+          const st = await getLocalRiderStatus();
+          if (st && st.vehicle_type !== data.vehicle_type) await saveLocalRiderStatus({ ...st, vehicle_type: data.vehicle_type });
+          setAudienceFromStatus({ ...(st || {}), vehicle_type: data.vehicle_type });
+        } catch { /* the token was renewed; the words catch up on the next start */ }
+      }
       return { ok: true };
     }
     return { ok: false, reason: 'rejected' };

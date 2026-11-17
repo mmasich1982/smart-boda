@@ -23,6 +23,7 @@ import {
   getRetentionWindowInfo 
 } from './financialHistoryRepository';
 import { DETAILED_STATEMENT_SLA_HOURS } from '../constants/financialHistoryConstants';
+import { vt } from '../vehicle/vehicleStore';      // SMART CABZ
 
 const STATEMENTS_STORE = 'statements';
 const STATEMENT_REQUESTS_STORE = 'statementRequests';
@@ -90,7 +91,7 @@ export async function getStatementById(statementId, riderId) {
       return {
         ...statement,
         isWithinRetention: false,
-        message: 'This statement is archived. Contact Smart Boda Admin for access.'
+        message: vt('This statement is archived. Contact Smart Boda Admin for access.')
       };
     }
 
@@ -153,7 +154,7 @@ export async function recordStatementDownload(statementId, riderId, method = 'do
     }
 
     if (!statement.isWithinRetention) {
-      throw new Error('Cannot access archived statement. Contact Smart Boda Admin.');
+      throw new Error(vt('Cannot access archived statement. Contact Smart Boda Admin.'));
     }
 
     const updated = await indexedDbAdapter.updateRow(STATEMENTS_STORE, statementId, {

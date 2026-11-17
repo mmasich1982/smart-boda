@@ -5,8 +5,9 @@
 // LEGAL_EFFECTIVE_DATE — whenever termsOfServiceContent.js or dataPrivacyContent.js copy changes,
 // so historical consent records stay meaningful even after the wording is updated.
 
-export const LEGAL_DOC_VERSION = '1.0';
-export const LEGAL_EFFECTIVE_DATE = 'July 14, 2026';
+// VERSION 2.0 (DRAFT): riders, drivers and business users; groups; devices and sessions. Not yet reviewed by a Kenyan advocate.
+export const LEGAL_DOC_VERSION = '2.0';
+export const LEGAL_EFFECTIVE_DATE = 'November 16, 2026 (draft)';
 
 // Recorded against the rider's account at consent time (SB-03-B) so we always know exactly
 // which wording a given rider agreed to, even if the documents are revised later.

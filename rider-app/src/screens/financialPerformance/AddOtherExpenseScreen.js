@@ -25,6 +25,8 @@ import { addToSyncQueue } from '../../offline/syncQueue';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import { invalidateFinancialCaches } from '../../offline/financialPerformanceUtils';
 import api from '../../api/client';
+import { vt, brandName } from '../../vehicle/vehicleStore';      // SMART CABZ
+
 
 /**
  * ============================================================================
@@ -52,6 +54,7 @@ const CATEGORY_CODE_MAP = {
   'Food & Refreshments': 'food',                 // ✅ Maps to food code
   'Phone & Data': 'phone',                       // ✅ Maps to phone code
   'Transportation (non-bike)': 'transport',      // ✅ Maps to transport code
+  'Transportation (non-car)': 'transport',       // SMART CABZ: the same category as a driver reads it
   'Health & Medical': 'health',                  // ✅ Maps to health code
   'Family Support': 'family',                    // ✅ Maps to family code
   'Other': 'other',                              // ✅ Direct match
@@ -472,7 +475,7 @@ export default function AddOtherExpenseScreen({ navigation }) {
             {categories.map((cat) => (
               <Picker.Item 
                 key={typeof cat === 'string' ? cat : cat.code} 
-                label={typeof cat === 'string' ? cat : cat.display_name} 
+                label={vt(typeof cat === 'string' ? cat : cat.display_name)} 
                 value={typeof cat === 'string' ? cat : cat.code} 
               />
             ))}

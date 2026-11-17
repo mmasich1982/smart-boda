@@ -25,6 +25,8 @@ import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { downloadStatementIntelligent, isPdfLibReady } from '../../offline/offlineStatementDownload';
 import api from '../../api/client';
 import { useNetworkStatus } from '../../hooks/useNetworkStatus';
+import { vt, brandName } from '../../vehicle/vehicleStore';      // SMART CABZ
+
 
 export default function StatementPreviewScreen({ navigation, route }) {
   const { t } = useTranslation();
@@ -216,7 +218,7 @@ export default function StatementPreviewScreen({ navigation, route }) {
 
       {/* Statement Preview Card */}
       <View style={styles.statementPreview}>
-        <Text style={styles.statementHeading}>Smart Boda Digital — Earnings Statement</Text>
+        <Text style={styles.statementHeading}>{vt('Smart Boda Digital — Earnings Statement')}</Text>
 
         <Text style={styles.hint}>Period: {periodStart} – {periodEnd}</Text>
         <Text style={styles.hint}>

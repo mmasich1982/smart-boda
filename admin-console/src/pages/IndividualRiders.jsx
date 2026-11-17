@@ -4,7 +4,8 @@
 // The rider then registers in the mobile app (the app finds the name from the number). My Savings / My Loans appear only
 // once a Treasurer adds the rider to a group.
 import React, { useEffect, useState } from 'react';
-import { listIndividualRiders, createIndividualRider, removeIndividualRider, checkIndividualPhone } from '../api/individualRiders';
+import { listIndividualRiders, createIndividualRider, removeIndividualRider, checkIndividualPhone, changeVehicleType } from '../api/individualRiders';
+import { currentAdminRole } from '../auth/session';      // SMART CABZ: Change vehicle type is for Super Admins
 import { useApiResource } from '../hooks/useApiResource';
 import ConfirmButton from '../components/ConfirmButton';
 import MaskedPhone from '../components/MaskedPhone';
@@ -20,12 +21,15 @@ const errText = (e, fallback) => {            // detail is a string for our erro
 };
 
 const PHONE_RE = /^(\+254|254|0)(7|1)[0-9]{8}$/;
-const EMPTY = { full_name: '', mobile_number: '', county_id: null, sub_county_id: null, ward_id: null };
+const EMPTY = { full_name: '', mobile_number: '', vehicle_type: '', county_id: null, sub_county_id: null, ward_id: null };   // SMART CABZ: no default: the Administrator must choose
+const VEHICLE_LABEL = { motorcycle: '🏍️ Motorcycle (Smart Boda)', car: '🚗 Car (Smart Cabz)' };
 const STATUS_LABEL = { awaiting_registration: '🟡 Awaiting rider registration', registered: '🟢 Registered' };
 
 export default function IndividualRiders() {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [vehicle, setVehicle] = useState('');          // SMART CABZ: filter
+  const [changing, setChanging] = useState(null);      // SMART CABZ: { row, to, reason }
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [form, setForm] = useState(null);
@@ -34,7 +38,7 @@ export default function IndividualRiders() {
   const [phoneOk, setPhoneOk] = useState(false);
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
-  const riders = useApiResource(() => listIndividualRiders({ q: q || undefined, status: status || undefined, page, page_size: pageSize }), [q, status, page, pageSize]);
+  const riders = useApiResource(() => listIndividualRiders({ q: q || undefined, status: status || undefined, vehicle_type: vehicle || undefined, page, page_size: pageSize }), [q, status, vehicle, page, pageSize]);
   const d = riders.data || {};
 
   // Look the number up while the Administrator types (the server enforces the same rule again on Save).
@@ -56,6 +60,7 @@ export default function IndividualRiders() {
     if (f.full_name.trim().length < 2) e.full_name = 'Rider name is required';
     if (!PHONE_RE.test(f.mobile_number.replace(/[ -]/g, ''))) e.mobile_number = 'Enter a valid number, e.g. 0712345678';
     else if (phoneWarn) e.mobile_number = phoneWarn.message;
+    if (!f.vehicle_type) e.vehicle_type = 'Choose the type of vehicle';      // SMART CABZ
     if (!f.county_id) e.county_id = 'Please select a county';           // same three rules as the group form
     if (!f.sub_county_id) e.sub_county_id = 'Please select a sub-county';
     if (!f.ward_id) e.ward_id = 'Please select a ward';
@@ -68,9 +73,9 @@ export default function IndividualRiders() {
     if (Object.keys(e).length) return;
     setSaving(true);
     try {
-      const r = await createIndividualRider({ full_name: form.full_name.trim(), mobile_number: form.mobile_number.replace(/[ -]/g, ''),
+      const r = await createIndividualRider({ full_name: form.full_name.trim(), mobile_number: form.mobile_number.replace(/[ -]/g, ''), vehicle_type: form.vehicle_type,
         county_id: form.county_id, sub_county_id: form.sub_county_id, ward_id: form.ward_id });
-      setMsg(`${r.full_name} was pre-registered. They can now register in the Smart Boda app with ${r.mobile_number}.`);
+      setMsg(`${r.full_name} was pre-registered as a ${r.vehicle_type === 'car' ? 'car driver (Smart Cabz)' : 'motorcycle rider (Smart Boda)'}. They can now register in the app with ${r.mobile_number}.`);
       setForm(null); setPhoneWarn(null); setPhoneOk(false);
       riders.refresh();
     } catch (err) { setMsg(errText(err, 'Could not save the rider.')); } finally { setSaving(false); }
@@ -83,6 +88,14 @@ export default function IndividualRiders() {
       else riders.refresh();
     }
     catch (err) { setMsg(errText(err, 'Could not remove the rider.')); }
+  }
+
+  async function applyChange() {                      // SMART CABZ
+    try {
+      await changeVehicleType(changing.row.rider_id, changing.to, changing.reason.trim());
+      setMsg(`${changing.row.full_name} is now recorded as a ${changing.to === 'car' ? 'car driver (Smart Cabz)' : 'motorcycle rider (Smart Boda)'}. Their phone switches the next time it is online.`);
+      setChanging(null); riders.refresh();
+    } catch (err) { setMsg(errText(err, 'Could not change the vehicle type.')); }
   }
 
   const card = (t, v) => <div className="card" style={{ flex: 1, minWidth: 140 }}><div className="muted" style={{ fontSize: 12 }}>{t}</div><div style={{ fontSize: 26, fontWeight: 700 }}>{v ?? '—'}</div></div>;
@@ -101,23 +114,29 @@ export default function IndividualRiders() {
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} style={{ padding: 8 }}>
           <option value="">All statuses</option><option value="awaiting_registration">Awaiting registration</option><option value="registered">Registered</option>
         </select>
+        <select value={vehicle} onChange={(e) => { setVehicle(e.target.value); setPage(1); }} style={{ padding: 8 }} aria-label="Vehicle">
+          <option value="">All vehicles</option><option value="motorcycle">Motorcycle</option><option value="car">Car</option>
+        </select>
         <button className="primary" onClick={() => { setForm(EMPTY); setErrors({}); setPhoneWarn(null); setPhoneOk(false); }}>+ New Individual Rider</button>
       </div>
 
       <div className="card" style={{ overflowX: 'auto' }}>
         <table>
-          <thead><tr><th>Name</th><th>Mobile number</th><th>Location</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Name</th><th>Mobile number</th><th>Vehicle</th><th>Location</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead>
           <tbody>
             {(d.items || []).map((r) => (
               <tr key={r.id}>
                 <td>{r.full_name}</td>
                 <td><MaskedPhone value={r.mobile_number} /></td>
+                <td>{VEHICLE_LABEL[r.vehicle_type] || r.vehicle_type}</td>
                 <td>{r.ward ? `${r.ward}, ${r.sub_county}, ${r.county}` : '—'}</td>
                 <td>{STATUS_LABEL[r.status] || r.status}{r.status === 'registered' && r.rider_status && r.rider_status !== 'active' ? <div className="muted" style={{ fontSize: 11 }}>still setting up their PIN</div> : null}</td>
                 <td>{r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}</td>
                 <td>{r.status === 'awaiting_registration'
                   ? <ConfirmButton className="secondary" label="Remove" confirmMessage={`Remove ${r.full_name}? They will not be able to register until you add them again.`} onConfirm={() => remove(r)} />
-                  : '—'}</td>
+                  : (currentAdminRole() === 'super_admin' && r.rider_id
+                    ? <button className="secondary" onClick={() => setChanging({ row: r, to: r.vehicle_type === 'car' ? 'motorcycle' : 'car', reason: '' })}>Change vehicle type</button>
+                    : '—')}</td>
               </tr>
             ))}
           </tbody>
@@ -127,6 +146,24 @@ export default function IndividualRiders() {
         <Pagination page={page} pageSize={pageSize} total={d.total || 0} disabled={riders.loading}
           onPage={setPage} onPageSize={(n) => { setPageSize(n); setPage(1); }} />
       </div>
+
+      {changing && (
+        <div className="card" style={{ marginTop: 12 }}>
+          <h3>Change vehicle type: {changing.row.full_name}</h3>
+          <p className="muted">Motorcycle gives the Smart Boda Home, Car gives the Smart Cabz Home. The change is logged with your reason, and refused if the person is in a group that does not allow the new type.</p>
+          <label style={{ display: 'block', margin: '8px 0' }}>New type
+            <select value={changing.to} onChange={(e) => setChanging({ ...changing, to: e.target.value })} style={{ display: 'block', padding: 8 }}>
+              <option value="motorcycle">Motorcycle</option><option value="car">Car</option>
+            </select>
+          </label>
+          <label style={{ display: 'block', margin: '8px 0' }}>Reason * (at least 5 characters)
+            <input value={changing.reason} maxLength={200} onChange={(e) => setChanging({ ...changing, reason: e.target.value })} style={{ display: 'block', width: '100%' }} />
+          </label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="primary" disabled={changing.reason.trim().length < 5 || changing.to === changing.row.vehicle_type} onClick={applyChange}>Change</button>
+            <button className="secondary" onClick={() => setChanging(null)}>Cancel</button>
+          </div>
+        </div>)}
 
       {form && (
         <div className="card" style={{ marginTop: 12 }}>
@@ -138,6 +175,12 @@ export default function IndividualRiders() {
           <label style={{ display: 'block', margin: '8px 0' }}>Mobile Phone Number *
             <input value={form.mobile_number} placeholder="0712345678" onChange={(e) => setForm({ ...form, mobile_number: e.target.value })} style={{ display: 'block' }} />
             {errors.mobile_number && <span role="alert" style={{ color: 'red' }}>{errors.mobile_number}</span>}
+          </label>
+          <label style={{ display: 'block', margin: '8px 0' }}>Type of Vehicle *
+            <select value={form.vehicle_type} onChange={(e) => setForm({ ...form, vehicle_type: e.target.value })} style={{ display: 'block', padding: 8 }}>
+              <option value="">Select…</option><option value="motorcycle">Motorcycle</option><option value="car">Car</option>
+            </select>
+            {errors.vehicle_type && <span role="alert" style={{ color: 'red' }}>{errors.vehicle_type}</span>}
           </label>
           <LocationCascade value={form} errors={errors} onChange={(loc) => setForm({ ...form, ...loc })} />
           {phoneWarn && (

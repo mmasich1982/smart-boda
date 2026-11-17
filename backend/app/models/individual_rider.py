@@ -27,6 +27,7 @@ class IndividualRiderPreRegistration(Base):
     county_id = Column(Integer, ForeignKey("counties.id"))               # location chosen by the Administrator (same cascade as a group);
     sub_county_id = Column(Integer, ForeignKey("sub_counties.id"))       # copied to the rider account when the rider registers.
     ward_id = Column(Integer, ForeignKey("wards.id"))                    # Required by the API; nullable here only so older records still load.
+    vehicle_type = Column(String(12), nullable=False, default="motorcycle", server_default="motorcycle")   # SMART CABZ: chosen by the Administrator (motorcycle | car)
     status = Column(String(25), nullable=False, default=AWAITING)
     registered_rider_id = Column(UUID(as_uuid=True), ForeignKey("rider.id", ondelete="SET NULL"))
     registered_at = Column(DateTime(timezone=True))

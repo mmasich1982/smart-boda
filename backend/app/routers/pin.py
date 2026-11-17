@@ -67,7 +67,8 @@ def get_rider_details(rider_id: str, db: Session = Depends(get_db)):
                 "mobile_number": rider.mobile_number,
                 "full_name": rider.full_name,
                 "registration_status": rider.registration_status,
-                "onboarding_step": rider.onboarding_step or "createPin"
+                "onboarding_step": rider.onboarding_step or "createPin",
+                "vehicle_type": rider.vehicle_type            # SMART CABZ
             },
             "bike_profile": {
                 "id": str(bike.id) if bike else None,
@@ -104,7 +105,7 @@ def session_refresh(rider: Rider = Depends(get_current_rider), token: dict = Dep
         if not started["ok"]:
             raise HTTPException(status_code=401, detail=session_service.error_for("replaced"))
         sid = started["session"].id
-    return {"ok": True, "token": create_rider_token(str(rider.id), rider.mobile_number, sid)}
+    return {"ok": True, "token": create_rider_token(str(rider.id), rider.mobile_number, sid), "vehicle_type": rider.vehicle_type}      # SMART CABZ: a changed type reaches the phone here
 
 # BR-SB04-007: recovery ALWAYS requires manual Super Admin verification against the registered number —
 # same Rider Account Support queue used for mobile-number verification cases.

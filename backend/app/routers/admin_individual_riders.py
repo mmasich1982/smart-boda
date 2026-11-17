@@ -9,6 +9,7 @@
 #   POST   /admin/individual-riders                      -> creates the record (409 when the number is taken)
 #   DELETE /admin/individual-riders/{id}                 -> removes a record that is still awaiting (typo clean-up)
 import re
+from typing import Literal
 from uuid import UUID as RowId   # NOT "UUID": star-imports of the models bring SQLAlchemy's UUID column type into scope
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
@@ -36,6 +37,7 @@ class IndividualRiderIn(BaseModel):
     county_id: int                                        # same three fields, same cascade and same check as a group's location
     sub_county_id: int
     ward_id: int
+    vehicle_type: Literal["motorcycle", "car"]            # SMART CABZ: required. Motorcycle -> Smart Boda, Car -> Smart Cabz
 
     @field_validator("full_name")
     @classmethod
@@ -54,8 +56,10 @@ class IndividualRiderIn(BaseModel):
         return normalized
 
 
-def _row(p: Pre, rider_status=None, county=None, sub_county=None, ward=None) -> dict:
+def _row(p: Pre, rider_status=None, county=None, sub_county=None, ward=None, rider_vehicle=None) -> dict:
     return {"id": str(p.id), "full_name": p.full_name, "mobile_number": p.mobile_number, "status": p.status,
+            "vehicle_type": rider_vehicle or p.vehicle_type,   # SMART CABZ: once the person has registered, the account's type (a Super Admin may have changed it)
+            "rider_id": str(p.registered_rider_id) if p.registered_rider_id else None,
             "county_id": p.county_id, "county": county, "sub_county_id": p.sub_county_id, "sub_county": sub_county,
             "ward_id": p.ward_id, "ward": ward,
             "rider_status": rider_status,                 # registration_status of the rider account once it exists
@@ -76,9 +80,9 @@ def phone_check(phone: str, db: Session = Depends(get_db)):
 
 
 @router.get("")
-def list_individual_riders(q: str = None, status: str = None, page: int = Query(1, ge=1),
+def list_individual_riders(q: str = None, status: str = None, vehicle_type: str = None, page: int = Query(1, ge=1),
                            page_size: int = Query(20, ge=1, le=100), db: Session = Depends(get_db)):
-    qry = (db.query(Pre, Rider.registration_status, County.county_name, SubCounty.sub_county_name, Ward.ward_name)
+    qry = (db.query(Pre, Rider.registration_status, County.county_name, SubCounty.sub_county_name, Ward.ward_name, Rider.vehicle_type)
            .outerjoin(Rider, Rider.id == Pre.registered_rider_id)
            .outerjoin(County, County.id == Pre.county_id).outerjoin(SubCounty, SubCounty.id == Pre.sub_county_id)
            .outerjoin(Ward, Ward.id == Pre.ward_id))
@@ -91,12 +95,14 @@ def list_individual_riders(q: str = None, status: str = None, page: int = Query(
         qry = qry.filter(or_(*conds))
     if status in (AWAITING, REGISTERED):
         qry = qry.filter(Pre.status == status)
+    if vehicle_type in ("motorcycle", "car"):             # SMART CABZ: filter by the type now in force
+        qry = qry.filter(func.coalesce(Rider.vehicle_type, Pre.vehicle_type) == vehicle_type)
     total = qry.count()
     rows = qry.order_by(Pre.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     counts = dict(db.query(Pre.status, func.count(Pre.id)).group_by(Pre.status).all())
     return {"total": total, "page": page, "page_size": page_size,
             "awaiting": counts.get(AWAITING, 0), "registered": counts.get(REGISTERED, 0),
-            "items": [_row(p, rs, c, sc, w) for p, rs, c, sc, w in rows]}
+            "items": [_row(p, rs, c, sc, w, rv) for p, rs, c, sc, w, rv in rows]}
 
 
 @router.post("", status_code=201)
@@ -106,7 +112,8 @@ def create_individual_rider(body: IndividualRiderIn, db: Session = Depends(get_d
     if c:
         raise HTTPException(409, c["message"] + " Use a different number.")
     p = Pre(full_name=body.full_name, mobile_number=body.mobile_number, phone_key=phone_key(body.mobile_number),
-            county_id=body.county_id, sub_county_id=body.sub_county_id, ward_id=body.ward_id, status=AWAITING, created_by_admin_id=admin.id)
+            county_id=body.county_id, sub_county_id=body.sub_county_id, ward_id=body.ward_id, vehicle_type=body.vehicle_type,
+            status=AWAITING, created_by_admin_id=admin.id)
     db.add(p)
     try:
         db.commit()

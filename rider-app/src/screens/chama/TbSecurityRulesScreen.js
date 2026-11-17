@@ -11,6 +11,8 @@ import { securityRules, saveSecurityRules, apiError } from '../../api/groupsClie
 import { s, Chip } from './chamaStyles';
 import colors from '../../theme/colors';
 import { useGroupText } from './groupText';
+import { vt, brandName } from '../../vehicle/vehicleStore';      // SMART CABZ
+
 
 const Toggle = ({ on, label, hint, onPress }) => (
   <TouchableOpacity onPress={onPress} style={[s.row, { alignItems: 'center' }]} testID={`toggle-${label}`}>
@@ -74,7 +76,7 @@ function TbSecurityRulesScreen({ navigation, route }) {
           <Toggle on={f.savings_on} label="Their own savings" hint="Locked until the loan is paid. Counts in full." onPress={() => flip('savings_on')} />
           {f.savings_on && (<><Text style={[s.label, { marginTop: 8 }]}>MOST OF THEIR FREE SAVINGS THEY CAN LOCK (%)</Text>
             <TextInput style={s.input} keyboardType="number-pad" value={f.savings_pct} onChangeText={(v) => set('savings_pct', v)} /></>)}
-          <Toggle on={f.allow_logbook} label="Bike logbook" onPress={() => flip('allow_logbook')} />
+          <Toggle on={f.allow_logbook} label={vt('Bike logbook')} onPress={() => flip('allow_logbook')} />
           <Toggle on={f.allow_title} label="Title deed" onPress={() => flip('allow_title')} />
           <Toggle on={f.allow_chattel} label="Household item with a serial number" onPress={() => flip('allow_chattel')} />
           {(f.allow_logbook || f.allow_title || f.allow_chattel) && (<>

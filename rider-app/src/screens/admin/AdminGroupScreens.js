@@ -11,7 +11,10 @@ import { confirmAction } from '../../utils/confirmDialog';
 const toMenu = (navigation) => ({ back: '← Manage Groups', onBack: () => navigation.navigate('AdminMenu', { menuKey: 'groups' }) });
 const kes = (n) => `KSh ${Math.round(Number(n || 0)).toLocaleString()}`;
 const TYPE = { mgr: 'Merry-Go-Round', tb: 'Table Banking' };
-const EMPTY = { group_name: '', group_type: '', county_id: null, sub_county_id: null, ward_id: null, stage_name: '', approved_slots: '10', treasurer_name: '', treasurer_phone: '' };
+const MEMBERS_TABS = [{ key: 'riders', label: 'Riders' }, { key: 'business', label: 'Business' }, { key: 'drivers', label: 'Drivers' }, { key: 'mixed', label: 'Mixed' }];      // SMART CABZ
+const MEMBERS_LABEL = { riders: 'Riders', business: 'Business', drivers: 'Drivers', mixed: 'Mixed' };
+const KIND_TABS = [{ key: 'rider', label: 'Motorcycle rider' }, { key: 'driver', label: 'Car driver' }, { key: 'business', label: 'Business user' }];
+const EMPTY = { group_name: '', group_type: '', members_type: '', treasurer_kind: '', county_id: null, sub_county_id: null, ward_id: null, stage_name: '', approved_slots: '10', treasurer_name: '', treasurer_phone: '' };
 
 function GroupFinance({ id }) {
   const [f, setF] = useState(null);
@@ -26,6 +29,7 @@ function GroupFinance({ id }) {
 export function ManageGroupsScreen({ navigation }) {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
+  const [membersFilter, setMembersFilter] = useState('');      // SMART CABZ
   const [stats, setStats] = useState(null);
   const [form, setForm] = useState(null);
   const [editId, setEditId] = useState(null);
@@ -36,33 +40,36 @@ export function ManageGroupsScreen({ navigation }) {
   const [open, setOpen] = useState(null);             // group id whose details are open
   const [saving, setSaving] = useState(false);
   const { notice, ok, fail, clear } = useNotice();
-  const list = useAdminList((page, size) => listGroups({ q: q || undefined, status: status || undefined, page, page_size: size }), [q, status]);
+  const list = useAdminList((page, size) => listGroups({ q: q || undefined, status: status || undefined, members_type: membersFilter || undefined, page, page_size: size }), [q, status, membersFilter]);
   const refreshAll = () => { list.refresh(); getGroupStats().then(setStats).catch(() => {}); };
   useEffect(() => { getGroupStats().then(setStats).catch(() => {}); }, []);
 
   const phone = form ? cleanPhone(form.treasurer_phone) : '';
   const typeNow = form ? form.group_type : '';
   useEffect(() => {
-    if (!form || !typeNow || !isPhone(phone) || (editId && phone === cleanPhone(origPhone))) { setWarn(null); setPair(null); return undefined; }
+    const mt = form ? form.members_type : ''; const tk = form ? form.treasurer_kind : '';
+    if (!form || !typeNow || !mt || (mt === 'mixed' && !tk) || !isPhone(phone) || (editId && phone === cleanPhone(origPhone))) { setWarn(null); setPair(null); return undefined; }
     let live = true;
     const t = setTimeout(() => {
-      checkTreasurerPhone(phone, typeNow, editId || undefined).then((r) => {
+      checkTreasurerPhone(phone, typeNow, editId || undefined, mt, mt === 'mixed' ? tk : undefined).then((r) => {
         if (!live) return;
-        setWarn(r && r.has_account && !r.pair_ok ? r : null);
+        setWarn(r && !r.pair_ok && (r.has_account || mt === 'business') ? r : null);
         setPair(r && r.has_account && r.pair_ok ? r : null);
       }).catch(() => { if (live) { setWarn(null); setPair(null); } });
     }, 400);
     return () => { live = false; clearTimeout(t); };
-  }, [phone, typeNow, !!form, editId, origPhone]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phone, typeNow, form && form.members_type, form && form.treasurer_kind, !!form, editId, origPhone]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   function validate(f) {
     const e = {};
     if (!f.group_name.trim()) e.group_name = 'Group name is required';
+    if (!f.members_type) e.members_type = 'Choose the Group Members Type';      // SMART CABZ
+    if (f.members_type === 'mixed' && !f.treasurer_kind) e.treasurer_kind = 'Choose the Treasurer type';
     if (!f.group_type) e.group_type = 'Choose Merry-Go-Round or Table Banking';
     if (!f.county_id) e.county_id = 'Please select a county';
     if (!f.sub_county_id) e.sub_county_id = 'Please select a sub-county';
     if (!f.ward_id) e.ward_id = 'Please select a ward';
-    if (!f.stage_name.trim()) e.stage_name = 'Stage name is required';
+    if (f.members_type === 'riders' && !(f.stage_name || '').trim()) e.stage_name = 'Stage name is required';      // only a Riders group has a stage
     if (!(Number(f.approved_slots) >= 1)) e.approved_slots = 'Enter at least 1 slot';
     if (!f.treasurer_name.trim()) e.treasurer_name = 'Treasurer name is required';
     if (!isPhone(f.treasurer_phone)) e.treasurer_phone = 'Enter a valid number, e.g. 0712345678';
@@ -76,7 +83,8 @@ export function ManageGroupsScreen({ navigation }) {
     if (Object.keys(e).length) return;
     setSaving(true);
     try {
-      const body = { ...form, treasurer_phone: phone, approved_slots: Number(form.approved_slots) };
+      const body = { ...form, treasurer_phone: phone, approved_slots: Number(form.approved_slots),
+        stage_name: form.members_type === 'riders' ? form.stage_name : null, treasurer_kind: form.members_type === 'mixed' ? form.treasurer_kind : null };
       const saved = editId ? await updateGroup(editId, body) : await createGroup(body);
       ok(editId ? 'Group updated.' : `Group created. Group Code: ${saved.group_code}`);
       setForm(null); setEditId(null); setWarn(null); setPair(null); refreshAll();
@@ -104,13 +112,22 @@ export function ManageGroupsScreen({ navigation }) {
       {form ? (
         <Card>
           <Section>{editId ? 'Edit group' : 'Create new group'}</Section>
+          <Text style={s.label}>Group Members Type *</Text>
+          <Tabs value={form.members_type} onChange={(k) => setForm({ ...form, members_type: k, treasurer_kind: '' })} tabs={MEMBERS_TABS} />
+          {errors.members_type ? <Text style={s.err}>{errors.members_type}</Text> : null}
+          {form.members_type ? <Hint>{{ riders: 'Motorcycle riders only. The stage name is asked.', business: 'Smart Bizna business users only. Their Treasurer must already be a registered business user.', drivers: 'Car drivers only.', mixed: 'Riders, drivers and business users together.' }[form.members_type]}</Hint> : null}
           <Field label="Group name *" value={form.group_name} maxLength={120} onChangeText={(t) => setForm({ ...form, group_name: t })} error={errors.group_name} />
           <Text style={s.label}>Group type *</Text>
           <Tabs value={form.group_type} onChange={(k) => setForm({ ...form, group_type: k })} tabs={[{ key: 'mgr', label: 'Merry-Go-Round' }, { key: 'tb', label: 'Table Banking' }]} />
           {errors.group_type ? <Text style={s.err}>{errors.group_type}</Text> : null}
           <LocationPicker value={form} errors={errors} onChange={(l) => setForm({ ...form, ...l })} />
-          <Field label="Stage name *" value={form.stage_name} maxLength={120} placeholder="Where riders wait for customers" onChangeText={(t) => setForm({ ...form, stage_name: t })} error={errors.stage_name} />
+          {form.members_type === 'riders' && <Field label="Stage name *" value={form.stage_name} maxLength={120} placeholder="Where riders wait for customers" onChangeText={(t) => setForm({ ...form, stage_name: t })} error={errors.stage_name} />}
           <Field label="Number of approved member slots *" value={String(form.approved_slots ?? '')} keyboardType="number-pad" onChangeText={(t) => setForm({ ...form, approved_slots: t.replace(/\D/g, '') })} error={errors.approved_slots} />
+          {form.members_type === 'mixed' && (<>
+            <Text style={s.label}>Treasurer type *</Text>
+            <Tabs value={form.treasurer_kind} onChange={(k) => setForm({ ...form, treasurer_kind: k })} tabs={KIND_TABS} />
+            {errors.treasurer_kind ? <Text style={s.err}>{errors.treasurer_kind}</Text> : null}
+          </>)}
           <Field label="Treasurer name *" value={form.treasurer_name} maxLength={80} onChangeText={(t) => setForm({ ...form, treasurer_name: t })} error={errors.treasurer_name} />
           <Field label="Treasurer phone number *" value={form.treasurer_phone} placeholder="0712345678" keyboardType="phone-pad" onChangeText={(t) => setForm({ ...form, treasurer_phone: t })} error={errors.treasurer_phone} />
           {warn ? <Banner tone="red" text={`🚫 ${warn.message} Use a different number to save this group.`} /> : null}
@@ -125,6 +142,7 @@ export function ManageGroupsScreen({ navigation }) {
 
       <SearchBox value={q} onChange={setQ} placeholder="Search name, code or stage…" />
       <Tabs value={status} onChange={setStatus} tabs={[{ key: '', label: 'All' }, { key: 'active', label: 'Active' }, { key: 'inactive', label: 'Inactive' }]} />
+      <Tabs value={membersFilter} onChange={setMembersFilter} tabs={[{ key: '', label: 'All types' }, ...MEMBERS_TABS]} />
       <ListState list={list} emptyText="No groups found." />
       {list.items.map((g) => (
         <Card key={g.id} onPress={() => setOpen(open === g.id ? null : g.id)}>
@@ -132,8 +150,8 @@ export function ManageGroupsScreen({ navigation }) {
             <Text style={{ fontSize: 15, fontWeight: '800', color: C.ink, flexShrink: 1 }}>{g.group_name}</Text>
             <Text style={{ fontSize: 12.5 }}>{g.status === 'active' ? '🟢 Active' : '⚪ Inactive'}</Text>
           </View>
-          <Hint>{g.group_code} · {TYPE[g.group_type] || '—'} · Slots {g.slots_used}/{g.approved_slots}{g.shared_with ? ` · 🔗 ${g.shared_with}` : ''}</Hint>
-          <Hint>{g.stage_name} · {[g.ward, g.sub_county, g.county].filter(Boolean).join(', ')}</Hint>
+          <Hint>{g.group_code} · {TYPE[g.group_type] || '—'} · {MEMBERS_LABEL[g.members_type] || 'Riders'} · Slots {g.slots_used}/{g.approved_slots}{g.shared_with ? ` · 🔗 ${g.shared_with}` : ''}</Hint>
+          <Hint>{[g.stage_name, [g.ward, g.sub_county, g.county].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}</Hint>
           {open === g.id ? (
             <View style={{ marginTop: 8 }}>
               <Text style={{ fontSize: 14, color: C.ink }}>Treasurer: {g.treasurer_name}</Text>
@@ -174,7 +192,7 @@ export function IncomingAdditionsScreen({ navigation }) {
       {list.items.map((r) => (
         <Card key={r.id}>
           <Text style={{ fontSize: 15, fontWeight: '800', color: C.ink }}>{r.group_name} · {r.group_code}</Text>
-          <Hint>Stage: {r.stage_name} · Treasurer: {r.treasurer_name}</Hint>
+          <Hint>{r.stage_name ? `Stage: ${r.stage_name} · ` : ''}Treasurer: {r.treasurer_name}</Hint>
           <Text style={{ fontSize: 14, color: C.ink, marginTop: 4 }}>Slots now: {r.slots_used} used of {r.current_slots} · <Text style={{ fontWeight: '800' }}>requesting +{r.requested_slots}</Text></Text>
           <Hint>Reason: “{r.reason}”</Hint>
           {declining === r.id ? (

@@ -16,6 +16,7 @@ import { performLogout } from '../../offline/logout';   // PERSISTENT SESSION: e
 import { confirmAction } from '../../utils/confirmDialog';
 import { businessHomeTiles } from '../../utils/userTypeRouting';
 import { periodBounds } from '../../offline/businessReportUtils';
+import BusinessGroupSection from './BusinessGroupSection';      // SMART CABZ
 import { kes } from '../../utils/businessFormat';
 
 const ROLE = { OWNER: 'Business Owner', SALES_PERSON: 'Sales/Service Person' };
@@ -101,6 +102,8 @@ export default function BusinessHomeScreen({ navigation }) {
         {tiles.supplierLipa ? <Tile icon="🏦" label="Lipa Later Suppliers Report" onPress={() => go('SupplierLipaReport', { back: 'BusinessHome' })} /> : null}
         {tiles.performance ? <Tile icon="📈" label="My Business Financial Performance" onPress={() => go('BusinessFinancialPerformance')} /> : null}
       </View>
+
+      <BusinessGroupSection go={go} />      {/* SMART CABZ: only for a business user who is in a group */}
 
       {owner ? (
         <>

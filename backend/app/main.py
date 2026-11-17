@@ -165,6 +165,38 @@ async def ensure_cors_headers(request: Request, call_next):
 # ERROR HANDLERS
 # ============================================================================
 
+# SMART CABZ: error and warning messages the server sends to the app are written for the signed-in person (a car driver reads "Smart Cabz Administrator").
+from fastapi.exception_handlers import http_exception_handler as _default_http_handler
+from starlette.exceptions import HTTPException as _StarletteHTTPException
+from app.services import vehicle_words as _vw, audience_service as _audience_service
+
+
+def _audience_for_request(auth_header: str) -> str:
+    scheme, _, value = (auth_header or "").partition(" ")
+    if scheme.lower() != "bearer" or not value.strip():
+        return _vw.RIDER
+    try:
+        payload = _jwt.decode(value.strip(), _SECRET_KEY, algorithms=[_ALGORITHM])
+    except _JWTError:
+        return _vw.RIDER
+    if payload.get("typ") == "admin_app" or not payload.get("sub"):
+        return _vw.RIDER
+    db = SessionLocal()
+    try:
+        return _audience_service.audience_of_rider(db, payload["sub"])
+    finally:
+        db.close()
+
+
+@app.exception_handler(_StarletteHTTPException)
+async def audience_http_exception_handler(request: Request, exc: _StarletteHTTPException):
+    if isinstance(exc.detail, (str, list, dict)):
+        audience = await _run_in_threadpool(_audience_for_request, request.headers.get("authorization", ""))
+        if audience != _vw.RIDER:
+            exc.detail = _vw.convert_detail(exc.detail, audience)
+    return await _default_http_handler(request, exc)
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     # With pydantic v2 a validator's `raise ValueError(...)` puts the exception object inside
@@ -337,6 +369,11 @@ app.include_router(admin_app_auth.router)              # /admin/app/... (setup, 
 from app.routers import auth_login, restore
 app.include_router(auth_login.router)                  # /auth/login, /auth/logout, /auth/session
 app.include_router(restore.router)                     # /restore/rider/trips
+
+# ---- Smart Cabz: a Super Admin changes a vehicle type; notifications and error messages follow the person's kind ----
+from app.routers import admin_vehicle_type
+from app.services import notification_words                # noqa: F401  (registers the hook that words each notification for its recipient)
+app.include_router(admin_vehicle_type.router)             # PATCH /admin/riders/{id}/vehicle-type
 
 # ---- Subscriptions Payment Router Registration ----
 from app.routers import subscriptions_payment

@@ -12,10 +12,12 @@ import { mySummary, applyLoan, addSecurity, guarantorCandidates, apiError } from
 import { s, fmt, Chip } from './chamaStyles';
 import colors from '../../theme/colors';
 import { useGroupText } from './groupText';
+import { vt, brandName } from '../../vehicle/vehicleStore';      // SMART CABZ
+
 
 // Same formula as the server (calc_loan). The server is the authority.
 const calc = (a, m, r) => { const interest = Math.round(a * r / 100 * m), total = a + interest; return { interest, total, inst: Math.ceil(total / m) }; };
-const KIND_LABEL = { savings: '💰 My savings', logbook: '📘 Bike logbook', title: '📜 Title deed', chattel: '🛋️ Household item', guarantor: '🤝 A guarantor' };
+const KIND_LABEL = { savings: '💰 My savings', logbook: vt('📘 Bike logbook'), title: '📜 Title deed', chattel: '🛋️ Household item', guarantor: '🤝 A guarantor' };
 const FORM_LABEL = { savings: 'their savings', logbook: 'their logbook', title: 'their title deed', chattel: 'their household item' };
 
 function LoanApplyScreen({ navigation, route }) {
@@ -28,7 +30,7 @@ function LoanApplyScreen({ navigation, route }) {
   const [step, setStep] = useState(adding ? 2 : 1);
   const [amount, setAmount] = useState('');
   const [months, setMonths] = useState(3);
-  const [purpose, setPurpose] = useState('Bike repair / parts');
+  const [purpose, setPurpose] = useState(vt('Bike repair / parts'));
   const [offers, setOffers] = useState([]);      // [{kind, value, description, ref, guarantor_member_id, guarantor_name, guarantor_form}]
   const [draft, setDraft] = useState(null);      // the item being filled in
   const [busy, setBusy] = useState(false);

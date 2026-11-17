@@ -12,6 +12,7 @@ import { getMyGroup, listMembers, validateGroupCode, latestSlotRequest, complete
 import ChamaRulesCard from './ChamaRulesCard';
 import { fmt } from './chamaStyles';
 import { useGroupText } from './groupText';
+import { vt } from '../../vehicle/vehicleStore';      // SMART CABZ
 
 const STEPS = ['Set the rules', 'Add members'];
 
@@ -145,7 +146,7 @@ function ManageChamaScreen({ navigation, route }) {
                 {left <= 0 && (
                   <View style={s.banner}><Text>🎉</Text><View style={{ flex: 1 }}>
                     <Text style={{ fontWeight: '700' }}>Your Chama is at full capacity!</Text>
-                    <Text style={s.hint}>You've reached the maximum approved membership, so no more members can be added for now. You can request extra slots from the Smart Boda Administrator.</Text>
+                    <Text style={s.hint}>You've reached the maximum approved membership, so no more members can be added for now. {vt('You can request extra slots from the Smart Boda Administrator.')}</Text>
                   </View></View>)}
               </View>
 
@@ -177,7 +178,7 @@ function ManageChamaScreen({ navigation, route }) {
               {req.pending ? (
                 <View style={[s.card, { borderColor: colors.signalAmber }]}>
                   <Text style={s.cardTitle}>⏳ Member Limit Increase Request</Text>
-                  <Text>+{req.pending.slots} slots requested · awaiting Smart Boda Administrator</Text>
+                  <Text>+{req.pending.slots} slots requested · {vt('awaiting Smart Boda Administrator')}</Text>
                   <Text style={s.hint}>“{req.pending.reason}”</Text>
                 </View>
               ) : left <= 0 ? (

@@ -38,6 +38,8 @@ export const listActiveRiders = (page, page_size) => get('/admin/riders', { stat
 export const listIndividualRiders = (params) => get('/admin/individual-riders', params);
 export const createIndividualRider = (b) => post('/admin/individual-riders', b);
 export const removeIndividualRider = (id) => del(`/admin/individual-riders/${id}`);
+// SMART CABZ: a Super Admin changes a registered person's vehicle type (logged on the server)
+export const changeVehicleType = (riderId, vehicle_type, reason) => patch(`/admin/riders/${riderId}/vehicle-type`, { vehicle_type, reason });
 export const checkIndividualPhone = (phone) => get('/admin/individual-riders/phone-check', { phone });
 
 // Manage Groups
@@ -47,7 +49,7 @@ export const createGroup = (b) => post('/admin/groups', b);
 export const updateGroup = (id, b) => run(api.put(`/admin/groups/${id}`, b, { timeout: 30000 }));
 export const setGroupActive = (id, active) => patch(`/admin/groups/${id}/status`, null, { active });
 export const getGroupFinance = (id) => get(`/admin/groups/${id}/finance`);
-export const checkTreasurerPhone = (phone, group_type, exclude_group_id) => get('/admin/groups/phone-check', { phone, group_type, exclude_group_id });
+export const checkTreasurerPhone = (phone, group_type, exclude_group_id, members_type, treasurer_kind) => get('/admin/groups/phone-check', { phone, group_type, exclude_group_id, members_type, treasurer_kind });      // SMART CABZ
 export const listSlotRequests = (status = 'pending') => get('/admin/groups/slot-requests', { status });
 export const approveSlotRequest = (id, approved_slots, comment) => post(`/admin/groups/slot-requests/${id}/approve`, { approved_slots, comment });
 export const declineSlotRequest = (id, comment) => post(`/admin/groups/slot-requests/${id}/decline`, { comment });

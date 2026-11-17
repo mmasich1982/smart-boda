@@ -1,7 +1,7 @@
 # backend/app/routers/rider_groups.py
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
@@ -18,6 +18,10 @@ from app.services.group_roles import phone_key
 from app.services.chama_finance_service import new_ref, ensure_config
 from app.services import mgr_engine as MGR
 from app.services import slot_pool_service as POOL
+from app.services import group_kinds as GK                      # SMART CABZ: Group Members Type rules
+from app.services.business_service import find_business_user
+from app.services.individual_rider_service import find_preregistration
+from app.models.business import BusinessUser
 from app.services.group_roles import treasurer_group, treasurer_groups, same_phone
 import os, re
 from uuid import UUID                  # request bodies
@@ -50,6 +54,7 @@ class MemberIn(BaseModel):
     loan_interest_outstanding: Optional[Decimal] = Field(default=None, ge=0, le=10000000)
     loan_due_date: Optional[date] = None
     circles: Optional[list["CircleSeat"]] = None                          # Merry-Go-Round: which circles the member joins
+    member_kind: Optional[Literal["rider", "driver", "business"]] = None   # SMART CABZ: a brand-new number in a Mixed group: what the person becomes
     @field_validator("phone")
     @classmethod
     def _phone(cls, v):
@@ -83,7 +88,7 @@ def _payload(db, g: BodaGroup) -> dict:
     pt = POOL.partner(db, g)
     return {"id": str(g.id), "group_code": g.group_code, "group_name": g.group_name,
             "county": c.county_name, "sub_county": s.sub_county_name, "ward": w.ward_name,
-            "stage_name": g.stage_name, "approved_slots": POOL.pool_allowance(db, g),
+            "stage_name": g.stage_name, "members_type": g.members_type, "treasurer_kind": g.treasurer_kind, "approved_slots": POOL.pool_allowance(db, g),
             "slots_used": used, "slots_available": POOL.pool_allowance(db, g) - used,
             "slots_shared": bool(pt), "shared_with": pt.group_name if pt else None,
             "treasurer_name": g.treasurer_name, "treasurer_phone": g.treasurer_phone,
@@ -199,11 +204,32 @@ def add_member(body: MemberIn, group_id: Optional[RowId] = Query(None), db: Sess
             seats.append(c)
 
     linked = find_rider_id_by_mobile(db, body.phone)                     # mobile-number match
+    # SMART CABZ: WHO may join this kind of group. An existing number is what it already is (a rider, a driver or a business user);
+    # a brand-new number becomes what the group type says (or, in a Mixed group, what the Treasurer chose).
+    existing = None
+    if linked:
+        lr = db.get(Rider, linked)
+        is_biz = db.query(BusinessUser.id).filter(BusinessUser.rider_id == linked).first() is not None
+        existing = GK.kind_of(lr.vehicle_type if lr else None, is_biz)
+    elif find_business_user(db, body.phone):
+        existing = "business"                                            # registered by the Administrator, not set up yet
+    else:
+        pre = find_preregistration(db, body.phone)
+        if pre:
+            existing = GK.kind_of(pre.vehicle_type)
+    if existing:
+        member_kind = existing
+        if not GK.allowed(g.members_type, member_kind):
+            raise HTTPException(409, GK.refusal(g.members_type, member_kind))
+    else:
+        member_kind = GK.kind_for_new_number(g.members_type, body.member_kind)
+        if member_kind is None:
+            raise HTTPException(409 if g.members_type == "business" or body.member_kind == "business" else 422, GK.new_number_refusal(g.members_type, body.member_kind))
     now = datetime.now(timezone.utc)
     tb = cfg.chama_type == "tb"
     m = GroupMember(group_id=g.id, treasurer_rider_id=rider.id, full_name=body.full_name.strip(),
         phone=body.phone, phone_key=key, category_id=cat_id,
-        linked_rider_id=linked, link_status="linked" if linked else "awaiting_signup",
+        linked_rider_id=linked, link_status="linked" if linked else "awaiting_signup", member_kind=member_kind,
         linked_at=now if linked else None,
         opening_savings=(body.opening_savings or 0) if tb else 0,
         had_active_loan=body.has_active_loan if tb else None)

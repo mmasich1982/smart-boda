@@ -76,4 +76,5 @@ def profile_of(db: Session, rider: Rider) -> dict:
     """Just enough to open the app on a new phone; the records themselves come from the restore step."""
     bike = db.query(BikeProfile).filter(BikeProfile.rider_id == rider.id).order_by(BikeProfile.submitted_at.desc()).first()
     return {"full_name": rider.full_name, "language_code": rider.language_code, "registration_status": rider.registration_status,
-            "fuel_type_code": bike.fuel_type_code if bike else None, "mobile_number": rider.mobile_number}
+            "fuel_type_code": bike.fuel_type_code if bike else None, "mobile_number": rider.mobile_number,
+            "vehicle_type": rider.vehicle_type}                           # SMART CABZ: a new phone opens as Smart Boda or Smart Cabz straight away

@@ -18,6 +18,7 @@ import { CorrectRecordScreen, VoidRecordScreen } from '../screens/business/Corre
 import { DailyTradeSummaryScreen, BusinessFinancialPerformanceScreen, BusinessFinancialHistoryScreen, BusinessTransactionsScreen } from '../screens/business/OwnerReportsScreens';
 import { StatementSetupScreen, StatementPreviewScreen, StatementListScreen } from '../screens/business/StatementScreens';
 import { BusinessSwitcherScreen, AllBusinessesScreen } from '../screens/business/BusinessSwitcherScreens';
+import chamaScreens from './chamaScreens';      // SMART CABZ: group screens for a business user who is in a group
 
 const Stack = createNativeStackNavigator();
 
@@ -58,6 +59,7 @@ export default function BusinessNavigator() {
   return (
     <Stack.Navigator key={`${session.id || 'none'}:${session.epoch}`} initialRouteName="BusinessHome" screenOptions={{ headerShown: false, animation: 'fade' }}>
       {Object.keys(BUSINESS_ROUTES).map((name) => <Stack.Screen key={name} name={name} component={GUARDED[name]} />)}
+      {chamaScreens(Stack)}
     </Stack.Navigator>
   );
 }

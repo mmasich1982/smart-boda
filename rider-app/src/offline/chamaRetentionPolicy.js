@@ -1,4 +1,5 @@
 // rider-app/src/offline/chamaRetentionPolicy.js
+import { vt } from '../vehicle/vehicleStore';      // SMART CABZ
 // ✅ RETENTION POLICY: Six-month rolling window for Chama / My Savings / My Loans data kept ON THE PHONE
 // Same policy as tripRetentionPolicy.js and financialHistoryRepository.js, applied to Chama records.
 // All data stays safely archived in PostgreSQL; only the device copy is trimmed.
@@ -58,8 +59,8 @@ export const CHAMA_RETENTION_CONFIG = {
   ESTIMATED_BYTES_PER_RECORD: 400,
 
   // The wording shown to people when a range reaches past the window
-  ADMIN_NOTICE:
-    'Smart Boda keeps your last 6 months of Chama records on your phone. For older statements, contact the Smart Boda Administrator.',
+  // SMART CABZ: a getter, so the brand follows the person at the moment it is shown (not when the app loads)
+  get ADMIN_NOTICE() { return vt('Smart Boda keeps your last 6 months of Chama records on your phone. For older statements, contact the Smart Boda Administrator.'); },
 };
 
 export const CHAMA_COLLECTIONS = [

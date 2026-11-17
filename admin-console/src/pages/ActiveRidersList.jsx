@@ -3,9 +3,20 @@
 // GET /admin/riders/stats.
 import React, { useState } from 'react';
 import api from '../api/client';
+import { changeVehicleType } from '../api/individualRiders';     // SMART CABZ
+import { currentAdminRole } from '../auth/session';
 import { useApiResource } from '../hooks/useApiResource';
 
 export default function ActiveRidersList() {
+  // SMART CABZ: a Super Admin changes a person's vehicle type (motorcycle -> Smart Boda, car -> Smart Cabz); the server logs it with the reason
+  async function change(r) {
+    const to = r.vehicle_type === 'car' ? 'motorcycle' : 'car';
+    if (!window.confirm(`Change ${r.full_name} to a ${to === 'car' ? 'car driver (Smart Cabz)' : 'motorcycle rider (Smart Boda)'}?`)) return;
+    const reason = window.prompt('Reason for the change (at least 5 characters)') || '';
+    if (reason.trim().length < 5) return;
+    try { await changeVehicleType(r.id, to, reason.trim()); window.alert('Done. Their phone switches the next time it is online.'); window.location.reload(); }
+    catch (e) { const d = e?.response?.data?.detail; window.alert(typeof d === 'string' ? d : 'Could not change the vehicle type.'); }
+  }
   const [page, setPage] = useState(1);
   // AUDIT FIX (found during full-codebase sweep): no error handling at all -- a failed
   // request silently left the table empty forever with no indication anything went wrong.
@@ -31,13 +42,16 @@ export default function ActiveRidersList() {
       {loading ? <p>Loading...</p> : (
         <>
           <table>
-            <thead><tr><th>Name</th><th>Mobile</th><th>Joined</th></tr></thead>
+            <thead><tr><th>Name</th><th>Mobile</th><th>Type</th><th>Joined</th><th>Actions</th></tr></thead>
             <tbody>
               {items.map((r) => (
                 <tr key={r.id}>
                   <td>{r.full_name}</td>
                   <td>{r.mobile_number}</td>
+                  <td>{r.kind === 'business' ? '🏪 Business user' : r.vehicle_type === 'car' ? '🚗 Car driver' : '🏍️ Motorcycle rider'}</td>
                   <td>{new Date(r.created_at).toLocaleDateString()}</td>
+                  <td>{currentAdminRole() === 'super_admin' && r.kind !== 'business'
+                    ? <button className="secondary" onClick={() => change(r)}>Change vehicle type</button> : '—'}</td>
                 </tr>
               ))}
             </tbody>

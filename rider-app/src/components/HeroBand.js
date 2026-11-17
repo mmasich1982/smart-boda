@@ -9,7 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 export default function HeroBand({ eyebrow, title, subtitle, onBack, watermark = '🏍️' }) {
   return (
     <LinearGradient colors={['#1a1c20', '#3a2a10', '#7a3d0a']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.band}>
-      <Text style={styles.watermark}>{watermark}</Text>
+      <Text style={styles.watermark}>{mark}</Text>
       {onBack && <Text style={styles.back} onPress={onBack}>← Back</Text>}
       {eyebrow && <View style={styles.eyebrowPill}><Text style={styles.eyebrowText}>{eyebrow}</Text></View>}
       <Text style={styles.title}>{title}</Text>

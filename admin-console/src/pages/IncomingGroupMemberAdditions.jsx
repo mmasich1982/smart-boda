@@ -56,7 +56,7 @@ export default function IncomingGroupMemberAdditions() {
       {rows.map((r) => (
         <div className="case-card card" key={r.id} style={{ marginBottom: 12 }}>
           <h3>{r.group_name} · {r.group_code}</h3>
-          <p>Stage: {r.stage_name} · Treasurer: {r.treasurer_name}<br />
+          <p>{r.stage_name ? `Stage: ${r.stage_name} · ` : ''}Treasurer: {r.treasurer_name}<br />
             Slots now: {r.slots_used} used of {r.current_slots} · <b>Requesting +{r.requested_slots}</b><br />
             Reason: “{r.reason}”</p>
           <div style={{ display: 'flex', gap: 8 }}>

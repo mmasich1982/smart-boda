@@ -9,4 +9,5 @@ export const listSlotRequests = async (status = 'pending') => (await client.get(
 export const approveSlotRequest = async (id, approved_slots, comment) => (await client.post(`/admin/groups/slot-requests/${id}/approve`, { approved_slots, comment })).data;
 export const declineSlotRequest = async (id, comment) => (await client.post(`/admin/groups/slot-requests/${id}/decline`, { comment })).data;
 export const getGroupFinance = async (id) => (await client.get(`/admin/groups/${id}/finance`)).data;
-export const checkTreasurerPhone = async (phone, group_type, exclude_group_id) => (await client.get('/admin/groups/phone-check', { params: { phone, group_type, exclude_group_id } })).data;
+// SMART CABZ: the number check knows the group's Members Type and (Mixed) the Treasurer type
+export const checkTreasurerPhone = async (phone, group_type, exclude_group_id, members_type, treasurer_kind) => (await client.get('/admin/groups/phone-check', { params: { phone, group_type, exclude_group_id, members_type, treasurer_kind } })).data;
