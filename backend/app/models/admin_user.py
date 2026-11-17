@@ -3,8 +3,11 @@
 # /admin/auth/login, and require_super_admin has always been imported by five routers, but no
 # admin identity model, password hashing, or JWT issuance ever existed. This is that missing
 # piece -- a real admin_user table with a role column, checked by app/auth.py below.
+#
+# ADMIN APP: the same row now also lets the Administrator use the mobile app. The console keeps using email + password;
+# the app uses the mobile number + a 4-digit PIN (stored only as a bcrypt hash). See database/admin_app/001_admin_app_access.sql.
 import uuid
-from sqlalchemy import Column, String, Boolean, DateTime, func
+from sqlalchemy import Column, String, Boolean, DateTime, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
 
@@ -21,4 +24,25 @@ class AdminUser(Base):
     # require_super_admin / require_admin in app/auth.py, not just stored and ignored.
     role = Column(String(20), nullable=False, default="support_admin")  # support_admin | super_admin
     is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # ---- ADMIN APP (mobile) ----
+    app_access_enabled = Column(Boolean, nullable=False, default=False, server_default="false")   # a Super Admin switches it on (console > Admin App Access)
+    app_pin_hash = Column(String(255), nullable=True)               # bcrypt hash of the 4-digit app PIN; NULL = not set up yet
+    app_pin_set_at = Column(DateTime(timezone=True), nullable=True)
+    app_pin_failed_attempts = Column(Integer, nullable=False, default=0, server_default="0")
+    app_pin_locked_until = Column(DateTime(timezone=True), nullable=True)
+    app_consent_at = Column(DateTime(timezone=True), nullable=True)
+    app_consent_version = Column(String(40), nullable=True)
+    app_registered_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class AdminAppLoginLog(Base):
+    """One line per app sign-in event (who, when, what happened). Never holds a PIN."""
+    __tablename__ = "admin_app_login_log"
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    admin_id = Column(UUID(as_uuid=True), nullable=True)
+    mobile_key = Column(String(9), nullable=True)
+    event = Column(String(30), nullable=False)
+    detail = Column(String(200), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -18,6 +18,10 @@ export const managedGroups = () => api.get('/groups/managed').then(data);
 export const getMyGroup = (groupId) => api.get('/groups/mine', G(groupId)).then(data);
 export const listMembers = (groupId) => api.get('/groups/mine/members', G(groupId)).then(data);
 export const addMember = (b, groupId) => api.post('/groups/mine/members', b, G(groupId)).then(data);
+// BUG FIX: MgrSetupScreen imports these two, but they were never defined, so a Treasurer's Edit and Remove buttons failed ("not a function").
+// They match the server routes PUT / DELETE /groups/mine/members/{member_id} in backend/app/routers/rider_groups.py.
+export const editMember = (memberId, b, groupId) => api.put(`/groups/mine/members/${memberId}`, b, G(groupId)).then(data);      // b = { full_name, phone }
+export const removeMember = (memberId, groupId) => api.delete(`/groups/mine/members/${memberId}`, G(groupId)).then(data);     // Merry-Go-Round only (server rule)
 export const requestSlots = (b, groupId) => api.post('/groups/mine/slot-requests', b, G(groupId)).then(data);
 export const latestSlotRequest = (groupId) => api.get('/groups/mine/slot-requests/latest', G(groupId)).then(data);
 

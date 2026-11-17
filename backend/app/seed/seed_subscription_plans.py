@@ -1,7 +1,8 @@
 # backend/app/seed/seed_subscription_plans.py
 # ============================================================================
 # SEED SCRIPT: Initialize subscription plans
-# ✅ Creates 2 plans: Bi-Weekly (500 KES) and Monthly (1000 KES)
+# ✅ Creates 4 plans: Weekly (125), 2-Week (250), 3-Week (375), Monthly (500)
+# ✅ REMOVED: Free trial (no longer supported)
 # Run after database migration: python -m app.seed.seed_subscription_plans
 # ============================================================================
 
@@ -58,15 +59,15 @@ def seed_subscription_plans():
             return
 
         # ====================================================================
-        # Create Bi-Weekly Plan
+        # Create Weekly Plan
         # ====================================================================
-        biweekly_plan = SubscriptionPlan(
-            name="Smart Boda Bi-Weekly",
-            daily_price=Decimal("35.71"),  # 500 / 14
-            trial_days=1,
-            tier_name="biweekly",
-            tier_label="Bi-Weekly Plan",
-            tier_description="500 KES for 2 weeks of unlimited access",
+        weekly_plan = SubscriptionPlan(
+            name="Smart Boda Weekly",
+            daily_price=Decimal("17.86"),  # 125 / 7
+            trial_days=0,
+            tier_name="weekly",
+            tier_label="Weekly Plan",
+            tier_description="125 KES for 1 week of unlimited access",
             version=1,
             last_modified_at=datetime.now(timezone.utc),
             modified_by_admin="system@smartboda.com",
@@ -74,19 +75,59 @@ def seed_subscription_plans():
             created_at=datetime.now(timezone.utc)
         )
 
-        session.add(biweekly_plan)
-        print("✅ Created Bi-Weekly Plan: 500 KES / 14 days (35.71 KES/day)")
+        session.add(weekly_plan)
+        print("✅ Created Weekly Plan: 125 KES / 7 days (17.86 KES/day)")
+
+        # ====================================================================
+        # Create 2-Week Plan
+        # ====================================================================
+        two_week_plan = SubscriptionPlan(
+            name="Smart Boda 2-Week",
+            daily_price=Decimal("17.86"),  # 250 / 14
+            trial_days=0,
+            tier_name="two_weeks",
+            tier_label="2-Week Plan",
+            tier_description="250 KES for 2 weeks of unlimited access",
+            version=1,
+            last_modified_at=datetime.now(timezone.utc),
+            modified_by_admin="system@smartboda.com",
+            is_active=True,
+            created_at=datetime.now(timezone.utc)
+        )
+
+        session.add(two_week_plan)
+        print("✅ Created 2-Week Plan: 250 KES / 14 days (17.86 KES/day)")
+
+        # ====================================================================
+        # Create 3-Week Plan
+        # ====================================================================
+        three_week_plan = SubscriptionPlan(
+            name="Smart Boda 3-Week",
+            daily_price=Decimal("17.86"),  # 375 / 21
+            trial_days=0,
+            tier_name="three_weeks",
+            tier_label="3-Week Plan",
+            tier_description="375 KES for 3 weeks of unlimited access",
+            version=1,
+            last_modified_at=datetime.now(timezone.utc),
+            modified_by_admin="system@smartboda.com",
+            is_active=True,
+            created_at=datetime.now(timezone.utc)
+        )
+
+        session.add(three_week_plan)
+        print("✅ Created 3-Week Plan: 375 KES / 21 days (17.86 KES/day)")
 
         # ====================================================================
         # Create Monthly Plan
         # ====================================================================
         monthly_plan = SubscriptionPlan(
             name="Smart Boda Monthly",
-            daily_price=Decimal("33.33"),  # 1000 / 30
-            trial_days=1,
+            daily_price=Decimal("16.67"),  # 500 / 30
+            trial_days=0,
             tier_name="monthly",
             tier_label="Monthly Plan",
-            tier_description="1000 KES for 1 month of unlimited access",
+            tier_description="500 KES for 1 month of unlimited access",
             version=1,
             last_modified_at=datetime.now(timezone.utc),
             modified_by_admin="system@smartboda.com",
@@ -95,22 +136,24 @@ def seed_subscription_plans():
         )
 
         session.add(monthly_plan)
-        print("✅ Created Monthly Plan: 1000 KES / 30 days (33.33 KES/day)")
+        print("✅ Created Monthly Plan: 500 KES / 30 days (16.67 KES/day)")
 
         # Commit new plans
         session.commit()
 
         print("\n📊 Subscription Plans Summary:")
         print("=" * 50)
-        print(f"Total plans created: 2")
-        print(f"- Bi-Weekly: 500 KES (35.71 KES/day)")
-        print(f"- Monthly:  1000 KES (33.33 KES/day)")
+        print(f"Total plans created: 4")
+        print(f"- Weekly:    125 KES (17.86 KES/day)")
+        print(f"- 2-Week:    250 KES (17.86 KES/day)")
+        print(f"- 3-Week:    375 KES (17.86 KES/day)")
+        print(f"- Monthly:   500 KES (16.67 KES/day)")
         print("=" * 50)
 
         print("\n✅ Seed completed successfully!")
-        print("\nNext steps:")
-        print("1. Riders will auto-get 1-day free trial")
-        print("2. They can choose biweekly or monthly plan")
+        print("\nNotes:")
+        print("1. ✅ FREE TRIAL REMOVED - No trial period")
+        print("2. Riders must pay immediately to use the app")
         print("3. Payments will be recorded and verified by admin")
 
         session.close()
@@ -133,8 +176,16 @@ def verify_seed():
     session = Session()
 
     try:
-        biweekly = session.query(SubscriptionPlan).filter(
-            SubscriptionPlan.tier_name == "biweekly"
+        weekly = session.query(SubscriptionPlan).filter(
+            SubscriptionPlan.tier_name == "weekly"
+        ).first()
+
+        two_weeks = session.query(SubscriptionPlan).filter(
+            SubscriptionPlan.tier_name == "two_weeks"
+        ).first()
+
+        three_weeks = session.query(SubscriptionPlan).filter(
+            SubscriptionPlan.tier_name == "three_weeks"
         ).first()
 
         monthly = session.query(SubscriptionPlan).filter(
@@ -144,14 +195,32 @@ def verify_seed():
         print("\n🔍 Verification Results:")
         print("=" * 50)
 
-        if biweekly:
-            print(f"✅ Bi-Weekly Plan:")
-            print(f"   - Name: {biweekly.name}")
-            print(f"   - Daily Price: {biweekly.daily_price} KES")
-            print(f"   - Trial Days: {biweekly.trial_days}")
-            print(f"   - Active: {biweekly.is_active}")
+        if weekly:
+            print(f"✅ Weekly Plan:")
+            print(f"   - Name: {weekly.name}")
+            print(f"   - Daily Price: {weekly.daily_price} KES")
+            print(f"   - Trial Days: {weekly.trial_days}")
+            print(f"   - Active: {weekly.is_active}")
         else:
-            print("❌ Bi-Weekly Plan: NOT FOUND")
+            print("❌ Weekly Plan: NOT FOUND")
+
+        if two_weeks:
+            print(f"✅ 2-Week Plan:")
+            print(f"   - Name: {two_weeks.name}")
+            print(f"   - Daily Price: {two_weeks.daily_price} KES")
+            print(f"   - Trial Days: {two_weeks.trial_days}")
+            print(f"   - Active: {two_weeks.is_active}")
+        else:
+            print("❌ 2-Week Plan: NOT FOUND")
+
+        if three_weeks:
+            print(f"✅ 3-Week Plan:")
+            print(f"   - Name: {three_weeks.name}")
+            print(f"   - Daily Price: {three_weeks.daily_price} KES")
+            print(f"   - Trial Days: {three_weeks.trial_days}")
+            print(f"   - Active: {three_weeks.is_active}")
+        else:
+            print("❌ 3-Week Plan: NOT FOUND")
 
         if monthly:
             print(f"✅ Monthly Plan:")
@@ -165,7 +234,7 @@ def verify_seed():
         print("=" * 50)
 
         session.close()
-        return biweekly and monthly
+        return weekly and two_weeks and three_weeks and monthly
 
     except Exception as e:
         print(f"\n❌ Verification failed: {str(e)}")

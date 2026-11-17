@@ -11,6 +11,7 @@ from sqlalchemy import func, case, text  # ADDED: text import for Issue #1
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.auth import require_admin     # ADMIN APP: these three routes returned rider names and numbers to ANYONE; they now need an Administrator
 from app.models.rider import Rider
 from app.models.subscription import RiderSubscription, SubscriptionPlan
 from app.models.payment import Payment
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/admin", tags=["admin-dashboard"])
 # Dashboard Summary -- backs AdminConsole's /admin/dashboard/summary
 # ---------------------------------------------------------------
 
-@router.get("/dashboard/summary")
+@router.get("/dashboard/summary", dependencies=[Depends(require_admin)])
 def dashboard_summary(db: Session = Depends(get_db)):
     """Provide a high-level rider/group summary for the Super Admin dashboard.
 
@@ -291,7 +292,7 @@ def relock_account(rider_id: str, reason: str = "Manual re-lock by admin", db: S
 # ---------------------------------------------------------------
 # User & Subscription Management
 # ---------------------------------------------------------------
-@router.get("/riders")
+@router.get("/riders", dependencies=[Depends(require_admin)])
 def list_riders(status: str | None = None, page: int = 1, page_size: int = 20, db: Session = Depends(get_db)):
     """List all riders with pagination and optional status filter"""
     q = db.query(Rider)
@@ -313,7 +314,7 @@ def list_riders(status: str | None = None, page: int = 1, page_size: int = 20, d
     return {"items": items, "page": page, "total_pages": max(1, -(-total // page_size)), "total": total}
 
 
-@router.get("/riders/stats")
+@router.get("/riders/stats", dependencies=[Depends(require_admin)])
 def rider_stats(db: Session = Depends(get_db)):
     """Headline numbers for the Active Riders screen."""
     now = datetime.now(timezone.utc)
