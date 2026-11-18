@@ -30,6 +30,13 @@ export default function LanguageSelectionScreen({ navigation }) {
     navigation.replace('ValuePreview');
   }
 
+  // "Already registered? Log in": always land on the Login screen, whatever the navigation history looks like.
+  // reset() replaces the whole onboarding stack with PinLogin, so the person is never sent to an unexpected screen
+  // (goBack() depended on the history, and tapping Register again later starts a fresh Language Selection).
+  function handleGoToLogin() {
+    navigation.reset({ index: 0, routes: [{ name: 'PinLogin' }] });
+  }
+
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       {/* Prototype v45: hero band with the shop watermark, NO branding header */}
@@ -49,7 +56,7 @@ export default function LanguageSelectionScreen({ navigation }) {
       />
 
       {/* SMART APPS: this screen now opens from Register on the Login screen; a registered person can go back */}
-      <TouchableOpacity onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.replace('PinLogin'))} accessibilityRole="button" style={styles.loginLink}>
+      <TouchableOpacity onPress={handleGoToLogin} accessibilityRole="button" style={styles.loginLink}>
         <Text style={styles.loginLinkText}>Already registered? Log in</Text>
       </TouchableOpacity>
       
