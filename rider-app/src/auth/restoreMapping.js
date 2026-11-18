@@ -29,7 +29,7 @@ export function maintenanceRow(m) {
     id: String(m.id), rider_id: String(m.rider_id), cost: Number(m.cost) || 0, category: m.service_type_code || 'Service', service_type_code: m.service_type_code || null,
     description: m.description || '', maintenance_date: m.maintenance_date || null, service_provider: m.service_provider || null,
     odometer_reading: m.odometer_reading === undefined ? null : m.odometer_reading, oil_type_code: m.oil_type_code || null,
-    next_service_odometer: m.next_service_odometer === undefined ? null : m.next_service_odometer, submitted_at: m.submitted_at, ts, sync_status: 'synced',
+    next_service_odometer: m.next_service_odometer === undefined ? null : m.next_service_odometer, submitted_at: m.submitted_at, created_at: m.submitted_at, ts, sync_status: 'synced',
   };
 }
 
@@ -80,4 +80,32 @@ export function buildLipaRestore(records, riderId) {
   });
   Object.keys(histories).forEach((c) => { histories[c].sort((a, b) => String(b.date).localeCompare(String(a.date))); });
   return { rows, lipaIds: Object.fromEntries(Object.entries(lipaIds).map(([c, v]) => [c, v.id])), histories };
+}
+
+// ------------------------------------------------------------------ request 12: restored records must show in EVERY screen
+/** Server fuel_entry.mode: 'petrol' is fuel; 'charging' and 'swap' are battery entries (the phone keeps them in a separate store). */
+export const isBatteryMode = (mode) => mode === 'charging' || mode === 'swap';
+
+/** The server's fuel type spelled any way ('Petrol', 'PETROL', 'electric', 'EV'...) -> 'petrol' | 'electric' | null. Drives the Home energy tile. */
+export function normalizeFuelType(code) {
+  const c = String(code || '').trim().toLowerCase();
+  if (!c) return null;
+  if (c.includes('electric') || c === 'ev' || c.includes('battery')) return 'electric';
+  if (c.includes('petrol') || c.includes('gasoline') || c.includes('fuel') || c.includes('gas')) return 'petrol';
+  return null;
+}
+
+/** Restored rows + what the phone already holds, one entry per id (the phone's own newer copy wins), newest first. Used to rebuild the history caches. */
+export function mergeById(existing, restored) {
+  const byId = new Map();
+  for (const r of Array.isArray(restored) ? restored : []) if (r && r.id !== undefined) byId.set(String(r.id), r);
+  for (const r of Array.isArray(existing) ? existing : []) if (r && r.id !== undefined) byId.set(String(r.id), r);
+  const when = (r) => Number(r.ts) || Date.parse(r.created_at || r.createdAt || r.submitted_at || r.expense_date) || 0;
+  return [...byId.values()].sort((a, b) => when(b) - when(a));
+}
+
+/** other_expenses_summary_<rider>: what Financial Performance reads ({ entries, total }). */
+export function expenseSummary(rows) {
+  const entries = (rows || []).filter((r) => r && (r.type === 'other_expense' || r.category)).map((r) => ({ id: r.id, category: r.category, amount: Number(r.amount) || 0, ts: r.ts || r.timestamp, timestamp: r.ts || r.timestamp, description: r.description || '' }));
+  return { entries, total: entries.reduce((x, e) => x + e.amount, 0) };
 }

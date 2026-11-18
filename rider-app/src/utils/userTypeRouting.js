@@ -7,7 +7,7 @@
 // ADMIN APP: 'admin' is chosen only when the saved status says user_type === 'admin' (set by Setup My Profile / the admin sign-in). Nothing else changes.
 export const homeKindFor = (status) => (status && status.user_type === 'admin' ? 'admin' : status && status.user_type === 'business' ? 'business' : 'rider');
 
-export const OWNER_ROUTES = ['DailyTradeSummary', 'BusinessFinancialPerformance', 'BusinessFinancialHistory', 'BusinessTransactions', 'StatementSetup', 'StatementPreview',
+export const OWNER_ROUTES = ['DailyTradeSummary', 'YesterdayNetProfit', 'BusinessFinancialPerformance', 'BusinessFinancialHistory', 'BusinessTransactions', 'StatementSetup', 'StatementPreview',
   'StatementList'];
 export const PURCHASE_ROUTES = ['BusinessPurchases', 'RecordPurchase', 'PurchaseHistory', 'SupplierLipaDetails', 'SupplierLipaReport', 'RecordSupplierPayment', 'SupplierLipaAgeing'];
 export const EXPENSE_ROUTES = ['BusinessExpenses', 'RecordExpense', 'ExpenseHistory'];

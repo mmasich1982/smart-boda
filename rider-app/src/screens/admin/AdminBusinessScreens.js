@@ -2,9 +2,10 @@
 // Manage Businesses: Register a Business, Businesses and Users, Tile Permissions, Business Types, Statement Requests.
 // The same rules and the same server routes as the console pages (admin-console/src/pages/*), laid out for a phone. Every list is paged.
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, TouchableOpacity } from 'react-native';
 import { AdminScreen, Card, Btn, Badge, Field, Tabs, Hint, Section, StatTile, StatRow, SearchBox, PhoneText, Pager, ListState, Notice, useNotice, useAdminList, useClientList,
   LocationPicker, PhoneVerdict, Choice, Banner, errText, s, C } from './AdminUI';
+import BusinessPerformancePanel from './BusinessPerformancePanel';
 import DropdownField from '../../components/DropdownField';
 import { listBusinesses, createBusiness, updateBusiness, removeBusiness, deactivateBusiness, reactivateBusiness, checkBusinessPhone, addBusinessUser, updateBusinessUser,
   removeBusinessUser, deactivateBusinessUser, reactivateBusinessUser, changeBusinessOwner, listBusinessTypes, addBusinessType, updateBusinessType, listStatementRequests, prepareStatement } from '../../admin/adminApi';
@@ -185,6 +186,7 @@ export function BusinessesListScreen({ navigation }) {
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
   const [open, setOpen] = useState(null);
+  const [tab, setTab] = useState({});               // per business: 'people' (default) | 'performance'
   const [panel, setPanel] = useState(null);          // { kind: 'rename'|'place'|'add'|'edit', bid, ...fields }
   const { notice, ok, fail, clear } = useNotice();
   const list = useAdminList((page, size) => listBusinesses({ q: q || undefined, status: status || undefined, page, page_size: size }), [q, status]);
@@ -209,15 +211,22 @@ export function BusinessesListScreen({ navigation }) {
         const allAwaiting = b.users.every((u) => u.status === 'awaiting_registration');
         const mine = panel && panel.bid === b.id ? panel : null;
         return (
-          <Card key={b.id} style={{ opacity: b.status === 'inactive' ? 0.8 : 1 }} onPress={() => setOpen(isOpen ? null : b.id)}>
+          <Card key={b.id} style={{ opacity: b.status === 'inactive' ? 0.8 : 1 }}>
+            {/* Only this header opens and closes the card. The panels below used to sit INSIDE the pressable card, so on the web a space or Enter typed in
+                a field counted as a press of the card and shut it (Rename, Type and location, Add person, Switch off). Nothing below is pressable now. */}
+            <TouchableOpacity activeOpacity={0.8} onPress={() => setOpen(isOpen ? null : b.id)} accessibilityRole="button" accessibilityLabel={`${b.business_name}. ${isOpen ? 'Close' : 'Open'}`}>
             <Text style={{ fontSize: 16, fontWeight: '800', color: C.ink }}>{b.business_name}</Text>
             <Hint>{BIZ_STATUS[b.status] || b.status} · {b.business_type ? b.business_type : 'Type not set'}</Hint>
             <Hint>📍 {b.ward || b.county ? [b.ward, b.sub_county, b.county].filter(Boolean).join(', ') : 'Location not set'}</Hint>
             {(b.also_owns || []).length ? <Hint>👤 Owner also owns: {b.also_owns.join(', ')}</Hint> : null}
-            <Hint>{b.users.length} {b.users.length === 1 ? 'person' : 'people'} · tap {isOpen ? 'to close' : 'for people and actions'}</Hint>
+            <Hint>{b.users.length} {b.users.length === 1 ? 'person' : 'people'} · tap {isOpen ? 'to close' : 'for people, actions and performance'}</Hint>
+            </TouchableOpacity>
 
             {isOpen ? (
               <View style={{ marginTop: 8 }}>
+                <Tabs value={tab[b.id] || 'people'} onChange={(k) => setTab({ ...tab, [b.id]: k })} tabs={[{ key: 'people', label: 'People and actions' }, { key: 'performance', label: 'Business Performance' }]} />
+                {(tab[b.id] || 'people') === 'performance' ? <BusinessPerformancePanel businessId={b.id} /> : (
+              <View>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                   <Btn label="Rename" kind="ghost" small onPress={() => setPanel({ kind: 'rename', bid: b.id, name: b.business_name })} />
                   <Btn label="Type and location" kind="ghost" small onPress={() => setPanel({ kind: 'place', bid: b.id, business_type_code: b.business_type_code || '', county_id: b.county_id || null, sub_county_id: b.sub_county_id || null, ward_id: b.ward_id || null })} />
@@ -298,6 +307,8 @@ export function BusinessesListScreen({ navigation }) {
                     </View>
                   );
                 })}
+              </View>
+                )}
               </View>
             ) : null}
           </Card>

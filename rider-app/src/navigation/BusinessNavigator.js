@@ -15,7 +15,7 @@ import { LipaLaterCustomersScreen, RecordLipaPaymentScreen, LipaLaterAgeingScree
 import { BusinessPurchasesScreen, BusinessExpensesScreen, RecordPurchaseScreen, RecordExpenseScreen } from '../screens/business/PurchaseExpenseScreens';
 import { SupplierLipaDetailsScreen, SupplierLipaReportScreen, RecordSupplierPaymentScreen, SupplierLipaAgeingScreen } from '../screens/business/SupplierLipaScreens';
 import { CorrectRecordScreen, VoidRecordScreen } from '../screens/business/CorrectVoidScreens';
-import { DailyTradeSummaryScreen, BusinessFinancialPerformanceScreen, BusinessFinancialHistoryScreen, BusinessTransactionsScreen } from '../screens/business/OwnerReportsScreens';
+import { YesterdayNetProfitScreen, DailyTradeSummaryScreen, BusinessFinancialPerformanceScreen, BusinessFinancialHistoryScreen, BusinessTransactionsScreen } from '../screens/business/OwnerReportsScreens';
 import { StatementSetupScreen, StatementPreviewScreen, StatementListScreen } from '../screens/business/StatementScreens';
 import { BusinessSwitcherScreen, AllBusinessesScreen } from '../screens/business/BusinessSwitcherScreens';
 import chamaScreens from './chamaScreens';      // SMART CABZ: group screens for a business user who is in a group
@@ -43,7 +43,7 @@ export const BUSINESS_ROUTES = {
   SupplierLipaDetails: SupplierLipaDetailsScreen, SupplierLipaReport: SupplierLipaReportScreen, RecordSupplierPayment: RecordSupplierPaymentScreen, SupplierLipaAgeing: SupplierLipaAgeingScreen,
   BusinessExpenses: BusinessExpensesScreen, RecordExpense: RecordExpenseScreen, ExpenseHistory: RecordHistoryScreen,
   CorrectRecord: CorrectRecordScreen, VoidRecord: VoidRecordScreen,
-  DailyTradeSummary: DailyTradeSummaryScreen, BusinessFinancialPerformance: BusinessFinancialPerformanceScreen, BusinessFinancialHistory: BusinessFinancialHistoryScreen,
+  DailyTradeSummary: DailyTradeSummaryScreen, YesterdayNetProfit: YesterdayNetProfitScreen, BusinessFinancialPerformance: BusinessFinancialPerformanceScreen, BusinessFinancialHistory: BusinessFinancialHistoryScreen,
   BusinessTransactions: BusinessTransactionsScreen,
   StatementSetup: StatementSetupScreen, StatementPreview: StatementPreviewScreen, StatementList: StatementListScreen,
   BusinessSwitcher: BusinessSwitcherScreen, AllBusinesses: AllBusinessesScreen,          // MULTIPLE BUSINESSES (Owner only, guarded)

@@ -43,6 +43,7 @@
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { withBusinessHeader } from './businessQueueHeaders';
 import api from '../api/client';
+import { recoverRiderSession } from './sessionToken';
 
 // ============================================================================
 // CONFIGURATION CONSTANTS
@@ -411,6 +412,38 @@ export async function getQueuedRecords() {
  * ✅ NEW: Returns comprehensive SyncReport with detailed success/failure lists
  * @returns {Promise<Object>} - Comprehensive SyncReport with successfulItems and failedItems arrays
  */
+const AUTH_WAIT_NOTE = 'waiting_for_sign_in';
+const isBusinessItem = (item) => !!item && String(item.endpoint || '').startsWith('/business/');
+
+/** Keep an item pending without counting a failure or starting a back-off. */
+async function markWaitingForSignIn(recordId) {
+  try {
+    const queue = await loadSyncQueue();
+    const it = queue.find((q) => q.id === recordId);
+    if (!it) return;
+    it.status = 'pending';
+    it.nextRetryTime = null;
+    it.lastError = AUTH_WAIT_NOTE;
+    await saveSyncQueue(queue);
+  } catch { /* never break the cycle */ }
+}
+
+/** Once a token exists, bring back business items an earlier version left waiting after "Missing authorization header" 401s. */
+async function reviveAuthWaiting() {
+  const queue = await loadSyncQueue();
+  let changed = false;
+  for (const it of queue) {
+    if (!isBusinessItem(it) || it.status === 'synced') continue;
+    const e = String(it.lastError || '').toLowerCase();
+    if (it.lastError === AUTH_WAIT_NOTE || e.includes('authorization header') || e.includes('not authenticated') || e.includes('could not validate')) {
+      if (it.nextRetryTime || it.status === 'failed' || it.status === 'pending_retry') {
+        it.status = 'pending'; it.nextRetryTime = null; it.retryCount = 0; changed = true;
+      }
+    }
+  }
+  if (changed) await saveSyncQueue(queue);
+}
+
 export async function processPendingSync() {
   try {
     const pending = await getPendingItems();
@@ -448,8 +481,25 @@ export async function processPendingSync() {
       console.warn('⚠️ Could not load currentRiderId for bike_profile sync:', err.message);
     }
 
+    // SMART BIZNA needs a sign-in token (Smart Boda does not). Without one, business items WAIT: they are not sent, not counted as failures and not backed off.
+    let haveToken = true;
+    try {
+      const { getLocalAuthToken } = await import('./db');
+      haveToken = !!(await getLocalAuthToken());
+      if (!haveToken && pending.some(isBusinessItem)) {
+        const r = await recoverRiderSession();
+        haveToken = !!r.ok;
+      }
+    } catch { /* keep the default */ }
+    if (haveToken) { try { await reviveAuthWaiting(); } catch { /* optional */ } }
+
     // Process each pending item
     for (const item of pending) {
+      if (isBusinessItem(item) && !haveToken) {
+        skipped++;
+        skippedItems.push({ id: item.id, type: item.type, reason: 'waiting_for_sign_in', skippedAt: getEastAfricanTimeISO() });
+        continue;
+      }
       // ✅ CRITICAL: DEPENDENCY CHECK - Skip bike_profile if rider_id doesn't exist yet
       // This prevents marking bike_profile as failed when rider_id hasn't been created
       // Bike profile MUST be synced AFTER rider profile/ID creation in onboarding flow
@@ -784,6 +834,14 @@ export async function processPendingSync() {
         
         console.log(`✅ Synced ${item.type} (${item.id})`);
       } catch (err) {
+        if (isBusinessItem(item) && err.response?.status === 401) {
+          // Token missing or expired: not the record's fault. Keep it pending (no retry count, no backoff) and get a new token for the next cycle.
+          skipped++;
+          skippedItems.push({ id: item.id, type: item.type, reason: 'waiting_for_sign_in', skippedAt: getEastAfricanTimeISO() });
+          await markWaitingForSignIn(item.id);
+          try { await recoverRiderSession(); } catch { /* next cycle tries again */ }
+          continue;
+        }
         failed++;
         
         // ✅ IMPROVED ERROR LOGGING: Show full error details including status code and response

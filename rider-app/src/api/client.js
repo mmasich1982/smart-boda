@@ -7,6 +7,7 @@ import axios from 'axios';
 import Constants from 'expo-constants';
 import { getLocalAuthToken, getLocalDeviceId } from '../offline/db';
 import NetInfo from '@react-native-community/netinfo';
+import '../offline/netInfoConfig';            // stop the connection checker sending requests while the browser is offline
 
 // EXPO_PUBLIC_API_BASE_URL is read at build time via rider-app/app.json's "extra" block
 // (see app.json's expo.extra.apiBaseUrl) -- falls back to localhost for local development
@@ -34,6 +35,15 @@ NetInfo.addEventListener(state => {
 // or ended, the app must stop and show the Login screen. The handler is set by the app shell (src/auth/sessionLost.js) so this file stays free of navigation.
 let sessionLostHandler = null;
 export const setSessionLostHandler = (fn) => { sessionLostHandler = fn; };
+
+// A request that left with no token and got "Missing authorization header": ask the app to get a token (set by offline/sessionToken.js).
+let missingTokenHandler = null;
+export const setMissingTokenHandler = (fn) => { missingTokenHandler = fn; };
+const isMissingToken = (error) => {
+  const d = error.response?.data?.detail;
+  const msg = typeof d === 'string' ? d : (d && d.message) || '';
+  return error.response?.status === 401 && /missing authorization header/i.test(msg || '');
+};
 
 // A login call must never carry an old (maybe revoked) token: it would be refused before the person could sign in again.
 const NO_TOKEN_URLS = ['/auth/login', '/onboarding/pin/login'];
@@ -69,6 +79,12 @@ api.interceptors.response.use(
       try { if (sessionLostHandler) sessionLostHandler(detail.code, detail.message); } catch { /* never let the handler break a request */ }
     }
 
+    // SMART BIZNA: no token yet. This is expected until the phone has fetched one (recoverRiderSession); it is not an error worth a warning.
+    const missingToken = isMissingToken(error);
+    if (missingToken) {
+      try { if (missingTokenHandler) missingTokenHandler(); } catch { /* never let the handler break a request */ }
+    }
+
     // Check if this is an expected offline error
     const isOfflineError = 
       error.code === 'ECONNABORTED' ||
@@ -97,7 +113,9 @@ api.interceptors.response.use(
     // ✅ CRITICAL: Suppress ALL logs for:
     // 1. Health checks/connectivity verifications (HEAD requests) - COMPLETELY SILENT
     // 2. Expected offline errors when already known to be offline
-    if (isHealthCheck) {
+    if (missingToken) {
+      console.debug('🔑 No sign-in token yet - fetching one; the request stays queued:', { endpoint: error.config?.url });
+    } else if (isHealthCheck) {
       // ✅ COMPLETELY SILENT - Health checks are expected to fail when offline
       // No logging at all - this prevents the continuous HEAD request errors
       // that pollute the console

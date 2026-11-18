@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { Alert, Text } from 'react-native';
 import { Screen, BackLink, Title, Sub, Card, Row, Tabs, Field, Btn, Hint, s, C } from './BizUI';
+import BizDateField from './BizDateField';
 import BizCalculator from './BizCalculator';
 import store, { BusinessRuleError } from '../../offline/businessRepository';
 import { useBizDraft } from '../../hooks/useBusiness';
@@ -45,7 +46,7 @@ export default function NewSaleScreen({ navigation }) {
           <Text style={s.label}>Lipa Later customer</Text>
           <Field label="Customer name" value={name} onChangeText={setName} maxLength={80} />
           <Field label="Customer phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="0712 345 678" />
-          <Field label="Due date (YYYY-MM-DD)" value={due} onChangeText={setDue} autoCapitalize="none" hint="Must be after today. This is not income until the customer pays." />
+          <BizDateField label="Payment Due Date" value={due} onChange={setDue} />
         </Card>
       ) : null}
       <Btn label="Save Sale/Service" onPress={save} disabled={busy || !(total > 0)} />

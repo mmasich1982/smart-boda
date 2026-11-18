@@ -16,7 +16,8 @@
 import api from '../api/client';
 import indexedDbAdapter from '../offline/adapters/indexedDbAdapter';
 import { restoreSteps } from './loginRules';
-import { tripRow, fuelRow, maintenanceRow, expenseRow, buildLipaRestore } from './restoreMapping';
+import { tripRow, fuelRow, maintenanceRow, expenseRow, buildLipaRestore, isBatteryMode, normalizeFuelType, mergeById, expenseSummary } from './restoreMapping';
+import { getLocalRiderId, getActiveBikeProfile, saveLocalBikeProfile } from '../offline/db';
 
 const MAX_PAGES = 40;                    // 40 x 500 trips; the server only sends the last six months
 
@@ -34,9 +35,60 @@ async function pull(path, mapRow, store) {
 }
 
 export const restoreTrips = () => pull('/restore/rider/trips', tripRow, 'trips');
-export const restoreFuel = () => pull('/restore/rider/fuel', fuelRow, 'fuelEntry');
+/** Fuel (mode 'petrol') goes to the phone's fuel store; battery entries (mode 'charging' / 'swap') go to the battery store the Battery History reads. */
+export async function restoreFuel() {
+  let after = null; let pages = 0; let total = 0;
+  do {
+    const res = await api.get('/restore/rider/fuel', { params: { after: after || undefined, limit: 500 }, timeout: 30000 });
+    const items = (res.data && res.data.items) || [];
+    const fuel = items.filter((f) => !isBatteryMode(f.mode)).map(fuelRow);
+    const battery = items.filter((f) => isBatteryMode(f.mode)).map(fuelRow);
+    if (fuel.length) await indexedDbAdapter.putRows('fuelEntry', fuel);
+    if (battery.length) await indexedDbAdapter.putRows('batteryEntry', battery);
+    total += items.length;
+    after = res.data && res.data.next_cursor;
+    pages += 1;
+  } while (after && pages < MAX_PAGES);
+  return total;
+}
 export const restoreMaintenance = () => pull('/restore/rider/maintenance', maintenanceRow, 'maintenanceEntry');
 export const restoreExpenses = () => pull('/restore/rider/other-expenses', expenseRow, 'financialHistory');
+
+/** The bike profile (fuel type). Without it a new phone shows neither the Fuel Motorcycle nor the Charge Battery tile. Never replaces a profile the phone already has. */
+export async function restoreProfile() {
+  const have = await getActiveBikeProfile().catch(() => null);
+  if (have && normalizeFuelType(have.fuel_type_code)) return true;
+  const res = await api.get('/restore/rider/profile', { timeout: 30000 });
+  const p = res.data && res.data.profile;
+  if (!p || !normalizeFuelType(p.fuel_type_code)) return true;               // the rider has not set a vehicle yet: nothing to restore
+  await saveLocalBikeProfile({ fuel_type_code: normalizeFuelType(p.fuel_type_code), id: p.id });
+  return true;
+}
+
+/** The history screens and Financial Performance read per-rider caches (fuel_history_, battery_history_, maintenance_history_, other_expenses_summary_,
+ *  trip_history_), not the stores restore writes. Rebuild each from the stores so every restored record shows everywhere. Merged by id: nothing the phone holds is lost. */
+export async function rebuildHistoryCaches(riderId) {
+  const rid = riderId || await getLocalRiderId();
+  if (!rid) return false;
+  const mine = (row) => String(row.rider_id) === String(rid);
+  const merge = async (key, store, filter = mine) => {
+    const rows = await indexedDbAdapter.queryRows(store, filter);
+    let existing = [];
+    try { const c = await indexedDbAdapter.kvGet(key); existing = typeof c === 'string' ? JSON.parse(c) : c; } catch { existing = []; }
+    if (!Array.isArray(existing)) existing = [];
+    const out = mergeById(existing, rows);
+    await indexedDbAdapter.kvSet(key, JSON.stringify(out));
+    return out;
+  };
+  try { await require('../offline/financialPerformanceUtils').invalidateFinancialCaches(rid); } catch { /* totals are recomputed on open */ }   // first: it also clears other_expenses_summary_
+  await merge(`fuel_history_${rid}`, 'fuelEntry');
+  await merge(`battery_history_${rid}`, 'batteryEntry');
+  await merge(`maintenance_history_${rid}`, 'maintenanceEntry');
+  await merge(`trip_history_${rid}`, 'trips');
+  const exp = await indexedDbAdapter.queryRows('financialHistory', (r) => mine(r) && r.type === 'other_expense');
+  await indexedDbAdapter.kvSet(`other_expenses_summary_${rid}`, JSON.stringify(expenseSummary(exp)));
+  return true;
+}
 
 /** A rider's Lipa Later: trips into the phone's trips, then the customer list, summary and payment histories the Lipa Later screens read. */
 export async function restoreLipaLater(riderId) {
@@ -78,13 +130,13 @@ export async function restoreGroups() {
 }
 
 async function runStep(id, riderId) {
-  if (id === 'profile') return true;
+  if (id === 'profile') { if (riderId || await getLocalRiderId()) { try { await restoreProfile(); } catch { return false; } } return true; }
   if (id === 'business') { const r = await require('../offline/businessSyncService').runBusinessSyncCycle(); return !!(r && (r.ok || r.skipped === 'inactive')); }
   if (id === 'groups') return restoreGroups();
   if (id === 'trips') { await restoreTrips(); return true; }
   if (id === 'fuel') { await restoreFuel(); return true; }
   if (id === 'maintenance') { await restoreMaintenance(); return true; }
-  if (id === 'expenses') { await restoreExpenses(); return true; }
+  if (id === 'expenses') { await restoreExpenses(); await rebuildHistoryCaches(riderId); return true; }     // the LAST rider step: every store is filled, so build the caches now
   if (id === 'lipa') { await restoreLipaLater(riderId); return true; }
   return true;
 }

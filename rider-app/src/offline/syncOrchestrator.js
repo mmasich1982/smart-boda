@@ -31,6 +31,7 @@
  * ============================================================================
  */
 
+import { recoverRiderSession } from './sessionToken';
 import { processPendingSync, getLastSyncReport } from './syncQueue';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import NetInfo from '@react-native-community/netinfo';
@@ -110,6 +111,9 @@ export async function performSyncCheck() {
   try {
     console.log('🔄 [SyncOrchestrator] Starting sync check...');
     
+    // SMART BIZNA: make sure a sign-in token exists (signed in offline earlier) before the queue is sent. Quiet and harmless for riders.
+    try { await recoverRiderSession(); } catch { /* the queue copes without it */ }
+
     // Call existing processPendingSync from syncQueue
     // This now returns comprehensive SyncReport
     const report = await processPendingSync();

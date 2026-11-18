@@ -5,6 +5,8 @@
 import React, { useState } from 'react';
 import { Alert, View, Text } from 'react-native';
 import { Screen, BackLink, Title, Sub, Card, Row, Section, Tabs, Btn, Field, Empty, Hint, Badge, Banner, s, C } from './BizUI';
+import DropdownField from '../../components/DropdownField';
+import { STATEMENT_PURPOSES } from '../../utils/businessLists';
 import { useBizData } from '../../hooks/useBusiness';
 import store, { BusinessRuleError } from '../../offline/businessRepository';
 import * as R from '../../offline/businessReportUtils';
@@ -56,7 +58,7 @@ export function StatementSetupScreen({ navigation, route }) {
           <Field label="To (YYYY-MM-DD)" value={to} onChangeText={setTo} placeholder="2026-01-31" autoCapitalize="none" hint={`Up to ${todayEat()}`} />
         </>
       ) : <Hint style={{ marginBottom: 8 }}>{rangeLabel(range)}</Hint>}
-      <Field label="Purpose (optional)" value={purpose} onChangeText={setPurpose} placeholder="e.g. Bank loan, KRA" />
+      <DropdownField label="Purpose" value={purpose} onValueChange={setPurpose} placeholder="Select purpose (optional)..." options={STATEMENT_PURPOSES.map((p) => ({ label: p, value: p }))} />
       {older ? <Btn label="Request from Smart Bizna Admin" onPress={request} disabled={busy} /> : <Btn label="Preview Statement →" onPress={generate} disabled={busy} />}
     </Screen>
   );

@@ -20,3 +20,5 @@ export const changeBusinessOwner = async (id, userId) => (await client.post(`/ad
 export const listBusinessTypes = async () => (await client.get('/admin/business-types')).data;
 export const addBusinessType = async (t) => (await client.post('/admin/business-types', t)).data;
 export const updateBusinessType = async (id, t) => (await client.patch(`/admin/business-types/${id}`, t)).data;
+
+export const getBusinessPerformance = async (id, view = 'monthly', periods) => (await client.get(`/admin/businesses/${id}/performance`, { params: { view, ...(periods ? { periods } : {}) } })).data;

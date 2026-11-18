@@ -13,6 +13,8 @@
 #   DELETE /admin/businesses/{id}/users/{uid}           -> only while the person has not set up (never the Owner)
 #   POST   /admin/businesses/{id}/users/{uid}/deactivate | /reactivate
 #   POST   /admin/businesses/{id}/change-owner          -> names another user the Owner in ONE step (never none, never two)
+#   GET    /admin/businesses/{id}/performance?view=&periods=  -> BUSINESS PERFORMANCE tab: daily / monthly / quarterly / half_yearly / yearly figures,
+#                                                              trend, payment methods, cost breakdown, people, Lipa Later exposure, activity and advice prompts (read only)
 # Rules: exactly one Owner (the first user); NO maximum number of users; a mobile number must exist nowhere in Smart Boda
 # (same check as individual riders, extended to business users); Purchases / Expenses tile choices are saved (business default
 # + optional per-person Yes/No) but only enforced in a later release.
@@ -34,6 +36,7 @@ from app.routers.mobile_number import validate_mobile_number
 from app.services.group_roles import phone_key
 from app.services.individual_rider_service import find_phone_conflict
 from app.services.business_service import existing_owner, business_memberships
+from app.services import business_performance_service as perf
 
 router = APIRouter(prefix="/admin/businesses", tags=["admin-businesses"], dependencies=[Depends(require_admin)])
 
@@ -498,3 +501,28 @@ def change_owner(business_id: RowId, body: ChangeOwnerIn, db: Session = Depends(
     new.role, new.can_see_purchases, new.can_see_expenses = OWNER, None, None
     db.commit()
     return _full(db, b)
+
+
+def _lipa_rows(db: Session, business_id):
+    """What is still owed: customers to the business and the business to its suppliers (pending records, balance = amount minus payments)."""
+    from app.models.business_lipa_later import (BusinessLipaLaterRecord, BusinessLipaLaterPayment, BusinessSupplierLipaRecord,
+                                                BusinessSupplierLipaPayment)
+    rows = []
+    for kind, Rec, Pay in (("customer", BusinessLipaLaterRecord, BusinessLipaLaterPayment), ("supplier", BusinessSupplierLipaRecord, BusinessSupplierLipaPayment)):
+        paid = dict(db.query(Pay.lipa_later_id, func.coalesce(func.sum(Pay.amount_ksh), 0)).filter(Pay.business_id == business_id).group_by(Pay.lipa_later_id).all())
+        for r in db.query(Rec).filter(Rec.business_id == business_id, Rec.status == "pending").all():
+            rows.append({"kind": kind, "balance": max(0.0, float(r.amount) - float(paid.get(r.id, 0) or 0)), "due_date": r.due_date})
+    return rows
+
+
+@router.get("/{business_id}/performance")
+def business_performance(business_id: RowId, view: str = Query("monthly"), periods: Optional[int] = Query(None, ge=1, le=90), db: Session = Depends(get_db)):
+    """BUSINESS PERFORMANCE of one business for the Administrator (console and Admin app). Read only. Uses the same money formula as the Owner's reports."""
+    from app.routers.business_ops import record_dicts
+    b = _get(db, business_id)
+    if view not in perf.VIEWS:
+        raise HTTPException(422, "view must be one of: " + ", ".join(perf.VIEWS))
+    recs, pays, users, spays = record_dicts(db, b.id)
+    out = perf.build_performance(view, datetime.now(timezone.utc), recs, pays, users, spays, _lipa_rows(db, b.id), periods)
+    out["business"] = {"id": str(b.id), "business_name": b.business_name, "status": b.status, "people": len(users)}
+    return out

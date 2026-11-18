@@ -3,6 +3,8 @@
 // lives in the business's OWN server tables and routes (/business/lipa-later/...). A payment taken offline waits in the queue and is sent when there
 // is a connection. Ageing and balances are worked out on the phone.
 // A Lipa Later sale is a receivable, not income; only the money the customer pays counts, on the day it is received.
+import AgeingReport from './AgeingReport';
+import { groupAgeing } from '../../utils/ageingGroups';
 import React, { useState } from 'react';
 import { Alert, View, Text } from 'react-native';
 import { Screen, BackLink, Title, Sub, Card, Row, Field, Btn, Tabs, Badge, Banner, Section, Empty, Hint, s, C } from './BizUI';
@@ -79,21 +81,7 @@ export function RecordLipaPaymentScreen({ navigation, route }) {
 
 export function LipaLaterAgeingScreen({ navigation }) {
   const { data } = useBizData(async () => store.lipaCustomers());
-  const rows = data || [];
-  return (
-    <Screen>
-      <BackLink label="← Back to Customers" onPress={() => navigation.navigate('LipaLaterCustomers')} />
-      <Title>Payment Ageing Report</Title>
-      {AGEING_ORDER.map(([key, label]) => {
-        const items = rows.filter((r) => r.bucket === key);
-        return (
-          <Card key={key}>
-            <Row k={`${label} (${items.length})`} v={kes(items.reduce((x, r) => x + Math.round(r.balance * 100), 0) / 100)} bold />
-            {items.map((r) => <Hint key={r.sale.client_id}>{r.sale.customer_name} · due {fmtDate(r.sale.due_date)} · owes {kes(r.balance)}</Hint>)}
-          </Card>
-        );
-      })}
-      {!rows.length ? <Empty>No customers owe you right now.</Empty> : null}
-    </Screen>
-  );
+  const groups = groupAgeing(data || [], 'sale');
+  return <AgeingReport title="Ageing Report" backLabel="← Back to Customers" onBack={() => navigation.navigate('LipaLaterCustomers')} groups={groups}
+    who="Customers" whoPlural="Customers" itemLabel="Sales" empty="No customers owe you right now." />;
 }

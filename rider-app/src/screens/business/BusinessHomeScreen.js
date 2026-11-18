@@ -16,6 +16,7 @@ import { performLogout } from '../../offline/logout';   // PERSISTENT SESSION: e
 import { confirmAction } from '../../utils/confirmDialog';
 import { businessHomeTiles } from '../../utils/userTypeRouting';
 import { periodBounds } from '../../offline/businessReportUtils';
+import SignInNotice from '../../components/SignInNotice';
 import BusinessGroupSection from './BusinessGroupSection';      // SMART CABZ
 import { kes } from '../../utils/businessFormat';
 
@@ -76,25 +77,29 @@ export default function BusinessHomeScreen({ navigation }) {
           <Title>{profile.business_name} ▾</Title>
         </TouchableOpacity>
       ) : <Title>{profile.business_name}</Title>}
+      <SignInNotice />
       <Sub>{profile.business_type_name ? `${profile.business_type_name} · ` : ''}{ROLE[profile.role] || ''} · {profile.full_name}</Sub>
 
-      <TouchableOpacity onPress={() => go('SalesHistory')} accessibilityRole="button" accessibilityLabel="Sales Today. Open Sales/Service History">
-        <View style={[s.hero, { backgroundColor: C.asphalt }]}>
-          <Text style={s.heroLabel}>{owner ? "Today's Sales/Service Total (whole business)" : "Today's Sales/Service Total (yours)"}</Text>
+      <View style={[s.hero, { backgroundColor: C.asphalt }]}>
+        <Text style={s.heroLabel}>{owner ? "Today's Sales/Service Total (whole business)" : "Today's Sales/Service Total (yours)"}</Text>
+        <TouchableOpacity onPress={() => go('SalesHistory')} accessibilityRole="button" accessibilityLabel="Today's total. Open Sales/Service History">
           <Text style={s.heroAmt}>{kes(data ? data.today.income : 0)}</Text>
-          <Text style={s.heroSmall}>Sales Today · {data ? data.today.sales : 0} sale{data && data.today.sales === 1 ? '' : 's'}/service{data && data.today.sales === 1 ? '' : 's'} · tap for history</Text>
-        </View>
-      </TouchableOpacity>
+        </TouchableOpacity>
+        <Text style={[s.heroSmall, { marginBottom: 12 }]}>Sales Today · tap the amount for history</Text>
+        <TouchableOpacity onPress={() => go('NewSale')} accessibilityRole="button" accessibilityLabel="New Sale / Service"
+          style={{ backgroundColor: C.orange, borderRadius: 14, paddingVertical: 14, alignItems: 'center', width: '100%' }}>
+          <Text style={{ color: C.white, fontWeight: '700', fontSize: 15.5 }}>＋ New Sale / Service</Text>
+        </TouchableOpacity>
+      </View>
 
       {tiles.yesterdayCard && data && data.yesterday ? (
-        <Card onPress={() => go('DailyTradeSummary')}>
+        <Card onPress={() => go('YesterdayNetProfit')}>
           <Text style={s.label}>Yesterday's Total</Text>
           <Text style={{ fontSize: 20, fontWeight: '800', color: data.yesterday.net_profit < 0 ? C.red : C.green }}>{kes(data.yesterday.net_profit)} Net Profit</Text>
           <Hint>Income {kes(data.yesterday.income)} · Purchases {kes(data.yesterday.purchases)} · Expenses {kes(data.yesterday.expenses)}</Hint>
         </Card>
       ) : null}
 
-      <Btn label="＋ New Sale / Service" onPress={() => go('NewSale')} />
       <View style={tileGrid}>
         {tiles.purchases ? <Tile icon="🛒" label="Business Purchases" onPress={() => go('BusinessPurchases')} /> : null}
         {tiles.expenses ? <Tile icon="🧾" label="Business Expenses" onPress={() => go('BusinessExpenses')} /> : null}
@@ -104,6 +109,14 @@ export default function BusinessHomeScreen({ navigation }) {
       </View>
 
       <BusinessGroupSection go={go} />      {/* SMART CABZ: only for a business user who is in a group */}
+
+      {/* Sales Today row, just above My Business (Owner) / the end of the page (Sales/Service Person): like Smart Boda's "Trips today" */}
+      <Card>
+        <View style={s.kv}>
+          <Text style={s.k}>Sales Today</Text>
+          <Text style={s.v}>{data ? data.today.sales : 0}</Text>
+        </View>
+      </Card>
 
       {owner ? (
         <>

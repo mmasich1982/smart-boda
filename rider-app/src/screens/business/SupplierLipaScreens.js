@@ -4,6 +4,9 @@
 // A Lipa Later purchase is OWED, not a cost, until the supplier is paid; each payment made is the cost (see businessReportUtils.js). Saved on the phone
 // first and queued for the business's own server routes (/business/lipa-later/supplier-payments). Everything here needs the Purchases permission.
 // Back links: from the Home tile the report goes back to Home; after saving a Lipa Later purchase it goes back to Business Purchases.
+import AgeingReport from './AgeingReport';
+import { groupAgeing } from '../../utils/ageingGroups';
+import BizDateField from './BizDateField';
 import React, { useState } from 'react';
 import { Alert, View, Text } from 'react-native';
 import { Screen, BackLink, Title, Sub, Card, Row, Field, Btn, Tabs, Badge, Banner, Empty, Hint, s, C } from './BizUI';
@@ -38,7 +41,7 @@ export function SupplierLipaDetailsScreen({ navigation, route }) {
       <Field label="Supplier Name" value={name} onChangeText={setName} maxLength={80} placeholder="e.g. Wholesale Distributors" />
       <Field label="Supplier Mobile Number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="e.g. 0712 345 678" />
       <Field label="Amount to be Paid Later (KSh)" value={amt} onChangeText={(v) => setAmt(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="0" />
-      <Field label="Payment Due Date (YYYY-MM-DD)" value={due} onChangeText={setDue} autoCapitalize="none" hint="Must be after today. Lipa Later is for future payment, not today." />
+      <BizDateField label="Payment Due Date" value={due} onChange={setDue} hint="Must be after today. Lipa Later is for future payment, not today." />
       <Btn label="Save →" onPress={save} disabled={busy} />
     </Screen>
   );
@@ -117,33 +120,11 @@ export function RecordSupplierPaymentScreen({ navigation, route }) {
 }
 
 // ------------------------------------------------------------------------------------------ Lipa Later Ageing Report (suppliers)
+// Same layout as the customers' ageing report and the Smart Boda one (AgeingReport.js).
 export function SupplierLipaAgeingScreen({ navigation, route }) {
   const back = backTarget(route);
-  const [q, setQ] = useState('');
   const { data } = useBizData(async () => store.supplierLipaList());
-  const rows = data || [];
-  const term = q.trim().toLowerCase(), digits = term.replace(/\D/g, '');
-  const shown = rows.filter((r) => !term || r.purchase.supplier_name.toLowerCase().includes(term) || (digits && r.purchase.supplier_phone.replace(/\D/g, '').includes(digits)));
-  const sum = (items) => items.reduce((x, r) => x + Math.round(r.balance * 100), 0) / 100;
-  const critical60 = rows.filter((r) => r.days_overdue > 60);
-  return (
-    <Screen>
-      <BackLink label="← Back to Suppliers" onPress={() => navigation.navigate('SupplierLipaReport', { back })} />
-      <Title>Lipa Later Ageing Report</Title>
-      <Sub>Payment ageing analysis for your Lipa Later suppliers.</Sub>
-      {critical60.length ? <Banner tone="red" text={`⚠️ ${critical60.length} critically overdue (60+ days): ${kes(sum(critical60))} owed. Immediate payment recommended.`} /> : null}
-      <Card><Row k="Total Outstanding" v={kes(sum(rows))} bold color={C.red} /><Row k="Pending Suppliers" v={String(rows.length)} bold /></Card>
-      <Field placeholder="🔍 Search by supplier name or mobile…" value={q} onChangeText={setQ} />
-      {AGEING_ORDER.map(([key, label]) => {
-        const items = shown.filter((r) => r.bucket === key);
-        return (
-          <Card key={key}>
-            <Row k={`${label} (${items.length} supplier${items.length === 1 ? '' : 's'})`} v={kes(sum(items))} bold />
-            {items.map((r) => <Hint key={r.purchase.client_id}>{r.purchase.supplier_name} · due {fmtDate(r.purchase.due_date)} · owe {kes(r.balance)}</Hint>)}
-          </Card>
-        );
-      })}
-      {!rows.length ? <Empty>✅ No pending Lipa Later balances. All suppliers fully paid!</Empty> : null}
-    </Screen>
-  );
+  const groups = groupAgeing(data || [], 'purchase');
+  return <AgeingReport title="Ageing Report" backLabel="← Back to Suppliers" onBack={() => navigation.navigate('SupplierLipaReport', { back })} groups={groups}
+    who="Suppliers" whoPlural="Suppliers" itemLabel="Purchases" empty="✅ No pending Lipa Later balances. All suppliers fully paid!" />;
 }

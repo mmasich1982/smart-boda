@@ -58,6 +58,7 @@ export const declineSlotRequest = (id, comment) => post(`/admin/groups/slot-requ
 export const listBusinesses = (params) => get('/admin/businesses', params);
 export const createBusiness = (b) => post('/admin/businesses', b);
 export const updateBusiness = (id, b) => patch(`/admin/businesses/${id}`, b);
+export const getBusinessPerformance = (id, view = 'monthly', periods) => get(`/admin/businesses/${id}/performance`, { view, ...(periods ? { periods } : {}) });
 export const removeBusiness = (id) => del(`/admin/businesses/${id}`);
 export const deactivateBusiness = (id) => post(`/admin/businesses/${id}/deactivate`);
 export const reactivateBusiness = (id) => post(`/admin/businesses/${id}/reactivate`);

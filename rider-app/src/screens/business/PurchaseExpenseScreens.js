@@ -5,6 +5,8 @@
 import React, { useState } from 'react';
 import { Alert, Text } from 'react-native';
 import { Screen, BackLink, Title, Sub, Card, Row, Field, Btn, Tabs, Section, Empty, Hint, s, C } from './BizUI';
+import DropdownField from '../../components/DropdownField';
+import { EXPENSE_TYPES } from '../../utils/businessLists';
 import BizCalculator from './BizCalculator';
 import store, { BusinessRuleError } from '../../offline/businessRepository';
 import { useBizDraft } from '../../hooks/useBusiness';
@@ -60,6 +62,7 @@ export function RecordPurchaseScreen({ navigation }) {
 }
 
 // -------------------------------------------------------------------------------------------------- Record Expense
+// The expense TYPE is chosen from a drop list (Household ... Others). The chosen type is what is saved as the expense's details ("Others" is saved as "Others").
 export function RecordExpenseScreen({ navigation }) {
   const [busy, setBusy] = useState(false);
   const draft = useBizDraft('expense', { details: '', amount: '' });          // MULTIPLE BUSINESSES: kept with its own business
@@ -74,10 +77,10 @@ export function RecordExpenseScreen({ navigation }) {
     <Screen>
       <BackLink label="← Expenses" onPress={() => navigation.navigate('BusinessExpenses')} />
       <Title>Record Expense</Title>
-      <Sub>For example Rent, Electricity, Transport.</Sub>
-      <Field label="Expense details" value={details} onChangeText={setDetails} maxLength={120} placeholder="e.g. Shop rent" />
+      <Sub>Choose the type of expense, then enter the amount.</Sub>
+      <DropdownField label="Expense type" required value={details} onValueChange={setDetails} placeholder="Select expense type..." options={EXPENSE_TYPES.map((t) => ({ label: t, value: t }))} />
       <Field label="Amount (KSh)" value={amount} onChangeText={(v) => setAmount(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" />
-      <Btn label="Record Expense Cost →" onPress={save} disabled={busy || !details.trim() || !(parseFloat(amount) > 0)} />
+      <Btn label="Record Expense Cost →" onPress={save} disabled={busy || !EXPENSE_TYPES.includes(details) || !(parseFloat(amount) > 0)} />
     </Screen>
   );
 }

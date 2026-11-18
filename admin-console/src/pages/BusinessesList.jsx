@@ -15,6 +15,7 @@ import Pagination from '../components/Pagination';
 import TriChoice, { errText } from '../components/TriChoice';
 import BusinessTypeSelect from '../components/BusinessTypeSelect';
 import LocationCascade from '../components/LocationCascade';
+import BusinessPerformance from '../components/BusinessPerformance';
 
 const BIZ_STATUS = { pending_setup: '🟡 Pending setup', activated: '🟢 Activated', inactive: '⚫ Switched off' };
 const USER_STATUS = { awaiting_registration: '🟡 Awaiting registration', registered: '🟢 Registered', inactive: '⚫ Switched off' };
@@ -31,6 +32,7 @@ export default function BusinessesList() {
   const [rename, setRename] = useState(null);      // { id, name }
   const [place, setPlace] = useState(null);        // { bid, business_type_code, county_id, sub_county_id, ward_id }: the Administrator edits type and location
   const [edit, setEdit] = useState(null);          // { bid, uid, full_name, mobile_number }
+  const [tab, setTab] = useState({});             // per business: 'people' (default) | 'performance'
   const [add, setAdd] = useState(null);            // { bid, full_name, mobile_number, can_see_purchases, can_see_expenses }
   const res = useApiResource(() => listBusinesses({ q: q || undefined, status: status || undefined, page, page_size: pageSize }), [q, status, page, pageSize]);
   const d = res.data || {};
@@ -85,6 +87,12 @@ export default function BusinessesList() {
               </span>
             </div>
 
+            <div role="tablist" style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+              {[['people', 'People and actions'], ['performance', 'Business Performance']].map(([k, label]) => (
+                <button key={k} role="tab" aria-selected={(tab[b.id] || 'people') === k} className={(tab[b.id] || 'people') === k ? 'primary' : 'secondary'} onClick={() => setTab({ ...tab, [b.id]: k })}>{label}</button>
+              ))}
+            </div>
+            {tab[b.id] === 'performance' ? <BusinessPerformance businessId={b.id} /> : (<>
             {place && place.bid === b.id && (
               <div className="card" style={{ marginTop: 10 }}>
                 <h4 style={{ marginTop: 0 }}>Business type and location of {b.business_name}</h4>
@@ -144,6 +152,7 @@ export default function BusinessesList() {
                   <button className="secondary" onClick={() => setAdd(null)}>Cancel</button>
                 </div>
               </div>)}
+            </>)}
           </div>);
       })}
       {res.loading && <p className="muted">Loading…</p>}

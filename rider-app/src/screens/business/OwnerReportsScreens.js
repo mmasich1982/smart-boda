@@ -4,7 +4,8 @@
 // server answers 403 to a Sales/Service Person.
 import React, { useState } from 'react';
 import { View, Text } from 'react-native';
-import { Screen, BackLink, Title, Sub, Card, Row, Section, Tabs, ProfitHero, ShareBar, Btn, Empty, Hint, s, C } from './BizUI';
+import { Screen, BackLink, Title, Sub, Card, Row, Section, Tabs, ProfitHero, ShareBar, Btn, Empty, Hint, Pager, s, C } from './BizUI';
+import { paginate } from '../../utils/businessLists';
 import { useBizData } from '../../hooks/useBusiness';
 import store from '../../offline/businessRepository';
 import { RecordRow } from './RecordParts';
@@ -70,6 +71,39 @@ export function DailyTradeSummaryScreen({ navigation }) {
   );
 }
 
+// ------------------------------------------------------------------------------------------ Yesterday's Net Profit (Home "Yesterday's Total" card)
+export function YesterdayNetProfitScreen({ navigation }) {
+  const { data } = useBizData(async () => {
+    const [a, z] = R.periodBounds('yesterday');
+    return { t: await store.report(a, z), meta: (await store.getData()).meta };
+  });
+  if (!data) return <Screen><BackLink onPress={() => navigation.navigate('BusinessHome')} /><Hint>Loading…</Hint></Screen>;
+  const { t } = data;
+  return (
+    <Screen>
+      <BackLink onPress={() => navigation.navigate('BusinessHome')} />
+      <Title>Yesterday's Net Profit</Title>
+      <Sub>Complete financial breakdown for yesterday</Sub>
+      <StaleNotice meta={data.meta} />
+      <ProfitHero title="Yesterday's Net Profit" totals={t} kes={kes} />
+      <Section>By Payment Method</Section>
+      <Card>
+        <Hint>Money received from customers yesterday, by how they paid. Lipa Later is only what customers paid back.</Hint>
+        <ShareBar parts={t.by_payment_method.map((m) => ({ key: m.method, percent: m.percent, color: METHOD_COLOR[m.method] }))} />
+        {t.by_payment_method.map((m) => (
+          <View key={m.method} style={s.kv}>
+            <Text style={[s.k, { color: METHOD_COLOR[m.method], fontWeight: '800' }]}>{m.label}</Text>
+            <Text style={s.v}>{m.count} · {kes(m.amount)} · {m.percent}%</Text>
+          </View>
+        ))}
+        <Row k="Total received" v={kes(t.total_received)} bold />
+      </Card>
+      <CostBreakdown rows={t.cost_breakdown} />
+      <ByPerson rows={t.by_person} />
+    </Screen>
+  );
+}
+
 // ------------------------------------------------------------------------------------------ My Business Financial Performance (journey I)
 export function BusinessFinancialPerformanceScreen({ navigation }) {
   const [period, setPeriod] = useState('today');
@@ -114,17 +148,22 @@ const FILTERS = [{ key: 'all', label: 'All' }, { key: 'SALE', label: 'Sales/Serv
 export function BusinessTransactionsScreen({ navigation, route }) {
   const [key] = useState((route.params && route.params.key) || 'thisMonth');
   const [filter, setFilter] = useState('all');
+  const [page, setPage] = useState(1);                       // 20 a page, on every tab (All, Sales/Services, Purchases, Expenses)
   const range = histRange(key);
   const { data } = useBizData(async () => (await store.transactions(range[0], range[1], filter)).map((r) => (r.record ? { ...r.record, _row: r } : { ...r, kind: r.type, _row: r })), [key, filter]);
+  const pg = paginate(data || [], page);
+  const changeFilter = (f) => { setFilter(f); setPage(1); };
   return (
     <Screen>
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
       <Title>Transactions</Title>
       <Hint style={{ marginBottom: 8 }}>{rangeLabel(range)}</Hint>
-      <Tabs tabs={FILTERS} value={filter} onChange={setFilter} />
+      <Tabs tabs={FILTERS} value={filter} onChange={changeFilter} />
+      <Pager {...pg} onChange={setPage} />
       <Card>
-        {data && data.length ? data.map((r) => <RecordRow key={r.client_id + (r.kind || '')} rec={r} navigation={navigation} showWho transaction={r._row} back="BusinessTransactions" />) : <Empty>No transactions in this range.</Empty>}
+        {data && data.length ? pg.rows.map((r) => <RecordRow key={r.client_id + (r.kind || '')} rec={r} navigation={navigation} showWho transaction={r._row} back="BusinessTransactions" />) : <Empty>No transactions in this range.</Empty>}
       </Card>
+      <Pager {...pg} onChange={setPage} />
     </Screen>
   );
 }

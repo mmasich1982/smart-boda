@@ -78,6 +78,18 @@ export function ShareBar({ parts }) {
   );
 }
 
+/** Previous / Next pager with "21-40 of 63" (View Transactions, request 8). */
+export function Pager({ page, pages, from, to, total, onChange }) {
+  if (total <= 0) return null;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+      <Btn label="‹ Previous" kind="ghost" small disabled={page <= 1} onPress={() => onChange(page - 1)} />
+      <Text style={s.hint}>{from}-{to} of {total} · Page {page}/{pages}</Text>
+      <Btn label="Next ›" kind="ghost" small disabled={page >= pages} onPress={() => onChange(page + 1)} />
+    </View>
+  );
+}
+
 export const Empty = ({ children }) => <Text style={s.empty}>{children}</Text>;
 export const Banner = ({ text, tone = 'amber', onPress }) => (onPress
   ? <TouchableOpacity onPress={onPress} style={[s.banner, { backgroundColor: TONE[tone][1] }]}><Text style={[s.bannerText, { color: TONE[tone][0] }]}>{text}</Text></TouchableOpacity>

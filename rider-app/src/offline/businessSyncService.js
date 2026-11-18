@@ -9,6 +9,7 @@
 // business's store only (a reply that names a different business is refused by the store).
 // Reading never needs the internet; only this cycle does. It never throws and does nothing for a rider.
 import { isOnlineNow } from './chamaConnectivity';
+import { recoverRiderSession } from './sessionToken';
 import { getLocalRiderId, getLocalAuthToken, getLocalRiderStatus } from './db';
 import { registry, scoped, readPendingMap, ensureBusinessProfile, ensureMigrated } from './businessRepository';
 
@@ -45,6 +46,12 @@ export function refreshBusinessProfile(businessId) {
     await ensureMigrated();
     const id = businessId || await registry.resolveActive();
     if (!id) return { changed: false, profile: null };
+    // No token (the person signed in offline): get one first, or stay quiet. This used to send /business/me with no token every 45 seconds and print a 401 each time.
+    if (!(await getLocalAuthToken())) {
+      const r = await recoverRiderSession();
+      if (!r.ok) return { changed: false, profile: null, skipped: r.reason };
+    }
+    if (!(await isOnlineNow())) return { changed: false, profile: null, skipped: 'offline' };
     const client = require('../api/businessClient');
     const me = await client.businessMe(id);
     const { changed, profile } = await (await scoped(id)).saveProfile(me);
@@ -75,7 +82,11 @@ export function runBusinessSyncCycle() {
   inFlight = (async () => {
     const out = { ok: false, skipped: null, failed: [] };
     try {
-      if (!(await getLocalRiderId()) || !(await getLocalAuthToken())) return { ...out, skipped: 'signed_out' };
+      if (!(await getLocalRiderId())) return { ...out, skipped: 'signed_out' };
+      if (!(await getLocalAuthToken())) {                                                    // signed in offline: ask for the token now, if we are online
+        const r = await recoverRiderSession();
+        if (!r.ok) return { ...out, skipped: r.reason === 'offline' ? 'offline' : 'signed_out' };
+      }
       if (!(await isBusinessUser())) return { ...out, skipped: 'not_business' };
       await ensureBusinessProfile();                                                         // Home is right even before the first answer
       if (!(await isOnlineNow())) return { ...out, skipped: 'offline' };

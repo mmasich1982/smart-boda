@@ -9,6 +9,7 @@ import { saveAdminSession } from '../admin/adminSession';
 import { sameIdentity, canSwitchAccount, statusFromLogin } from './loginRules';
 import { wipeLocalUserData, pendingUploadCount } from './localIdentity';
 import { clearRevoked } from './sessionFlags';
+import { normalizeFuelType } from './restoreMapping';
 import { setAudienceFromStatus } from '../vehicle/vehicleStore';      // SMART CABZ
 
 export async function completeLogin(res, pin) {
@@ -31,7 +32,7 @@ export async function completeLogin(res, pin) {
     await saveLocalRiderStatus(statusFromLogin(res));
     const p = res.profile || {};
     if (p.language_code) { try { await saveLocalLanguage(p.language_code); } catch { /* ignore */ } }
-    if (p.fuel_type_code) { try { await saveLocalBikeProfile({ fuel_type_code: p.fuel_type_code }); } catch { /* ignore */ } }
+    if (p.fuel_type_code) { try { await saveLocalBikeProfile({ fuel_type_code: normalizeFuelType(p.fuel_type_code) || p.fuel_type_code }); } catch { /* ignore */ } }
   }
   const fresh = statusFromLogin(res);
   if (same) await saveLocalRiderStatus({ ...status, vehicle_type: fresh.vehicle_type, user_type: fresh.user_type });     // SMART CABZ: the type may have been changed by an Administrator

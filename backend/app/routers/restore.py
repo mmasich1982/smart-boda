@@ -4,7 +4,8 @@
 #   GET /restore/rider/trips           Cash and M-Pesa trips
 #   GET /restore/rider/fuel            fuel entries           (table fuel_entry)
 #   GET /restore/rider/maintenance     maintenance entries    (table maintenance_entry)
-#   GET /restore/rider/other-expenses  other expenses         (table other_expenses)
+#   GET /restore/rider/other-expenses  other expenses         (table other_expenses: amount_ksh, notes, created_at, integer id)
+#   GET /restore/rider/profile         the rider's bike profile (fuel type, plate) so a new phone shows the right Fuel / Charge Battery tile
 #   GET /restore/rider/lipa-later      Lipa Later records and their payments (tables lipa_later_record, lipa_later_payment, trip)
 # Every route: the signed-in rider's own rows of the last RESTORE_DAYS days, oldest first, in pages (?after=<cursor>&limit=500).
 # Smart Bizna Lipa Later (customers and suppliers) is NOT here: it comes with the business bundle (/business/snapshot, /business/mine), payments included.
@@ -38,6 +39,24 @@ def _cursor_parts(after: Optional[str]):
         return datetime.fromisoformat(ts), uuid.UUID(rid)
     except ValueError:
         raise HTTPException(422, "Bad cursor.")
+
+
+def _int_cursor_parts(after: Optional[str]):
+    """Cursor for a table with an integer id (other_expenses): '<timestamp>|<id>'."""
+    if not after:
+        return None
+    try:
+        ts, _, rid = after.partition("|")
+        return datetime.fromisoformat(ts), int(rid)
+    except ValueError:
+        raise HTTPException(422, "Bad cursor.")
+
+
+def _as_utc_ms(v) -> Optional[int]:
+    """Milliseconds since 1970 for an aware OR naive (taken as UTC) datetime."""
+    if not v:
+        return None
+    return int((v if v.tzinfo else v.replace(tzinfo=timezone.utc)).timestamp() * 1000)
 
 
 def _cutoff() -> datetime:
@@ -75,14 +94,14 @@ def restore_trips(after: Optional[str] = None, limit: int = Query(500, ge=1, le=
 
 
 # ---------------------------------------------------------------- fuel, maintenance, other expenses (plain SQL on the live tables)
-def _page(db: Session, rider: Rider, table: str, columns: str, order_col: str, after: Optional[str], limit: int) -> dict:
-    """table / columns / order_col are constants written below, never taken from the request."""
+def _page(db: Session, rider: Rider, table: str, columns: str, order_col: str, after: Optional[str], limit: int, int_id: bool = False) -> dict:
+    """table / columns / order_col are constants written below, never taken from the request. int_id: the table's id is an integer, and its time column has no time zone."""
     sql = f"SELECT id, rider_id, {columns} FROM {table} WHERE rider_id = CAST(:rid AS uuid) AND {order_col} >= :cutoff"
-    params = {"rid": str(rider.id), "cutoff": _cutoff(), "lim": limit + 1}
-    cur = _cursor_parts(after)
+    params = {"rid": str(rider.id), "cutoff": _cutoff().replace(tzinfo=None) if int_id else _cutoff(), "lim": limit + 1}
+    cur = _int_cursor_parts(after) if int_id else _cursor_parts(after)
     if cur:
-        sql += f" AND ({order_col}, id) > (:ats, CAST(:aid AS uuid))"
-        params.update(ats=cur[0], aid=str(cur[1]))
+        sql += f" AND ({order_col}, id) > (:ats, :aid)" if int_id else f" AND ({order_col}, id) > (:ats, CAST(:aid AS uuid))"
+        params.update(ats=cur[0], aid=cur[1] if int_id else str(cur[1]))
     sql += f" ORDER BY {order_col}, id LIMIT :lim"
     rows = [dict(r) for r in db.execute(text(sql), params).mappings().all()]
     more = len(rows) > limit
@@ -91,7 +110,7 @@ def _page(db: Session, rider: Rider, table: str, columns: str, order_col: str, a
     items = []
     for r in rows:
         d = {k: _jsonable(v) for k, v in r.items()}
-        d["ts"] = int(r[order_col].timestamp() * 1000) if r.get(order_col) else None
+        d["ts"] = _as_utc_ms(r.get(order_col))
         items.append(d)
     return {"items": items, "next_cursor": nxt, "count": len(items)}
 
@@ -110,7 +129,18 @@ def restore_maintenance(after: Optional[str] = None, limit: int = Query(500, ge=
 
 @router.get("/rider/other-expenses")
 def restore_other_expenses(after: Optional[str] = None, limit: int = Query(500, ge=1, le=1000), db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
-    return _page(db, rider, "other_expenses", "category, amount, description, expense_date", "expense_date", after, limit)
+    # the live table has amount_ksh, notes and created_at (no time zone) and an INTEGER id: the older query named columns that do not exist and failed
+    return _page(db, rider, "other_expenses", "category, amount_ksh, notes, created_at", "created_at", after, limit, int_id=True)
+
+
+@router.get("/rider/profile")
+def restore_profile(db: Session = Depends(get_db), rider: Rider = Depends(get_current_rider)):
+    """The rider's newest ACTIVE bike profile. A new phone needs it for the Fuel Motorcycle/Car or Charge Battery tile."""
+    row = db.execute(text("SELECT id, fuel_type_code, submitted_at FROM bike_profile WHERE rider_id = CAST(:rid AS uuid) AND COALESCE(is_active, true) "
+                          "ORDER BY submitted_at DESC LIMIT 1"), {"rid": str(rider.id)}).mappings().first()
+    if not row:
+        return {"profile": None}
+    return {"profile": {"id": str(row["id"]), "fuel_type_code": row["fuel_type_code"], "submitted_at": _jsonable(row["submitted_at"])}}
 
 
 # ---------------------------------------------------------------- Lipa Later (a rider's customers and what they have paid)
