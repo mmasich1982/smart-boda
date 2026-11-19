@@ -6,6 +6,7 @@
 //     an Administrator, or a phone whose session the server ended)
 //   * ONE active session per person: a login on another phone must be confirmed ("takeover") and ends the first phone's session
 import { isPhone, cleanPhone, phoneKey } from '../admin/adminFormat';
+import { businessFields } from './businessStatus';      // SMART BIZNA FIX
 
 export { isPhone, cleanPhone, phoneKey };
 
@@ -35,10 +36,13 @@ export function countPending(items) {
 /** What to put in the saved status after a server login (rider or business user). */
 export function statusFromLogin(res) {
   const p = res.profile || {};
+  const business = res.user_type === 'business';
+  const noVehicle = business || res.user_type === 'chama';        // SMART BIZNA FIX: a business user and a Smart Chama member own no vehicle
   return {
-    rider_id: res.rider_id, user_type: res.user_type === 'business' ? 'business' : 'rider', mobile_number: res.mobile_number || p.mobile_number,
+    rider_id: res.rider_id, user_type: business ? 'business' : res.user_type === 'chama' ? 'chama' : 'rider', mobile_number: res.mobile_number || p.mobile_number,
     full_name: p.full_name || '', registration_status: 'active', onboarding_step: 'done', language_code: p.language_code || null,
-    vehicle_type: p.vehicle_type || 'motorcycle',        // SMART CABZ: a new phone opens as Smart Boda or Smart Cabz
+    vehicle_type: noVehicle ? 'n/a' : (p.vehicle_type || 'motorcycle'),        // SMART CABZ: a new phone opens as Smart Boda or Smart Cabz; SMART BIZNA FIX: a business user has no vehicle
+    ...(business ? businessFields(res.businesses) : {}),                      // SMART BIZNA FIX: role and tile permissions, so Home is right the moment it opens
   };
 }
 
@@ -47,7 +51,7 @@ export function restoreSteps(userType) {
   const steps = [{ id: 'profile', label: 'Your profile' }];
   if (userType === 'business') steps.push({ id: 'business', label: 'Your businesses and records' });
   steps.push({ id: 'groups', label: 'Your groups, savings and loans' });
-  if (userType === 'rider') {
+  if (userType === 'rider') {   // SMART CHAMA: a Chama member has only the profile and groups steps
     steps.push({ id: 'trips', label: 'Your trips and income' });
     steps.push({ id: 'lipa', label: 'Your Lipa Later customers and payments' });
     steps.push({ id: 'fuel', label: 'Your fuel entries' });

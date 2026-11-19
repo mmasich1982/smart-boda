@@ -220,6 +220,11 @@ def access_set(admin_id: RowId, body: AccessIn, db: Session = Depends(get_db), m
     a = _target(db, admin_id)
     if body.enabled and len(svc.mobile_key(a.mobile_number)) != 9:
         raise HTTPException(400, "Add a mobile number to this Administrator first.")
+    if body.enabled:                                                       # SMART BIZNA FIX: the number must not also belong to a rider, a business user or a group record
+        from app.services.individual_rider_service import find_phone_conflict
+        c = find_phone_conflict(db, a.mobile_number)
+        if c and c["where"] != "admin_user":
+            raise HTTPException(409, c["message"] + " Change the number first, so one number is never two different people.")
     if not body.enabled and a.id == me.id:
         raise HTTPException(400, "You cannot switch off your own app access.")        # nobody locks themselves out
     svc.set_access(db, a, body.enabled, me)

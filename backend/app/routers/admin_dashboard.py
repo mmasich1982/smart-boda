@@ -311,7 +311,7 @@ def list_riders(status: str | None = None, page: int = 1, page_size: int = 20, d
             "mobile_verified": r.mobile_verified,
             "created_at": r.created_at,
             "vehicle_type": r.vehicle_type,
-            "kind": "business" if str(r.id) in biz_ids else ("driver" if r.vehicle_type == "car" else "rider"),
+            "kind": "business" if str(r.id) in biz_ids else ("chama" if getattr(r, "chama_only", False) else "driver" if r.vehicle_type == "car" else "rider"),
         }
         for r in rows
     ]
@@ -321,16 +321,20 @@ def list_riders(status: str | None = None, page: int = 1, page_size: int = 20, d
 @router.get("/riders/stats", dependencies=[Depends(require_admin)])
 def rider_stats(db: Session = Depends(get_db)):
     """Headline numbers for the Active Riders screen."""
+    from app.models.business import BusinessUser                       # SMART BIZNA FIX: a business user is not a rider, so is not counted as one
     now = datetime.now(timezone.utc)
-    total = db.query(func.count(Rider.id)).scalar() or 0
-    active = db.query(func.count(Rider.id)).filter(Rider.registration_status == "active").scalar() or 0
+    not_business = ~Rider.id.in_(db.query(BusinessUser.rider_id).filter(BusinessUser.rider_id.isnot(None)))
+    total = db.query(func.count(Rider.id)).filter(not_business).scalar() or 0
+    active = db.query(func.count(Rider.id)).filter(not_business, Rider.registration_status == "active").scalar() or 0
     joined_7 = db.query(func.count(Rider.id)).filter(
-        Rider.registration_status == "active", Rider.created_at >= now - timedelta(days=7)
+        not_business, Rider.registration_status == "active", Rider.created_at >= now - timedelta(days=7)
     ).scalar() or 0
     joined_30 = db.query(func.count(Rider.id)).filter(
-        Rider.registration_status == "active", Rider.created_at >= now - timedelta(days=30)
+        not_business, Rider.registration_status == "active", Rider.created_at >= now - timedelta(days=30)
     ).scalar() or 0
+    business_users = db.query(func.count(Rider.id)).filter(~not_business).scalar() or 0
     return {
+        "business_users": business_users,           # SMART BIZNA FIX: counted apart from the riders
         "total_riders": total,
         "active_riders": active,
         "not_yet_active_riders": total - active,     # still setting up their profile / PIN, or rejected

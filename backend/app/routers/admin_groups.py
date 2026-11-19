@@ -15,6 +15,7 @@ from app.models.chama_finance import ChamaConfig, ChamaLedger, ChamaContribution
 from app.models.location_models import County, SubCounty, Ward
 from app.services import slot_pool_service as POOL
 from app.services.group_roles import same_phone, phone_key
+from app.services.individual_rider_service import find_admin_by_number, admin_number_message      # SMART BIZNA FIX
 from app.services.group_member_link_service import rider_mobile_key
 from app.models.rider import Rider
 from app.services.individual_rider_service import is_unlinked_individual
@@ -42,7 +43,7 @@ class GroupIn(BaseModel):
     ward_id: int
     stage_name: Optional[str] = Field(default=None, max_length=120)       # SMART CABZ: asked only for a Riders group
     members_type: Literal["riders", "business", "drivers", "mixed"] = "riders"    # SMART CABZ: who may be in this group
-    treasurer_kind: Optional[Literal["rider", "driver", "business"]] = None       # SMART CABZ: only chosen for a Mixed group; otherwise set from the Members Type
+    treasurer_kind: Optional[Literal["rider", "driver", "business", "chama"]] = None       # SMART CABZ: only chosen for a Mixed group; otherwise set from the Members Type
     group_type: Literal["mgr", "tb"]                      # Merry-Go-Round or Table Banking, chosen by the administrator (required)
     approved_slots: int = Field(ge=1, le=1000)
     treasurer_name: str = Field(min_length=2, max_length=80)
@@ -61,7 +62,7 @@ class GroupIn(BaseModel):
             self.stage_name = None
         kind = GK.treasurer_kind_for(self.members_type, self.treasurer_kind)
         if kind is None:
-            raise ValueError("Choose the Treasurer type (motorcycle rider, car driver or business user).")
+            raise ValueError("Choose the Treasurer type (motorcycle rider, car driver, business user or Chama member).")
         self.treasurer_kind = kind
         return self
 
@@ -199,6 +200,9 @@ def _phone_check_base(phone: str, group_type: Optional[str] = None, exclude_grou
                       db: Session = Depends(get_db)):
     """Used by the form to show the result before the administrator presses Save. The same rule is enforced
     again on create and update, so this check can never be bypassed."""
+    adm = find_admin_by_number(db, phone)                              # SMART BIZNA FIX: an Administrator's number is never a Treasurer's
+    if adm:
+        return {"has_account": True, "pair_ok": False, "rider_name": (adm.name or "").strip(), "status": "administrator", "message": admin_number_message(adm, "be a group Treasurer")}
     bz = find_business_user(db, phone)
     if bz:
         return {"has_account": True, "pair_ok": False, "rider_name": bz[0].full_name, "status": bz[0].status,
@@ -228,13 +232,13 @@ def _phone_check_base(phone: str, group_type: Optional[str] = None, exclude_grou
 
 # ---- SMART CABZ: Treasurer and member kinds ----
 def _kind_of_phone(db: Session, phone):
-    """What this number already is: ('business' | 'driver' | 'rider', name) or None when nothing in the system knows it."""
+    """What this number already is: ('business' | 'chama' | 'driver' | 'rider', name) or None when nothing in the system knows it."""
     bz = find_business_user(db, phone)
     if bz:
         return "business", bz[0].full_name
     r = _rider_with_phone(db, phone)
     if r:
-        return GK.kind_of(r.vehicle_type), (r.full_name or "").strip() or "no name yet"
+        return GK.kind_of(r.vehicle_type, False, bool(getattr(r, "chama_only", False))), (r.full_name or "").strip() or "no name yet"
     pre = find_preregistration(db, phone)
     if pre:
         return GK.kind_of(pre.vehicle_type), pre.full_name
@@ -245,6 +249,10 @@ def _require_treasurer(db: Session, body: GroupIn, exclude_id=None, phone_change
     """BLOCKS saving. A Riders / Drivers Treasurer is a NEW number (today's rule); a Business Treasurer is an EXISTING business user;
     in a Mixed group the kind the Administrator chose applies. The Treasurer's two groups (Merry-Go-Round + Table Banking) must match."""
     kind = body.treasurer_kind
+    if phone_changed:                                                  # SMART BIZNA FIX: an existing Treasurer who is also an Administrator is not touched until their number changes
+        adm = find_admin_by_number(db, body.treasurer_phone)
+        if adm:
+            raise HTTPException(409, admin_number_message(adm, "be a group Treasurer"))
     known = _kind_of_phone(db, body.treasurer_phone)
     if kind == "business":
         if not (known and known[0] == "business"):

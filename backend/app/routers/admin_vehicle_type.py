@@ -45,6 +45,8 @@ def change_vehicle_type(rider_id: RowId, body: ChangeIn, db: Session = Depends(g
         raise HTTPException(404, "Rider not found.")
     if db.query(BusinessUser.id).filter(BusinessUser.rider_id == rider.id).first():
         raise HTTPException(409, "A Smart Bizna business user has no vehicle type.")
+    if getattr(rider, "chama_only", False):                # SMART BIZNA FIX: a Smart Chama member owns no vehicle, so there is nothing to change
+        raise HTTPException(409, "A Smart Chama member has no vehicle type.")
     if rider.vehicle_type == body.vehicle_type:
         raise HTTPException(409, f"This person is already recorded as a {'car driver' if body.vehicle_type == 'car' else 'motorcycle rider'}.")
     new_kind = GK.kind_of(body.vehicle_type)

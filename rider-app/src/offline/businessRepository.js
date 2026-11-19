@@ -10,6 +10,7 @@ import { addToSyncQueue, loadSyncQueue } from './syncQueue';
 import { getLocalRiderId, getLocalRiderStatus } from './db';
 import { createBusinessStore, BusinessRuleError, VOID_REASONS } from './businessStore';
 import { createBusinessRegistry } from './businessRegistry';
+import { profileFromStatus } from '../auth/businessStatus';      // SMART BIZNA FIX
 
 export const BUSINESS_QUEUE_TYPES = ['sale_service_entry', 'purchase_entry', 'expense_entry', 'record_correction', 'record_void',
   'business_statement_request', 'business_lipa_payment', 'supplier_lipa_payment'];
@@ -71,14 +72,26 @@ export async function ensureBusinessProfile() {
     if (have && have.business_id) return have;
   }
   const st = await getLocalRiderStatus();
-  if (!st || st.user_type !== 'business' || !st.business_id) return null;
-  const profile = {
-    business_user_id: st.business_user_id || st.rider_id, role: st.role || 'SALES_PERSON', full_name: st.full_name, business_id: st.business_id,
-    business_name: st.business_name, business_type_code: st.business_type_code || null, business_type_name: st.business_type_name || null, active: true, can_see_purchases: false, can_see_expenses: false,
-  };
+  if (st && Array.isArray(st.business_profiles) && st.business_profiles.length) {          // SMART BIZNA FIX: what the server said at set-up / login, permissions included
+    await registry.saveMine(st.business_profiles);
+    await registry.resolveActive();
+    return (await registry.activeStore()).getProfile();
+  }
+  const profile = profileFromStatus(st);     // SMART BIZNA FIX: never a guess. It used to say "Sales/Service Person, nothing enabled" for anyone whose role was not saved
+  if (!profile) return null;
   await registry.addBusiness(profile);
   await registry.resolveActive();
   return (await registry.activeStore()).getProfile();
+}
+
+/** SMART BIZNA FIX: save the businesses the server sent with a login, so the Home opens with the Administrator's real role and tile permissions at once. */
+export async function seedBusinesses(profiles) {
+  const list = (Array.isArray(profiles) ? profiles : []).filter((p) => p && p.business_id);
+  if (!list.length) return false;
+  await ensureMigrated();
+  await registry.saveMine(list);
+  await registry.resolveActive();
+  return true;
 }
 
 export { BusinessRuleError, VOID_REASONS };

@@ -13,6 +13,7 @@ from app.models.bike_profile import BikeProfile
 from app.models.pin_recovery_request import PinRecoveryRequest
 from app.schemas.onboarding import PinCreateRequest, PinLoginRequest, PinRecoveryConfirmRequest
 from app.services.pin_service import create_pin, verify_pin_login, reset_pin_via_recovery
+from app.services import login_service      # SMART BIZNA FIX
 
 router = APIRouter(prefix="/onboarding", tags=["sb-04"])
 
@@ -68,7 +69,9 @@ def get_rider_details(rider_id: str, db: Session = Depends(get_db)):
                 "full_name": rider.full_name,
                 "registration_status": rider.registration_status,
                 "onboarding_step": rider.onboarding_step or "createPin",
-                "vehicle_type": rider.vehicle_type            # SMART CABZ
+                "vehicle_type": login_service._vehicle_for(db, rider),     # SMART CABZ; SMART BIZNA FIX: a business user and a Smart Chama member are n/a
+                "user_type": login_service.user_type_of(db, rider),          # SMART BIZNA FIX: lets the phone keep (or repair) its saved user type
+                "chama_only": bool(getattr(rider, "chama_only", False))      # SMART CHAMA
             },
             "bike_profile": {
                 "id": str(bike.id) if bike else None,
@@ -105,7 +108,8 @@ def session_refresh(rider: Rider = Depends(get_current_rider), token: dict = Dep
         if not started["ok"]:
             raise HTTPException(status_code=401, detail=session_service.error_for("replaced"))
         sid = started["session"].id
-    return {"ok": True, "token": create_rider_token(str(rider.id), rider.mobile_number, sid), "vehicle_type": rider.vehicle_type}      # SMART CABZ: a changed type reaches the phone here
+    return {"ok": True, "token": create_rider_token(str(rider.id), rider.mobile_number, sid), "vehicle_type": login_service._vehicle_for(db, rider),
+            "user_type": login_service.user_type_of(db, rider), "businesses": login_service.business_profiles_of(db, rider)}      # SMART CABZ: a changed type reaches the phone here; SMART BIZNA FIX: so does a business user's profile
 
 # BR-SB04-007: recovery ALWAYS requires manual Super Admin verification against the registered number —
 # same Rider Account Support queue used for mobile-number verification cases.

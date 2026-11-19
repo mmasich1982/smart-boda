@@ -20,7 +20,7 @@ from app.services import mgr_engine as MGR
 from app.services import slot_pool_service as POOL
 from app.services import group_kinds as GK                      # SMART CABZ: Group Members Type rules
 from app.services.business_service import find_business_user
-from app.services.individual_rider_service import find_preregistration
+from app.services.individual_rider_service import find_preregistration, find_admin_by_number, admin_number_message      # SMART BIZNA FIX
 from app.models.business import BusinessUser
 from app.services.group_roles import treasurer_group, treasurer_groups, same_phone
 import os, re
@@ -169,6 +169,9 @@ def add_member(body: MemberIn, group_id: Optional[RowId] = Query(None), db: Sess
     if not cfg:
         raise HTTPException(409, "Set up your Chama first (choose the Chama type).")
     key = phone_key(body.phone)                                          # the rider's mobile number is THE key
+    adm = find_admin_by_number(db, body.phone)                           # SMART BIZNA FIX: an Administrator's number is never a group member's
+    if adm:
+        raise HTTPException(409, admin_number_message(adm, "be added to a group"))
     # THE HARD LIMIT, counted on the pool. A bike that already holds a slot in the pair needs no new slot.
     if not POOL.has_slot(db, g, key) and _used(db, g) >= POOL.pool_allowance(db, g):
         raise HTTPException(409, "Member limit reached. Request more slots to add members.")
@@ -205,12 +208,12 @@ def add_member(body: MemberIn, group_id: Optional[RowId] = Query(None), db: Sess
 
     linked = find_rider_id_by_mobile(db, body.phone)                     # mobile-number match
     # SMART CABZ: WHO may join this kind of group. An existing number is what it already is (a rider, a driver or a business user);
-    # a brand-new number becomes what the group type says (or, in a Mixed group, what the Treasurer chose).
+    # a brand-new number becomes what the group type says (in a Mixed group: a Smart Chama member).
     existing = None
     if linked:
         lr = db.get(Rider, linked)
         is_biz = db.query(BusinessUser.id).filter(BusinessUser.rider_id == linked).first() is not None
-        existing = GK.kind_of(lr.vehicle_type if lr else None, is_biz)
+        existing = GK.kind_of(lr.vehicle_type if lr else None, is_biz, bool(lr and getattr(lr, "chama_only", False)))
     elif find_business_user(db, body.phone):
         existing = "business"                                            # registered by the Administrator, not set up yet
     else:
@@ -261,6 +264,10 @@ def edit_member(member_id: RowId, body: MemberEditIn, group_id: Optional[RowId] 
     m = db.query(GroupMember).filter_by(id=member_id, group_id=g.id, status="active").first()
     if not m: raise HTTPException(404, "That member is not in this group.")
     key = phone_key(body.phone)
+    if key != m.phone_key:                                               # SMART BIZNA FIX: changing a member's number to an Administrator's is refused too
+        adm = find_admin_by_number(db, body.phone)
+        if adm:
+            raise HTTPException(409, admin_number_message(adm, "be added to a group"))
     if db.query(GroupMember.id).filter(GroupMember.group_id == g.id, GroupMember.phone_key == key, GroupMember.status == "active",
                                        GroupMember.id != m.id).first():
         raise HTTPException(409, "That phone number belongs to another member.")

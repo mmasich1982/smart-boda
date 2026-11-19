@@ -5,7 +5,7 @@
 //   * the route guard: an Owner-only, Purchases or Expenses screen can never be opened by tile, link or saved route without permission
 // The server enforces the same rules with 403 (backend/app/routers/business_ops.py); this is the phone's half.
 // ADMIN APP: 'admin' is chosen only when the saved status says user_type === 'admin' (set by Setup My Profile / the admin sign-in). Nothing else changes.
-export const homeKindFor = (status) => (status && status.user_type === 'admin' ? 'admin' : status && status.user_type === 'business' ? 'business' : 'rider');
+export const homeKindFor = (status) => (status && status.user_type === 'admin' ? 'admin' : status && status.user_type === 'chama' ? 'chama' : status && (status.user_type === 'business' || (!status.user_type && status.business_id)) ? 'business' : 'rider');      // SMART BIZNA FIX: a status that lost user_type but still names a business is a business user
 
 export const OWNER_ROUTES = ['DailyTradeSummary', 'YesterdayNetProfit', 'BusinessFinancialPerformance', 'BusinessFinancialHistory', 'BusinessTransactions', 'StatementSetup', 'StatementPreview',
   'StatementList'];

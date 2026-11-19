@@ -11,6 +11,7 @@ import { wipeLocalUserData, pendingUploadCount } from './localIdentity';
 import { clearRevoked } from './sessionFlags';
 import { normalizeFuelType } from './restoreMapping';
 import { setAudienceFromStatus } from '../vehicle/vehicleStore';      // SMART CABZ
+import { seedBusinesses } from '../offline/businessRepository';      // SMART BIZNA FIX
 
 export async function completeLogin(res, pin) {
   const status = (await getLocalRiderStatus().catch(() => null)) || null;
@@ -35,7 +36,12 @@ export async function completeLogin(res, pin) {
     if (p.fuel_type_code) { try { await saveLocalBikeProfile({ fuel_type_code: normalizeFuelType(p.fuel_type_code) || p.fuel_type_code }); } catch { /* ignore */ } }
   }
   const fresh = statusFromLogin(res);
-  if (same) await saveLocalRiderStatus({ ...status, vehicle_type: fresh.vehicle_type, user_type: fresh.user_type });     // SMART CABZ: the type may have been changed by an Administrator
+  if (same) {
+    const { rider_id: _kept, ...rest } = status;       // rider_id is merged in by getLocalRiderStatus; it is saved under its own key
+    const { rider_id: _r, ...freshFields } = fresh;
+    await saveLocalRiderStatus({ ...rest, ...freshFields, rider_id: status.rider_id });     // SMART CABZ: the type may have been changed by an Administrator; SMART BIZNA FIX: so may a business user's role and tile permissions
+  }
+  if (res.user_type === 'business') { try { await seedBusinesses(res.businesses); } catch { /* the first sync fills them in */ } }      // SMART BIZNA FIX: Home opens with the Administrator's real settings
   setAudienceFromStatus(fresh);
   await savePinLocally(res.rider_id, pin).catch(() => {});        // so the next Logout / Login on this phone needs only the PIN, offline too
   await markSessionActive();

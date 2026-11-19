@@ -62,8 +62,8 @@ export function ActiveRidersScreen({ navigation }) {
         <Card key={r.id}>
           <Text style={{ fontSize: 15, fontWeight: '800', color: C.ink }}>{r.full_name || '—'}</Text>
           <PhoneText value={r.mobile_number} />
-          <Hint>{r.kind === 'business' ? '🏪 Business user' : r.vehicle_type === 'car' ? '🚗 Car driver' : '🏍️ Motorcycle rider'} · Joined {when(r.created_at)}</Hint>
-          {admin.role === 'super_admin' && r.kind !== 'business' ? (
+          <Hint>{r.kind === 'business' ? '🏪 Business user' : r.kind === 'chama' ? '🤝 Chama member' : r.vehicle_type === 'car' ? '🚗 Car driver' : '🏍️ Motorcycle rider'} · Joined {when(r.created_at)}</Hint>
+          {admin.role === 'super_admin' && r.kind !== 'business' && r.kind !== 'chama' ? (
             changing === r.id ? <VehicleChange row={r} onCancel={() => setChanging(null)} onDone={(m) => { ok(m); setChanging(null); list.refresh(); }} />
               : <Btn label="Change vehicle type" kind="ghost" small onPress={() => setChanging(r.id)} />
           ) : null}

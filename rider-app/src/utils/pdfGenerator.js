@@ -564,3 +564,27 @@ function generateGroupStatementHTML(st) {
 export function isPDFLibraryLoaded() {
   return true; // expo-print is always available
 }
+// ───────── SMART CHAMA: a member's own statement (Summary or Detailed) ─────────
+// st = { member, phone, group, period_label, detailed, totals:{paidIn,repaid,received,owing}, lines:[{at,label,amount,reference}], reference }
+export async function generateMemberStatementPDF(st) {
+  if (!st || !st.totals) throw new Error('No statement data provided');
+  await Print.printAsync({ html: generateMemberStatementHTML(st) });
+}
+
+function generateMemberStatementHTML(st) {
+  const T = st.totals || {};
+  const lines = st.detailed ? (st.lines || []).map((l, i) => `<tr class="${i % 2 ? 'odd' : 'even'}"><td>${esc(new Date(l.at).toLocaleDateString())}</td><td>${esc(l.label)}<div class="sub">${esc(l.reference)}</div></td><td class="num">${kes(l.amount)}</td></tr>`).join('') : '';
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8" /><title>${brandName()} My Statement</title>
+    <style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:40px 20px;color:#333;font-size:12px}
+    .container{max-width:700px;margin:0 auto}h1{font-size:20px;margin-bottom:16px}.metadata{color:#666;font-size:11px;line-height:1.8;margin-bottom:20px}
+    table{width:100%;border-collapse:collapse;margin-top:8px}th{padding:10px 8px;text-align:left;border:1px solid #ddd;background:#f0f0f0;font-size:11px}td{padding:8px;border:1px solid #eee;font-size:11px}
+    .num{text-align:right;font-weight:600}.sub{font-size:10px;color:#888}.odd{background:#fafafa}.verification{margin-top:20px;padding-top:14px;border-top:1px solid #eee;font-size:10px;color:#999}
+    .footer{margin-top:30px;font-size:9px;color:#aaa;text-align:center}</style></head><body><div class="container">
+    <h1>${brandName()} Digital — My ${st.detailed ? 'Detailed' : 'Summary'} Statement</h1>
+    <div class="metadata"><div>👤 ${esc(st.member)} · ${esc(st.phone)}</div><div>🏷️ ${esc(st.group)}</div><div>📅 ${esc(st.period_label)}</div><div>🕐 Generated: ${new Date().toLocaleString()}</div></div>
+    <table><tbody><tr><td>Paid in</td><td class="num">${kes(T.paidIn)}</td></tr><tr><td>Loan repaid</td><td class="num">${kes(T.repaid)}</td></tr>
+    <tr><td>Received</td><td class="num">${kes(T.received)}</td></tr>${T.owing === null || T.owing === undefined ? '' : `<tr><td>Balance owing</td><td class="num">${kes(T.owing)}</td></tr>`}</tbody></table>
+    ${st.detailed ? `<table><thead><tr><th>Date</th><th>Details</th><th style="text-align:right">Amount</th></tr></thead><tbody>${lines || '<tr><td colspan="3">No payments in this period.</td></tr>'}</tbody></table>` : ''}
+    <div class="verification"><strong>Statement reference:</strong> ${esc(st.reference)}</div>
+    <div class="footer"><p>This is an automatically generated statement.</p><p>For inquiries or support, contact ${brandName()} customer service.</p></div></div></body></html>`;
+}

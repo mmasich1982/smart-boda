@@ -14,6 +14,7 @@ from app.models.bike_profile import BikeProfile
 from app.models.business import BusinessUser
 from app.services.admin_app_service import mobile_key
 from app.services.pin_service import MAX_PIN_ATTEMPTS, PIN_LOCK_MINUTES, hash_pin
+from app.services.vehicle_words import vehicle_type_for
 
 # One bcrypt check is spent even for a number we do not know, so the answer takes the same time and reveals nothing.
 _DUMMY_HASH = hash_pin("0000")
@@ -68,13 +69,32 @@ def check_rider_pin(db: Session, rider: Rider, pin) -> dict:
 
 
 def user_type_of(db: Session, rider: Rider) -> str:
-    """'business' when this rider row is a Smart Bizna user (a business_user points at it), else 'rider'."""
-    return "business" if db.query(BusinessUser.id).filter(BusinessUser.rider_id == rider.id).first() else "rider"
+    """'business' when this rider row is a Smart Bizna user (a business_user points at it); 'chama' for a Smart Chama member (SMART CHAMA); else 'rider'."""
+    if db.query(BusinessUser.id).filter(BusinessUser.rider_id == rider.id).first():
+        return "business"
+    return "chama" if getattr(rider, "chama_only", False) else "rider"
+
+
+def _vehicle_for(db: Session, rider: Rider) -> str:
+    """SMART BIZNA FIX: the vehicle type to report: 'n/a' for a business user or a Smart Chama member, whatever an older row still holds."""
+    ut = user_type_of(db, rider)
+    return vehicle_type_for(rider.vehicle_type, ut == "business", ut == "chama")
 
 
 def profile_of(db: Session, rider: Rider) -> dict:
     """Just enough to open the app on a new phone; the records themselves come from the restore step."""
     bike = db.query(BikeProfile).filter(BikeProfile.rider_id == rider.id).order_by(BikeProfile.submitted_at.desc()).first()
     return {"full_name": rider.full_name, "language_code": rider.language_code, "registration_status": rider.registration_status,
-            "fuel_type_code": bike.fuel_type_code if bike else None, "mobile_number": rider.mobile_number,
-            "vehicle_type": rider.vehicle_type}                           # SMART CABZ: a new phone opens as Smart Boda or Smart Cabz straight away
+            "fuel_type_code": bike.fuel_type_code if bike else None, "mobile_number": rider.mobile_number, "chama_only": bool(getattr(rider, "chama_only", False)),
+            "vehicle_type": _vehicle_for(db, rider)}      # SMART CABZ: Smart Boda or Smart Cabz; SMART BIZNA FIX: a business user and a Smart Chama member are n/a, whatever the column holds
+
+
+def business_profiles_of(db: Session, rider: Rider) -> list:
+    """SMART BIZNA FIX: every business this login holds, each with the person's role and their two tile permissions (exactly what GET /business/my-businesses
+    answers). Sent with setup, login and session renewal so the phone opens the RIGHT Smart Bizna screen at once instead of guessing until its first sync."""
+    from app.routers import business_ops as bo          # imported here: business_ops is a router module
+    try:
+        return [bo._profile(db, bo.Ctx(bu, biz)) for bu, biz in bo._memberships(db, rider)]
+    except Exception:                                  # never block a login for this: the phone still gets the list at its first sync
+        db.rollback()
+        return []

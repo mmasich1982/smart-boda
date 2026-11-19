@@ -48,9 +48,9 @@ export default function ActiveRidersList() {
                 <tr key={r.id}>
                   <td>{r.full_name}</td>
                   <td>{r.mobile_number}</td>
-                  <td>{r.kind === 'business' ? '🏪 Business user' : r.vehicle_type === 'car' ? '🚗 Car driver' : '🏍️ Motorcycle rider'}</td>
+                  <td>{r.kind === 'business' ? '🏪 Business user' : r.kind === 'chama' ? '🤝 Chama member' : r.vehicle_type === 'car' ? '🚗 Car driver' : '🏍️ Motorcycle rider'}</td>
                   <td>{new Date(r.created_at).toLocaleDateString()}</td>
-                  <td>{currentAdminRole() === 'super_admin' && r.kind !== 'business'
+                  <td>{currentAdminRole() === 'super_admin' && r.kind !== 'business' && r.kind !== 'chama'
                     ? <button className="secondary" onClick={() => change(r)}>Change vehicle type</button> : '—'}</td>
                 </tr>
               ))}

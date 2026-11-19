@@ -20,7 +20,7 @@ const EMPTY = { group_name: '', group_type: '', members_type: '', treasurer_kind
   approved_slots: 10, treasurer_name: '', treasurer_phone: '',
  };   // SMART CABZ: Group Members Type is chosen first and has no default
 const MEMBERS_LABEL = { riders: 'Riders', business: 'Business', drivers: 'Drivers', mixed: 'Mixed' };
-const KIND_LABEL = { rider: 'Motorcycle rider', driver: 'Car driver', business: 'Business user' };
+const KIND_LABEL = { chama: 'Chama member', rider: 'Motorcycle rider', driver: 'Car driver', business: 'Business user' };
 
 function GroupFinance({ id }) {
   const [f, setF] = useState(null);
@@ -191,7 +191,7 @@ export default function ManageGroupsAndMembers() {
         <div className="card" style={{ marginTop: 12 }}>
           <h3>{editId ? 'Edit Group' : 'Create New Group'}</h3>
           <label style={{ display: 'block', margin: '8px 0' }}>Group Members Type *
-            <select value={form.members_type || ''} onChange={(e) => setForm({ ...form, members_type: e.target.value, treasurer_kind: '' })} style={{ display: 'block', padding: 8 }}>
+            <select value={form.members_type || ''} onChange={(e) => setForm({ ...form, members_type: e.target.value, treasurer_kind: e.target.value === 'mixed' ? 'chama' : '' })} style={{ display: 'block', padding: 8 }}>
               <option value="">Select…</option>
               <option value="riders">Riders (motorcycle riders)</option><option value="business">Business (Smart Bizna business users)</option>
               <option value="drivers">Drivers (car drivers)</option><option value="mixed">Mixed (riders, drivers and business users)</option>
@@ -215,7 +215,7 @@ export default function ManageGroupsAndMembers() {
           {form.members_type === 'mixed' && (
             <label style={{ display: 'block', margin: '8px 0' }}>Treasurer type *
               <select value={form.treasurer_kind || ''} onChange={(e) => setForm({ ...form, treasurer_kind: e.target.value })} style={{ display: 'block', padding: 8 }}>
-                <option value="">Select…</option><option value="rider">Motorcycle rider</option><option value="driver">Car driver</option><option value="business">Business user</option>
+                <option value="">Select…</option><option value="chama">Chama member</option><option value="rider">Motorcycle rider</option><option value="driver">Car driver</option><option value="business">Business user</option>
               </select>
               {errors.treasurer_kind && <span role="alert" style={{ color: 'red' }}>{errors.treasurer_kind}</span>}
             </label>)}

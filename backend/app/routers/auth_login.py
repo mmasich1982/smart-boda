@@ -51,7 +51,8 @@ def login(p: LoginIn, db: Session = Depends(get_db)):
             return _elsewhere(started["other"])
         s = started["session"]
         return {"ok": True, "token": create_rider_token(str(rider.id), rider.mobile_number, s.id), "user_type": login_service.user_type_of(db, rider),
-                "rider_id": str(rider.id), "mobile_number": rider.mobile_number, "profile": login_service.profile_of(db, rider), "replaced_other": started["replaced"]}
+                "rider_id": str(rider.id), "mobile_number": rider.mobile_number, "profile": login_service.profile_of(db, rider), "replaced_other": started["replaced"],
+                "businesses": login_service.business_profiles_of(db, rider)}      # SMART BIZNA FIX: a business user's role and tile permissions arrive with the login
 
     admin = admin_app_service.find_admin_by_mobile(db, p.mobile_number)          # an Administrator may sign in here too
     if admin is not None and admin.app_access_enabled and admin.app_pin_hash:

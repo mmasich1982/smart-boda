@@ -19,9 +19,9 @@ def audience_of_rider(db: Session, rider_id) -> str:
     if hit and hit[0] > time.monotonic():
         return hit[1]
     try:
-        r = db.query(Rider.vehicle_type).filter(Rider.id == rider_id).first()
+        r = db.query(Rider.vehicle_type, Rider.chama_only).filter(Rider.id == rider_id).first()
         is_biz = db.query(BusinessUser.id).filter(BusinessUser.rider_id == rider_id).first() is not None
-        a = audience_for(r[0] if r else None, is_biz)
+        a = audience_for(r[0] if r else None, is_biz, bool(r[1]) if r else False)
     except Exception:             # a lookup problem must never block a message: fall back to the unchanged text
         db.rollback()
         a = RIDER

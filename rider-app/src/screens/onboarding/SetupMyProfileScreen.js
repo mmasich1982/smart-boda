@@ -112,7 +112,7 @@ export default function SetupMyProfileScreen({ navigation }) {
     }
     // A rider chooses the fuel type. A business user (Owner or Sales/Service Person) chooses NOTHING: the Business Type was set by the Administrator
     // at pre-registration, so they only confirm the number, accept the terms and finish.
-    if (userType !== 'business' && userType !== 'admin') {      // ADMIN APP: an Administrator chooses nothing either
+    if (userType !== 'business' && userType !== 'admin' && userType !== 'chama') {      // SMART CHAMA + ADMIN APP: an Administrator chooses nothing either
       if (!fuelType) { setTypeError(t('setup.fuel_required') || vt('Please select the fuel type of your motorcycle.')); ok = false; } else setTypeError(null);
     } else setTypeError(null);
     if (!consent) { setConsentError(t('profile.consent_required')); ok = false; } else setConsentError(null);
@@ -144,7 +144,7 @@ export default function SetupMyProfileScreen({ navigation }) {
       await saveLocalRiderStatus(localStatusFrom(res.data, fullName));
       await saveLocalRiderId(riderId);
       console.log('[SetupMyProfile] Saved rider_id:', riderId);
-      if (res.data.user_type !== 'business') {
+      if (res.data.user_type !== 'business' && res.data.user_type !== 'chama') {   // SMART CHAMA: no bike profile
         const record = { fuel_type_code: fuelType, mobile_number: res.data.mobile_number, submitted_at: submittedAt };
         await saveLocalBikeProfile(record);
         await enqueue('bike_profile', record);

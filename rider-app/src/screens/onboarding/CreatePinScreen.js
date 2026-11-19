@@ -23,6 +23,7 @@ import { updateRiderOnboardingDate } from '../../offline/tripsRepository';
 import { savePinLocally } from '../../offline/pinUtility';
 import { ensureRiderSession } from '../../offline/sessionToken';
 import { refreshMembership } from '../../offline/chamaSyncService';
+import { keepStatus } from '../../auth/businessStatus';      // SMART BIZNA FIX
 
 export default function CreatePinScreen({ route, navigation }) {
   const { riderId, adminId, userType, mobile: adminMobile } = route.params || {};
@@ -119,11 +120,10 @@ export default function CreatePinScreen({ route, navigation }) {
         }
         
         // ✅ FIXED: Save rider_id to both places for compatibility
-        await saveLocalRiderStatus({
-          rider_id: riderIdFromBackend,
-          registration_status: 'active',
-          onboarding_step: 'createPin'
-        });
+        // SMART BIZNA FIX: ADD to the status saved at Setup My Profile; do not replace it. This used to save only these three fields, which threw away
+        // user_type / role / business_id (and the Smart Chama type), so a Business Owner or Sales/Service Person landed on the Smart Boda Home.
+        const savedBefore = (await getLocalRiderStatus().catch(() => null)) || {};
+        await saveLocalRiderStatus(keepStatus(savedBefore, { ...data.rider, rider_id: riderIdFromBackend }));
         
         // ✅ FIXED: Also save to separate rider_id key for RiderContext to find
         await saveLocalRiderId(riderIdFromBackend);

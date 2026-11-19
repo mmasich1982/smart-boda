@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.models.business import Business, BusinessUser, AWAITING, REGISTERED, ACTIVATED, INACTIVE, OWNER
 from app.services.group_roles import phone_key
+from app.services.vehicle_words import NOT_APPLICABLE
 
 
 def find_business_user(db: Session, phone):
@@ -49,6 +50,7 @@ def mark_business_registered(db: Session, bu: BusinessUser, b: Business, rider):
     """Rides the caller's transaction (no commit): the person is now registered and the business is activated. The Business Type
     was chosen by the Administrator at pre-registration; nobody on the user side chooses it."""
     bu.status, bu.rider_id = REGISTERED, rider.id
+    rider.vehicle_type = NOT_APPLICABLE                   # SMART BIZNA FIX: a business user owns no vehicle (the column used to default to 'motorcycle')
     bu.registered_at = bu.registered_at or datetime.now(timezone.utc)
     b.status = ACTIVATED
     # MULTIPLE BUSINESSES: one set-up completes EVERY business this Owner was registered for (same phone number, same account)

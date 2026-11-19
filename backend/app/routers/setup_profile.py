@@ -31,6 +31,7 @@ from app.services.group_roles import phone_key, same_phone
 from app.services.individual_rider_service import find_preregistration, mark_registered
 from app.services import admin_app_service            # ADMIN APP: an Administrator may also set up in the app
 from app.services import group_kinds as GK, vehicle_words      # SMART CABZ: vehicle type and the words that follow it
+from app.services import login_service                          # SMART BIZNA FIX: the business profiles sent back with the set-up
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/onboarding", tags=["Setup My Profile"])
@@ -74,6 +75,20 @@ def vehicle_for(db: Session, mobile: str, source) -> str:
     return "motorcycle"
 
 
+def is_chama_registration(db: Session, mobile: str, source) -> bool:
+    """SMART CHAMA: true when the Treasurer (or the Administrator, for a Treasurer) registered this number as a Chama member: a person who is in the
+    app only for a group. Never true for a business user, and never for a rider or driver who was added to a Mixed group."""
+    k = phone_key(mobile)
+    if source == "member":
+        m = (db.query(GroupMember).filter(GroupMember.phone_key == k, GroupMember.status == "active").order_by(GroupMember.created_at).first())
+        return bool(m and m.member_kind == "chama")
+    if source == "treasurer":
+        for g in db.query(BodaGroup).filter(BodaGroup.status == "active").order_by(BodaGroup.created_at).all():
+            if same_phone(g.treasurer_phone, mobile):
+                return g.treasurer_kind == "chama"
+    return False
+
+
 def _clean(mobile):
     ok, normalized, err = validate_mobile_number(mobile)
     if not ok:
@@ -107,13 +122,14 @@ def profile_lookup(mobile_number: str, db: Session = Depends(get_db)):
     biz = business_registration(db, normalized)                 # SMART CABZ: a business user stays a business user even when a Treasurer has added them to a group
     reg = None if biz else find_registration(db, normalized)
     if reg:
-        return {"found": True, "full_name": reg[0], "mobile_number": normalized, "source": reg[4], "user_type": "rider",
+        chama = is_chama_registration(db, normalized, reg[4])
+        return {"found": True, "full_name": reg[0], "mobile_number": normalized, "source": reg[4], "user_type": "chama" if chama else "rider",
                 "vehicle_type": vehicle_for(db, normalized, reg[4]),
                 "role": None, "business_name": None, "business_type_code": None, "business_type_name": None}
     if not biz:
         raise HTTPException(404, NOT_FOUND)
     bu, b = biz
-    return {"found": True, "full_name": bu.full_name, "mobile_number": normalized, "source": "business", "user_type": "business",
+    return {"found": True, "full_name": bu.full_name, "mobile_number": normalized, "source": "business", "user_type": "business", "vehicle_type": vehicle_words.NOT_APPLICABLE,
             "role": bu.role, "business_name": b.business_name, "business_type_code": b.business_type_code,
             "business_type_name": _business_type_name(db, b.business_type_code)}
 
@@ -129,7 +145,10 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
     biz = business_registration(db, normalized)                 # SMART CABZ: business first (see profile_lookup)
     reg = None if biz else find_registration(db, normalized)
     vehicle = vehicle_for(db, normalized, reg[4]) if reg else "motorcycle"
-    if not biz and payload.business_type_code is None and not db.query(FuelTypeMaster).filter_by(code=payload.fuel_type_code, is_active=True).first():
+    chama = bool(reg) and is_chama_registration(db, normalized, reg[4])          # SMART CHAMA: chooses nothing (no fuel type, no business type)
+    if chama and (payload.fuel_type_code or payload.business_type_code):
+        raise HTTPException(422, "A Smart Chama member does not choose a fuel type or a business type.")
+    if not biz and not chama and payload.business_type_code is None and not db.query(FuelTypeMaster).filter_by(code=payload.fuel_type_code, is_active=True).first():
         raise HTTPException(422, vehicle_words.convert("Please choose the fuel type of your motorcycle.", "driver" if vehicle == "car" else "rider"))      # a rider's request: checked first, as always
     if not reg and not biz:
         raise HTTPException(404, NOT_FOUND)
@@ -157,6 +176,11 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
         rider.full_name = name
         if not biz:
             rider.vehicle_type = vehicle                       # SMART CABZ
+        else:
+            rider.vehicle_type = vehicle_words.NOT_APPLICABLE  # SMART BIZNA FIX: a business user owns no vehicle (it used to fall to the column default, 'motorcycle')
+        if chama:
+            rider.chama_only = True                            # SMART CHAMA
+            rider.vehicle_type = vehicle_words.NOT_APPLICABLE  # SMART BIZNA FIX: a Smart Chama member owns no vehicle either
         rider.county_id, rider.sub_county_id, rider.ward_id = county_id, sub_county_id, ward_id
         rider.consent_accepted_at, rider.consent_content_version = now, payload.consent_content_version
         rider.registration_status, rider.onboarding_step, rider.updated_at = "verified_incomplete", "createPin", now
@@ -165,6 +189,8 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
         if biz:
             mark_business_registered(db, biz[0], biz[1], rider)   # no bike
             link_members_for_rider(db, rider)                     # SMART CABZ: a business user a Treasurer added to a group is linked to it now
+        elif chama:
+            link_members_for_rider(db, rider)                  # SMART CHAMA: no bike; the person is linked to the group that registered them
         else:
             bp = db.query(BikeProfile).filter_by(rider_id=rider.id, is_active=True).first()
             if bp: bp.fuel_type_code = payload.fuel_type_code
@@ -184,8 +210,9 @@ def setup_profile(payload: SetupProfileRequest, db: Session = Depends(get_db)):
         raise HTTPException(500, "We could not save your profile. Please try again.")
     return {"status": "confirmed", "rider_id": str(rider.id), "full_name": rider.full_name,
             "mobile_number": rider.mobile_number, "fuel_type_code": None if biz else payload.fuel_type_code, "vehicle_type": rider.vehicle_type,
+            "businesses": login_service.business_profiles_of(db, rider) if biz else [],      # SMART BIZNA FIX: role and tile permissions, so the first Home is already the right one
             "county_id": county_id, "sub_county_id": sub_county_id, "ward_id": ward_id, "source": _src, "next_step": "createPin",
-            "user_type": "business" if biz else "rider", "role": biz[0].role if biz else None,
+            "user_type": "business" if biz else "chama" if chama else "rider", "role": biz[0].role if biz else None,
             "business_id": str(biz[1].id) if biz else None, "business_name": biz[1].business_name if biz else None,
             "business_user_id": str(biz[0].id) if biz else None,    # lets a brand-new phone record offline before the first /business/me
             "business_type_code": biz[1].business_type_code if biz else None,

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.models.boda_group import BodaGroup, GroupMember
+from app.models.admin_user import AdminUser           # SMART BIZNA FIX: an Administrator's number is a number in use too
 from app.models.business import Business, BusinessUser
 from app.models.individual_rider import IndividualRiderPreRegistration as Pre, AWAITING, REGISTERED
 from app.models.pin_recovery_request import PinRecoveryRequest
@@ -27,9 +28,22 @@ def find_preregistration(db: Session, phone):
     return db.query(Pre).filter(Pre.phone_key == k).first()
 
 
+def find_admin_by_number(db: Session, phone):
+    """SMART BIZNA FIX: the Administrator (admin_user) who holds this number, or None. Matched on the last nine digits, like every other number check."""
+    k = phone_key(phone)
+    if len(k) != 9:
+        return None
+    return db.query(AdminUser).filter(AdminUser.mobile_number.isnot(None), _digits_key(AdminUser.mobile_number) == k).first()
+
+
+def admin_number_message(adm, what: str) -> str:
+    """The sentence shown when an Administrator's number is used for someone else. `what`: 'be added to a group', 'be a group Treasurer', ..."""
+    return f"This number belongs to an Administrator ({(adm.name or '').strip() or 'no name'}), so it cannot {what}."
+
+
 def find_phone_conflict(db: Session, phone, allow_owner_reuse: bool = False):
     """None when the number exists NOWHERE in Smart Boda; otherwise {"where": code, "message": text for the Administrator}.
-    Looks at: the rider table, earlier pre-registrations, group members (ANY status), group Treasurer phones (ANY status),
+    Looks at: the rider table, the Administrators (admin_user), earlier pre-registrations, group members (ANY status), group Treasurer phones (ANY status),
     business users (Smart Bizna, ANY status) and PIN-recovery requests. A rider's customers (Lipa Later) are third parties, not riders, so they are not checked."""
     k = phone_key(phone)
     if len(k) != 9:
@@ -44,6 +58,9 @@ def find_phone_conflict(db: Session, phone, allow_owner_reuse: bool = False):
     if r:
         name = (r.full_name or "").strip() or "no name yet"
         return {"where": "rider", "message": f"This number already belongs to a rider account ({name}, status: {r.registration_status or 'pending'})."}
+    adm = find_admin_by_number(db, phone)
+    if adm:                                                 # SMART BIZNA FIX: this table was never looked at, so an Administrator's number could be given to a business user or a rider
+        return {"where": "admin_user", "message": f"This number already belongs to an Administrator ({(adm.name or '').strip() or 'no name'})."}
     p = db.query(Pre).filter(Pre.phone_key == k).first()
     if p:
         return {"where": "preregistration", "message": f"This number was already pre-registered as an individual rider ({p.full_name}) and is waiting for the rider to register in the app."}

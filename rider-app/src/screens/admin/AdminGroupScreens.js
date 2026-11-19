@@ -13,7 +13,7 @@ const kes = (n) => `KSh ${Math.round(Number(n || 0)).toLocaleString()}`;
 const TYPE = { mgr: 'Merry-Go-Round', tb: 'Table Banking' };
 const MEMBERS_TABS = [{ key: 'riders', label: 'Riders' }, { key: 'business', label: 'Business' }, { key: 'drivers', label: 'Drivers' }, { key: 'mixed', label: 'Mixed' }];      // SMART CABZ
 const MEMBERS_LABEL = { riders: 'Riders', business: 'Business', drivers: 'Drivers', mixed: 'Mixed' };
-const KIND_TABS = [{ key: 'rider', label: 'Motorcycle rider' }, { key: 'driver', label: 'Car driver' }, { key: 'business', label: 'Business user' }];
+const KIND_TABS = [{ key: 'chama', label: 'Chama member' }, { key: 'rider', label: 'Motorcycle rider' }, { key: 'driver', label: 'Car driver' }, { key: 'business', label: 'Business user' }];
 const EMPTY = { group_name: '', group_type: '', members_type: '', treasurer_kind: '', county_id: null, sub_county_id: null, ward_id: null, stage_name: '', approved_slots: '10', treasurer_name: '', treasurer_phone: '' };
 
 function GroupFinance({ id }) {
@@ -113,7 +113,7 @@ export function ManageGroupsScreen({ navigation }) {
         <Card>
           <Section>{editId ? 'Edit group' : 'Create new group'}</Section>
           <Text style={s.label}>Group Members Type *</Text>
-          <Tabs value={form.members_type} onChange={(k) => setForm({ ...form, members_type: k, treasurer_kind: '' })} tabs={MEMBERS_TABS} />
+          <Tabs value={form.members_type} onChange={(k) => setForm({ ...form, members_type: k, treasurer_kind: k === 'mixed' ? 'chama' : '' })} tabs={MEMBERS_TABS} />
           {errors.members_type ? <Text style={s.err}>{errors.members_type}</Text> : null}
           {form.members_type ? <Hint>{{ riders: 'Motorcycle riders only. The stage name is asked.', business: 'Smart Bizna business users only. Their Treasurer must already be a registered business user.', drivers: 'Car drivers only.', mixed: 'Riders, drivers and business users together.' }[form.members_type]}</Hint> : null}
           <Field label="Group name *" value={form.group_name} maxLength={120} onChangeText={(t) => setForm({ ...form, group_name: t })} error={errors.group_name} />

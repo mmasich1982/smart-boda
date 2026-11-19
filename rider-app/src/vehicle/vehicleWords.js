@@ -7,12 +7,14 @@
 export const RIDER = 'rider';
 export const DRIVER = 'driver';
 export const BUSINESS = 'business';
+export const CHAMA = 'chama';          // SMART CHAMA: brand only, plus riders -> members
 
 /** Which words this saved status reads: business user -> business; car -> driver; everything else (and an Administrator) -> rider. */
 export function audienceFor(status) {
   if (!status) return RIDER;
   if (status.user_type === 'business') return BUSINESS;
   if (status.user_type === 'admin') return RIDER;
+  if (status.user_type === 'chama') return CHAMA;
   return status.vehicle_type === 'car' ? DRIVER : RIDER;
 }
 
@@ -32,11 +34,16 @@ const DRIVER_RULES = [
   word(/\bmotosikeli\b|\bpikipiki\b/gi, 'gari'),
 ];
 const BUSINESS_RULES = [[/Smart Boda/g, () => 'Smart Bizna']];
+const CHAMA_RULES = [
+  [/Smart Boda/g, () => 'Smart Chama'],
+  [/\u{1F3CD}\uFE0F?/gu, () => '\u{1F91D}'],
+  word(/\briders?\b/gi, 'member', 'members'),
+];
 
 /** The text as this kind of user should read it. A non-string, and every rider's text, comes back untouched. */
 export function convert(text, audience) {
   if (typeof text !== 'string' || !text || audience === RIDER) return text;
-  const rules = audience === DRIVER ? DRIVER_RULES : audience === BUSINESS ? BUSINESS_RULES : [];
+  const rules = audience === DRIVER ? DRIVER_RULES : audience === BUSINESS ? BUSINESS_RULES : audience === CHAMA ? CHAMA_RULES : [];
   return rules.reduce((t, [re, fn]) => t.replace(re, fn), text);
 }
 
@@ -47,6 +54,7 @@ export const OVERRIDES = {
     sw: {},
   },
   business: { en: {}, sw: {} },
+  chama: { en: {}, sw: {} },
 };
 
 /** What a translation key shows: the exact wording when there is one, else the converted text. `text` is the value after the variables were filled in. */
@@ -55,7 +63,7 @@ export function textFor(key, text, audience, lang = 'en') {
   return exact || convert(text, audience);
 }
 
-export const BRAND = { [RIDER]: 'Smart Boda', [DRIVER]: 'Smart Cabz', [BUSINESS]: 'Smart Bizna' };
-export const ICON = { [RIDER]: '\u{1F3CD}\uFE0F', [DRIVER]: '\u{1F697}', [BUSINESS]: '\u{1F3EA}' };
+export const BRAND = { [RIDER]: 'Smart Boda', [DRIVER]: 'Smart Cabz', [BUSINESS]: 'Smart Bizna', [CHAMA]: 'Smart Chama' };
+export const ICON = { [RIDER]: '\u{1F3CD}\uFE0F', [DRIVER]: '\u{1F697}', [BUSINESS]: '\u{1F3EA}', [CHAMA]: '\u{1F91D}' };
 export const brandOf = (audience) => BRAND[audience] || BRAND[RIDER];
 export const iconOf = (audience) => ICON[audience] || ICON[RIDER];

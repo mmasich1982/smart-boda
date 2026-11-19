@@ -21,6 +21,7 @@ class Rider(Base):
     pin_locked_until = Column(DateTime(timezone=True))
     onboarding_step = Column(String(30), default="valuePreview")
     registration_status = Column(String(20), default="pending")
+    chama_only = Column(Boolean, nullable=False, default=False, server_default="false")   # SMART CHAMA: in the app only for a group (no bike, no business)
     vehicle_type = Column(String(12), nullable=False, default="motorcycle", server_default="motorcycle")   # SMART CABZ: motorcycle -> Smart Boda, car -> Smart Cabz
     is_treasurer = Column(Boolean, nullable=False, default=False)   # set at Profile Confirmation
     

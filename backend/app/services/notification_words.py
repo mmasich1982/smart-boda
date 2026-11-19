@@ -11,9 +11,9 @@ from app.services.vehicle_words import audience_for, convert, RIDER
 
 def _audience(connection, rider_id) -> str:
     try:
-        row = connection.execute(select(Rider.vehicle_type).where(Rider.id == rider_id)).first()
+        row = connection.execute(select(Rider.vehicle_type, Rider.chama_only).where(Rider.id == rider_id)).first()
         is_biz = connection.execute(select(BusinessUser.id).where(BusinessUser.rider_id == rider_id)).first() is not None
-        return audience_for(row[0] if row else None, is_biz)
+        return audience_for(row[0] if row else None, is_biz, bool(row[1]) if row else False)
     except Exception:                      # a lookup problem never stops a notification: the text stays as written
         return RIDER
 

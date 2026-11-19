@@ -5,16 +5,17 @@
 // ADMIN APP: a third kind of person, an ADMINISTRATOR (admin_user table), sets up with the same screens: number -> name -> terms -> PIN.
 //   An Administrator chooses NOTHING: no fuel type and no business type are shown.
 // The server decides which one a mobile number is (GET /onboarding/profile-lookup); the app never guesses.
+import { businessFields } from '../auth/businessStatus';      // SMART BIZNA FIX
 export const KENYA_MSISDN = /^(\+254|254|0)(7|1)\d{8}$/;
 export const cleanMobile = (v) => (v || '').replace(/[\s-]/g, '');
 
 // 'business' or 'admin' only when the server says so; everything else (including older servers that send no user_type) is a rider.
-export const userTypeFromLookup = (data) => (data && data.user_type === 'business' ? 'business' : data && data.user_type === 'admin' ? 'admin' : 'rider');
+export const userTypeFromLookup = (data) => (data && data.user_type === 'business' ? 'business' : data && data.user_type === 'chama' ? 'chama' : data && data.user_type === 'admin' ? 'admin' : 'rider');
 export const isAdminType = (userType) => userType === 'admin';
 
 // The ONE choice a person must make once their number is found: a rider chooses the fuel type. A business user (Owner or Sales/Service Person)
 // chooses NOTHING: the Business Type was set by the Smart Bizna Administrator at pre-registration, so they only finish the registration.
-export const choiceFor = (userType) => (userType === 'business' || userType === 'admin' ? null : 'fuel_type');
+export const choiceFor = (userType) => (userType === 'business' || userType === 'admin' || userType === 'chama' ? null : 'fuel_type');
 
 // A business user is shown the Business Type the Smart Bizna Administrator chose, READ-ONLY, under their name (they never choose it). The text comes from
 // the server lookup (its display name; the code only as a last resort so the field is never blank); riders have none.
@@ -44,13 +45,13 @@ export const NAME_HINT_DEFAULTS = {
 // Continue stays off until the number is found, the terms are accepted and (riders only) the fuel type is chosen.
 export function canContinue({ lookup, userType, fuelType, consent, saving }) {
   if (saving || lookup !== 'found' || !consent) return false;
-  return userType === 'business' || userType === 'admin' ? true : !!fuelType;
+  return userType === 'business' || userType === 'admin' || userType === 'chama' ? true : !!fuelType;
 }
 
 // The request body for POST /onboarding/setup-profile. A rider sends a fuel type; a business user sends neither a fuel type nor a business type.
 export function buildSetupBody({ mobile, userType, fuelType, language, termsVersion }) {
   const body = { mobile_number: cleanMobile(mobile), consent_accepted: true, consent_content_version: termsVersion, language_code: language };
-  if (userType !== 'business' && userType !== 'admin') body.fuel_type_code = fuelType;
+  if (userType !== 'business' && userType !== 'admin' && userType !== 'chama') body.fuel_type_code = fuelType;
   return body;
 }
 
@@ -62,7 +63,7 @@ export function localStatusFrom(res, fallbackName) {
       full_name: res.full_name || fallbackName, role: res.role, user_type: 'admin' };
   }
   const base = {
-    vehicle_type: res.vehicle_type || 'motorcycle',      // SMART CABZ
+    vehicle_type: res.user_type === 'chama' ? 'n/a' : (res.vehicle_type || 'motorcycle'),      // SMART CABZ; SMART BIZNA FIX: a Smart Chama member has no vehicle
     rider_id: res.rider_id,
     onboarding_step: 'createPin',
     registration_status: 'verified_incomplete',
@@ -71,11 +72,12 @@ export function localStatusFrom(res, fallbackName) {
     county_id: res.county_id,
     sub_county_id: res.sub_county_id,
     ward_id: res.ward_id,
-    user_type: res.user_type === 'business' ? 'business' : 'rider',
+    user_type: res.user_type === 'business' ? 'business' : res.user_type === 'chama' ? 'chama' : 'rider',   // SMART CHAMA
   };
   if (res.user_type === 'business') {
     return { ...base, role: res.role, business_id: res.business_id, business_name: res.business_name, business_type_code: res.business_type_code, business_type_name: res.business_type_name,
-      business_user_id: res.business_user_id };
+      business_user_id: res.business_user_id,
+      ...businessFields(res.businesses), vehicle_type: 'n/a' };      // SMART BIZNA FIX: the server's role and tile permissions; a business user has no vehicle
   }
   return base;
 }

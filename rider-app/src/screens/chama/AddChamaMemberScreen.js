@@ -28,7 +28,6 @@ function AddChamaMemberScreen({ navigation, route }) {
   const [seats, setSeats] = useState({});                   // circle_id -> 0 (not in it) | 1 (single) | 2 (double turn)
   const [busy, setBusy] = useState(false);
   const [membersType, setMembersType] = useState('riders');   // SMART CABZ: riders | business | drivers | mixed
-  const [memberKind, setMemberKind] = useState(null);         // SMART CABZ: Mixed group: rider | driver | business
   useEffect(() => { getMyGroup(groupId).then((g) => setMembersType((g && g.members_type) || 'riders')).catch(() => {}); }, [groupId]);
   useEffect(() => {
     chamaConfig(groupId).then((r) => {
@@ -49,9 +48,8 @@ function AddChamaMemberScreen({ navigation, route }) {
     if (tb && cats.length && !cat) return showToast('Select a Chama category.', 'warn');
     if (name.trim().length < 3) return showToast('Enter the full name.', 'warn');
     if (!/^(07|01)\d{8}$/.test(p)) return showToast('Enter a valid mobile number, e.g. 0712345678.', 'warn');
-    if (membersType === 'mixed' && !memberKind) return showToast('Choose the member type: motorcycle rider, car driver or business person.', 'warn');
     const body = { full_name: name.trim(), phone: p };
-    if (membersType === 'mixed') body.member_kind = memberKind;       // SMART CABZ
+    // SMART CHAMA: no member-type question in a Mixed group. A brand-new number becomes a Chama member; a number that already has an account stays what it is.
     if (tb) {
       if (savings === '' || !(num(savings) >= 0)) return showToast("Enter the member's current savings balance (enter 0 if none).", 'warn');
       if (hasLoan === null) return showToast('Answer: Does this member currently have an active loan?', 'warn');
@@ -88,14 +86,7 @@ function AddChamaMemberScreen({ navigation, route }) {
         <Text style={s.cardTitle}>Member Details</Text>
         <FormField label="Full Name" required value={name} onChangeText={setName} placeholder="e.g. Jane Wanjiru" maxLength={80} />
         <FormField label="Mobile Number" required value={phone} onChangeText={setPhone} keyboardType="phone-pad" placeholder="07XX XXX XXX" />
-        {membersType === 'mixed' && (
-          <View style={{ marginTop: 6 }}>
-            <Text style={s.label}>MEMBER TYPE *</Text>
-            <View style={s.chipRow}>
-              {[['rider', 'Motorcycle rider'], ['driver', 'Car driver'], ['business', 'Business person']].map(([k, l]) => <Chip key={k} on={memberKind === k} label={`${memberKind === k ? '✓ ' : ''}${l}`} onPress={() => setMemberKind(k)} />)}
-            </View>
-            <Text style={s.hint}>If this number already has an account, the person stays what they are. A business person must already be registered by the Administrator.</Text>
-          </View>)}
+        {membersType === 'mixed' && <Text style={s.hint}>If this number already has an account, the person keeps it. A brand-new number becomes a Smart Chama member and sets up with this same number.</Text>}
         {membersType === 'business' && <Text style={s.hint}>Only people already registered as Smart Bizna business users can be added to this group.</Text>}
         <Text style={s.hint}>{membersType === 'riders' ? vt("The member's mobile number links them to their Smart Boda account. They set up their profile with this same number.") : "The member's mobile number links them to their account. They set up their profile with this same number."}</Text>
       </View>

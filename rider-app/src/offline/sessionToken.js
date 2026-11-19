@@ -15,6 +15,7 @@ import api from '../api/client';
 import { saveLocalAuthToken, getLocalAuthToken, getLocalRiderId, getLocalDeviceId, getLocalRiderStatus, saveLocalRiderStatus } from './db';
 import { deviceLabel } from '../auth/deviceLabel';          // SMART APPS
 import { setAudienceFromStatus } from '../vehicle/vehicleStore';      // SMART CABZ
+import { healStatus } from '../auth/businessStatus';      // SMART BIZNA FIX
 import { isOnlineNow } from './chamaConnectivity';
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { savePinLocally } from './pinUtility';
@@ -120,11 +121,14 @@ export async function renewRiderSession() {
     const data = res?.data;
     if (data?.ok && data?.token) {
       await saveLocalAuthToken(data.token);
-      if (data.vehicle_type) {                       // SMART CABZ: a Super Admin may have changed this person's vehicle type; the Home follows
-        try {
+      if (data.vehicle_type || data.user_type) {     // SMART CABZ: a Super Admin may have changed this person's vehicle type; the Home follows
+        try {                                        // SMART BIZNA FIX: the same answer repairs a saved status that lost its user type / business, and refreshes a business user's role and permissions
           const st = await getLocalRiderStatus();
-          if (st && st.vehicle_type !== data.vehicle_type) await saveLocalRiderStatus({ ...st, vehicle_type: data.vehicle_type });
-          setAudienceFromStatus({ ...(st || {}), vehicle_type: data.vehicle_type });
+          const { rider_id: _id, ...rest } = st || {};
+          const healed = healStatus(st, data);
+          if (healed) { const { rider_id: _r2, ...toSave } = healed; await saveLocalRiderStatus(toSave); }
+          setAudienceFromStatus({ ...rest, ...(healed || {}) });
+          if (data.user_type === 'business' && Array.isArray(data.businesses) && data.businesses.length) { try { await require('./businessRepository').seedBusinesses(data.businesses); } catch { /* the sync cycle fills them in */ } }
         } catch { /* the token was renewed; the words catch up on the next start */ }
       }
       return { ok: true };

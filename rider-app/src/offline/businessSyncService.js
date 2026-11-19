@@ -44,7 +44,16 @@ export async function refreshMyBusinesses() {
 export function refreshBusinessProfile(businessId) {
   return (async () => {
     await ensureMigrated();
-    const id = businessId || await registry.resolveActive();
+    let id = businessId || await registry.resolveActive();
+    if (!id && !businessId) {            // SMART BIZNA FIX: nothing saved yet (a phone that signed in before the businesses were sent): ask the server NOW, not at the next sync cycle
+      try {
+        if (!(await getLocalAuthToken())) { const r = await recoverRiderSession(); if (!r.ok) return { changed: false, profile: null, skipped: r.reason }; }
+        if (!(await isOnlineNow())) return { changed: false, profile: null, skipped: 'offline' };
+        const list = await refreshMyBusinesses();
+        id = await registry.resolveActive();
+        if (id) { const mine = list.find((b) => b.business_id === id); if (mine) emit(await (await scoped(id)).getProfile()); }
+      } catch { /* the sync cycle tries again */ }
+    }
     if (!id) return { changed: false, profile: null };
     // No token (the person signed in offline): get one first, or stay quiet. This used to send /business/me with no token every 45 seconds and print a 401 each time.
     if (!(await getLocalAuthToken())) {

@@ -7,6 +7,7 @@ import { getLocalRiderStatus } from '../offline/db';
 import { homeKindFor } from '../utils/userTypeRouting';
 import MainNavigator from './MainNavigator';
 import BusinessNavigator from './BusinessNavigator';
+import ChamaMemberNavigator from './ChamaMemberNavigator';   // SMART CHAMA
 import AdminNavigator from './AdminNavigator';       // ADMIN APP
 
 export default function UserTypeRouter() {
@@ -18,5 +19,6 @@ export default function UserTypeRouter() {
   }, []);
   if (!kind) return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><ActivityIndicator /></View>;
   if (kind === 'admin') return <AdminNavigator />;      // ADMIN APP: the Administrator's tile home (never the rider MainNavigator)
+  if (kind === 'chama') return <ChamaMemberNavigator />;      // SMART CHAMA: the small Home (savings, loans, own history)
   return kind === 'business' ? <BusinessNavigator /> : <MainNavigator />;
 }
