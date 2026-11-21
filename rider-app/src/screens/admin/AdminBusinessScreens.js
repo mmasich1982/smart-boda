@@ -4,7 +4,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity } from 'react-native';
 import { AdminScreen, Card, Btn, Badge, Field, Tabs, Hint, Section, StatTile, StatRow, SearchBox, PhoneText, Pager, ListState, Notice, useNotice, useAdminList, useClientList,
-  LocationPicker, PhoneVerdict, Choice, Banner, errText, s, C } from './AdminUI';
+  PhoneVerdict, Choice, Banner, errText, s, C } from './AdminUI';
+import GpsLocationPicker, { EMPTY_GPS, hasGps } from './GpsLocationPicker';       // the business GPS position replaces County > Sub-county > Ward
+import { formatCoords } from '../../admin/gpsLocation';
 import BusinessPerformancePanel from './BusinessPerformancePanel';
 import DropdownField from '../../components/DropdownField';
 import { listBusinesses, createBusiness, updateBusiness, removeBusiness, deactivateBusiness, reactivateBusiness, checkBusinessPhone, addBusinessUser, updateBusinessUser,
@@ -60,7 +62,7 @@ const newRow = () => ({ key: ++seq, full_name: '', mobile_number: '', can_see_pu
 export function RegisterBusinessScreen({ navigation }) {
   const [name, setName] = useState('');
   const [type, setType] = useState('');
-  const [loc, setLoc] = useState({ county_id: null, sub_county_id: null, ward_id: null });
+  const [loc, setLoc] = useState(EMPTY_GPS);
   const [rows, setRows] = useState(() => [newRow()]);
   const [salesPurchases, setSalesPurchases] = useState(false);
   const [salesExpenses, setSalesExpenses] = useState(false);
@@ -96,9 +98,7 @@ export function RegisterBusinessScreen({ navigation }) {
     const e = {};
     if (name.trim().length < 2) e.name = 'Business name is required (2 to 80 characters)';
     if (!type) e.type = 'Choose the business type, or add a new one';
-    if (!loc.county_id) e.county_id = 'Select a county';
-    if (!loc.sub_county_id) e.sub_county_id = 'Select a sub-county';
-    if (!loc.ward_id) e.ward_id = 'Select a ward';
+    if (!hasGps(loc)) e.location = 'Capture the business location (or type the position)';
     rows.forEach((r) => {
       if (r.full_name.trim().length < 2) e[`n${r.key}`] = 'Name is required';
       if (!isPhone(r.mobile_number)) e[`m${r.key}`] = 'Enter a valid number, e.g. 0712345678';
@@ -113,7 +113,8 @@ export function RegisterBusinessScreen({ navigation }) {
     setSaving(true);
     try {
       const res = await createBusiness({
-        business_name: name.trim(), business_type_code: type, county_id: loc.county_id, sub_county_id: loc.sub_county_id, ward_id: loc.ward_id,
+        business_name: name.trim(), business_type_code: type,
+        latitude: loc.latitude, longitude: loc.longitude, location_accuracy_m: loc.source === 'gps' ? loc.accuracy : null, location_source: loc.source,
         sales_can_see_purchases: salesPurchases, sales_can_see_expenses: salesExpenses,
         users: rows.map((r, i) => ({ full_name: r.full_name.trim(), mobile_number: cleanPhone(r.mobile_number),
           ...(i === 0 ? (r.same_owner ? { same_owner: true } : {}) : { can_see_purchases: r.can_see_purchases, can_see_expenses: r.can_see_expenses }) })),
@@ -121,18 +122,18 @@ export function RegisterBusinessScreen({ navigation }) {
       ok(rows[0] && rows[0].same_owner
         ? `${res.business_name} was registered under the same Owner. ${res.status === 'activated' ? 'The Owner will see it in their app the next time they are online.' : 'They will see both businesses after they set up in the app.'}`
         : `${res.business_name} was registered with ${res.users.length} ${res.users.length === 1 ? 'person' : 'people'}. They can now set up in the app with their own mobile numbers.`);
-      setName(''); setType(''); setLoc({ county_id: null, sub_county_id: null, ward_id: null }); setRows([newRow()]); setSalesPurchases(false); setSalesExpenses(false); setChecks({}); setErrors({}); asked.current = {};
+      setName(''); setType(''); setLoc(EMPTY_GPS); setRows([newRow()]); setSalesPurchases(false); setSalesExpenses(false); setChecks({}); setErrors({}); asked.current = {};
     } catch (err) { fail(errText(err, 'Could not register the business.')); } finally { setSaving(false); }
   }
 
   return (
-    <AdminScreen navigation={navigation} title="Register a Business" sub="You choose the type and location. Nobody gets a code or password: each person opens the app and types their own mobile number." {...toMenu(navigation)}>
+    <AdminScreen navigation={navigation} title="Register a Business" sub="You choose the type and capture the GPS location. Nobody gets a code or password: each person opens the app and types their own mobile number." {...toMenu(navigation)}>
       <Notice notice={notice} onClose={clear} />
       <Card>
         <Field label="Business name *" value={name} maxLength={80} onChangeText={setName} error={errors.name} />
         <BusinessTypePicker value={type} onChange={setType} error={errors.type} />
         <Section>Business location</Section>
-        <LocationPicker value={loc} errors={errors} onChange={(l) => setLoc({ ...loc, ...l })} />
+        <GpsLocationPicker value={loc} error={errors.location} onChange={setLoc} />
         <Hint>Number of users: {rows.length} (there is no limit)</Hint>
       </Card>
 
@@ -217,7 +218,7 @@ export function BusinessesListScreen({ navigation }) {
             <TouchableOpacity activeOpacity={0.8} onPress={() => setOpen(isOpen ? null : b.id)} accessibilityRole="button" accessibilityLabel={`${b.business_name}. ${isOpen ? 'Close' : 'Open'}`}>
             <Text style={{ fontSize: 16, fontWeight: '800', color: C.ink }}>{b.business_name}</Text>
             <Hint>{BIZ_STATUS[b.status] || b.status} · {b.business_type ? b.business_type : 'Type not set'}</Hint>
-            <Hint>📍 {b.ward || b.county ? [b.ward, b.sub_county, b.county].filter(Boolean).join(', ') : 'Location not set'}</Hint>
+            <Hint>📍 {b.has_gps ? formatCoords(b.latitude, b.longitude) : b.ward || b.county ? `${[b.ward, b.sub_county, b.county].filter(Boolean).join(', ')} · GPS not captured` : 'GPS location not captured'}</Hint>
             {(b.also_owns || []).length ? <Hint>👤 Owner also owns: {b.also_owns.join(', ')}</Hint> : null}
             <Hint>{b.users.length} {b.users.length === 1 ? 'person' : 'people'} · tap {isOpen ? 'to close' : 'for people, actions and performance'}</Hint>
             </TouchableOpacity>
@@ -229,7 +230,7 @@ export function BusinessesListScreen({ navigation }) {
               <View>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                   <Btn label="Rename" kind="ghost" small onPress={() => setPanel({ kind: 'rename', bid: b.id, name: b.business_name })} />
-                  <Btn label="Type and location" kind="ghost" small onPress={() => setPanel({ kind: 'place', bid: b.id, business_type_code: b.business_type_code || '', county_id: b.county_id || null, sub_county_id: b.sub_county_id || null, ward_id: b.ward_id || null })} />
+                  <Btn label="Type and location" kind="ghost" small onPress={() => setPanel({ kind: 'place', bid: b.id, business_type_code: b.business_type_code || '', gps: b.has_gps ? { latitude: b.latitude, longitude: b.longitude, accuracy: b.location_accuracy_m, source: b.location_source } : EMPTY_GPS })} />
                   <Btn label="＋ Add person" kind="ghost" small disabled={b.status === 'inactive'} onPress={() => setPanel({ kind: 'add', bid: b.id, full_name: '', mobile_number: '', can_see_purchases: null, can_see_expenses: null })} />
                   {b.status === 'inactive'
                     ? <Btn label="Switch business on" kind="ghost" small onPress={() => run(() => reactivateBusiness(b.id), `${b.business_name} is switched on again.`)} />
@@ -250,10 +251,10 @@ export function BusinessesListScreen({ navigation }) {
                 {mine && mine.kind === 'place' ? (
                   <View style={{ marginTop: 8 }}>
                     <BusinessTypePicker value={mine.business_type_code} onChange={(c) => setPanel({ ...mine, business_type_code: c })} />
-                    <LocationPicker value={mine} onChange={(l) => setPanel({ ...mine, ...l })} />
+                    <GpsLocationPicker value={mine.gps} auto={false} onChange={(g) => setPanel({ ...mine, gps: g })} />
                     <View style={{ flexDirection: 'row', gap: 8 }}>
-                      <Btn label="Save" small disabled={!mine.business_type_code || !mine.county_id || !mine.sub_county_id || !mine.ward_id}
-                        onPress={() => run(() => updateBusiness(b.id, { business_type_code: mine.business_type_code, county_id: mine.county_id, sub_county_id: mine.sub_county_id, ward_id: mine.ward_id }), 'Business type and location saved.', () => setPanel(null))} />
+                      <Btn label="Save" small disabled={!mine.business_type_code || !hasGps(mine.gps)}
+                        onPress={() => run(() => updateBusiness(b.id, { business_type_code: mine.business_type_code, latitude: mine.gps.latitude, longitude: mine.gps.longitude, location_accuracy_m: mine.gps.source === 'gps' ? mine.gps.accuracy : null, location_source: mine.gps.source }), 'Business type and location saved.', () => setPanel(null))} />
                       <Btn label="Cancel" kind="ghost" small onPress={() => setPanel(null)} />
                     </View>
                   </View>

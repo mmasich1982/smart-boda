@@ -19,6 +19,7 @@ import ManageGroupsAndMembers from './pages/ManageGroupsAndMembers';
 import IndividualRiders from './pages/IndividualRiders';   // Individual riders: pre-register a rider with no Treasurer / group
 import RegisterBusiness from './pages/RegisterBusiness';   // Smart Bizna: Manage Businesses menu
 import BusinessesList from './pages/BusinessesList';
+import BusinessesMap from './pages/BusinessesMap';   // Smart Bizna: every business with a GPS position on a map
 import BusinessStatementRequests from './pages/BusinessStatementRequests';   // Smart Bizna: statements older than six months + check a code
 import BusinessTilePermissions from './pages/BusinessTilePermissions';
 import BusinessTypes from './pages/BusinessTypes';
@@ -334,6 +335,7 @@ function AppRoutes() {
       <Route path="/businesses" element={<Navigate to="/businesses/list" replace />} />
       <Route path="/businesses/register" element={<RequireAuth><Shell><RegisterBusiness /></Shell></RequireAuth>} />
       <Route path="/businesses/list" element={<RequireAuth><Shell><BusinessesList /></Shell></RequireAuth>} />
+      <Route path="/businesses/map" element={<RequireAuth><Shell><BusinessesMap /></Shell></RequireAuth>} />
       <Route path="/businesses/permissions" element={<RequireAuth><Shell><BusinessTilePermissions /></Shell></RequireAuth>} />
       <Route path="/businesses/types" element={<RequireAuth><Shell><BusinessTypes /></Shell></RequireAuth>} />
       <Route path="/businesses/statements" element={<RequireAuth><Shell><BusinessStatementRequests /></Shell></RequireAuth>} />

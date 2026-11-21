@@ -13,6 +13,7 @@ import AdminMenuScreen from '../screens/admin/AdminMenuScreen';
 import AdminDashboardScreen from '../screens/admin/AdminDashboardScreen';
 import { ActiveRidersScreen, IndividualRidersScreen } from '../screens/admin/AdminRiderScreens';
 import { RegisterBusinessScreen, BusinessesListScreen, TilePermissionsScreen, BusinessTypesScreen, StatementRequestsScreen } from '../screens/admin/AdminBusinessScreens';
+import { BusinessesMapScreen } from '../screens/admin/AdminBusinessMapScreen';
 import { ManageGroupsScreen, IncomingAdditionsScreen } from '../screens/admin/AdminGroupScreens';
 
 const Stack = createNativeStackNavigator();
@@ -34,7 +35,7 @@ function guarded(Component, routeName) {
 export const ADMIN_ROUTES = {
   AdminHome: AdminHomeScreen, AdminMenu: AdminMenuScreen, AdminDashboard: AdminDashboardScreen,
   ActiveRiders: ActiveRidersScreen, IndividualRiders: IndividualRidersScreen,
-  RegisterBusiness: RegisterBusinessScreen, BusinessesList: BusinessesListScreen, TilePermissions: TilePermissionsScreen, BusinessTypes: BusinessTypesScreen, StatementRequests: StatementRequestsScreen,
+  RegisterBusiness: RegisterBusinessScreen, BusinessesList: BusinessesListScreen, BusinessesMap: BusinessesMapScreen, TilePermissions: TilePermissionsScreen, BusinessTypes: BusinessTypesScreen, StatementRequests: StatementRequestsScreen,
   ManageGroups: ManageGroupsScreen, IncomingAdditions: IncomingAdditionsScreen,
 };
 // the names the tests rely on (AdminNavigator.routes.js) and the screens registered here must be the same list

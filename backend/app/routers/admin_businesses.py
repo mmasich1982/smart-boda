@@ -5,6 +5,11 @@
 #   GET    /admin/businesses                      -> {total, pending, activated, items:[business + users]}
 #   POST   /admin/businesses                      -> registers a business; user 1 is the Business Owner, the rest Sales/Service Persons
 #   DELETE /admin/businesses/{id}                 -> only while nobody in it has set up yet (typo clean-up)
+#   GET    /admin/businesses/map?q=&status=&business_type_code=  -> BUSINESSES MAP: every business with a GPS position, plus the ones still without one
+# LOCATION (migration 004): a new business is registered with its GPS position (latitude, longitude, accuracy, source) captured by the
+# Administrator; County / Sub-county / Ward are no longer asked. Businesses registered before keep their place name and have no position until the
+# Administrator captures one (PATCH). TRANSITION: an OLD admin app build that still sends all three of county_id / sub_county_id / ward_id and no GPS
+# is still accepted (the business then shows as "not located"), so a phone that has not updated yet can keep registering.
 # Changing a business later (journey L of the scope document):
 #   PATCH  /admin/businesses/{id}                       -> name and the two business tile defaults (Purchases / Expenses)
 #   POST   /admin/businesses/{id}/deactivate | /reactivate   -> switch the whole business off / on
@@ -18,8 +23,10 @@
 # Rules: exactly one Owner (the first user); NO maximum number of users; a mobile number must exist nowhere in Smart Boda
 # (same check as individual riders, extended to business users); Purchases / Expenses tile choices are saved (business default
 # + optional per-person Yes/No) but only enforced in a later release.
+import math
 import re
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from typing import List, Optional
 from uuid import UUID as RowId   # NOT "UUID": star-imports of the models bring SQLAlchemy's UUID column type into scope
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -74,9 +81,13 @@ class BusinessIn(BaseModel):
     sales_can_see_purchases: bool = False          # business default for every Sales/Service Person (always saved, never empty)
     sales_can_see_expenses: bool = False
     business_type_code: str                                # the Administrator chooses the Business Type at pre-registration (required)
-    county_id: int                                         # the Administrator sets the business location (all three required, like a Treasurer's group)
-    sub_county_id: int
-    ward_id: int
+    latitude: Optional[float] = None                       # the business GPS position, captured by the Administrator (required unless an old app sends the three place ids)
+    longitude: Optional[float] = None
+    location_accuracy_m: Optional[float] = None            # metres, as reported by the device (omit for a typed position)
+    location_source: Optional[str] = None                  # 'gps' (taken from the device) or 'manual' (typed / pasted); anything else is stored as 'manual'
+    county_id: Optional[int] = None                        # OLD way, accepted only from an app that has not updated yet (all three together, no GPS)
+    sub_county_id: Optional[int] = None
+    ward_id: Optional[int] = None
     users: List[BusinessUserIn] = Field(min_length=1)      # no maximum
 
     @field_validator("business_name")
@@ -104,6 +115,32 @@ def _check_location(db: Session, county_id, sub_county_id, ward_id):
         raise HTTPException(422, "Sub-county or ward does not belong to the selected county.")
 
 
+def _check_gps(latitude, longitude, accuracy=None, source=None):
+    """Server-side rules for a captured position. Returns (lat, lng, accuracy, source) rounded to 6 / 1 decimals, or raises 422.
+    Both coordinates together; finite; inside the world; never 0,0 (the value a phone reports when it has no fix at all)."""
+    if latitude is None or longitude is None:
+        raise HTTPException(422, "Send the latitude and the longitude together.")
+    if not (math.isfinite(latitude) and math.isfinite(longitude)):
+        raise HTTPException(422, "The location is not a valid position.")
+    if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+        raise HTTPException(422, "The location is outside the world: latitude must be between -90 and 90, longitude between -180 and 180.")
+    if latitude == 0 and longitude == 0:
+        raise HTTPException(422, "The location 0, 0 is what a phone reports when it has no GPS fix. Capture the location again.")
+    lat = Decimal(str(latitude)).quantize(Decimal("0.000001"), ROUND_HALF_UP)
+    lng = Decimal(str(longitude)).quantize(Decimal("0.000001"), ROUND_HALF_UP)
+    acc = None
+    if accuracy is not None:
+        if not math.isfinite(accuracy) or accuracy < 0 or accuracy > 99999:
+            raise HTTPException(422, "The location accuracy is not valid.")
+        acc = Decimal(str(accuracy)).quantize(Decimal("0.1"), ROUND_HALF_UP)
+    return lat, lng, acc, (source if source in ("gps", "manual") else "manual")
+
+
+def _set_gps(b: Business, latitude, longitude, accuracy, source):
+    b.latitude, b.longitude, b.location_accuracy_m, b.location_source = _check_gps(latitude, longitude, accuracy, source)
+    b.location_captured_at = datetime.now(timezone.utc)
+
+
 def working_permissions(u: BusinessUser, b: Business):
     """What this person can really see: the Owner always sees both tiles; a Sales/Service Person uses their own Yes / No, or the
     business choice when theirs is empty ("Same as business")."""
@@ -122,9 +159,14 @@ def _user_row(u: BusinessUser, b: Business) -> dict:
 
 
 def _place(b: Business, places=None) -> dict:
-    """The business LOCATION the Administrator sets (County, Sub-county, Ward), like a Treasurer's group."""
+    """The business LOCATION: its GPS position (new), and the County / Sub-county / Ward it was given before the change (kept as they were)."""
     names = (places or {})
-    return {"county_id": b.county_id, "sub_county_id": b.sub_county_id, "ward_id": b.ward_id, "county": names.get(("c", b.county_id)),
+    gps = b.latitude is not None and b.longitude is not None
+    return {"latitude": float(b.latitude) if gps else None, "longitude": float(b.longitude) if gps else None, "has_gps": gps,
+            "location_accuracy_m": float(b.location_accuracy_m) if b.location_accuracy_m is not None else None,
+            "location_source": b.location_source if gps else None,
+            "location_captured_at": b.location_captured_at.isoformat() if b.location_captured_at else None,
+            "county_id": b.county_id, "sub_county_id": b.sub_county_id, "ward_id": b.ward_id, "county": names.get(("c", b.county_id)),
             "sub_county": names.get(("s", b.sub_county_id)), "ward": names.get(("w", b.ward_id))}
 
 
@@ -204,9 +246,8 @@ def phone_check(phone: str, db: Session = Depends(get_db)):
     return {"available": True, "can_add_as_owner": False, "mobile_number": normalized, "message": "This number is available."}
 
 
-@router.get("")
-def list_businesses(q: str = None, status: str = None, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
-                    db: Session = Depends(get_db)):
+def _filtered(db: Session, q=None, status=None):
+    """The search used by both the Businesses and Users list and the Businesses Map (name, person or phone; and status)."""
     qry = db.query(Business)
     if q and q.strip():
         like = f"%{q.strip()}%"
@@ -217,6 +258,51 @@ def list_businesses(q: str = None, status: str = None, page: int = Query(1, ge=1
         qry = qry.filter(or_(Business.business_name.ilike(like), Business.id.in_(sub)))
     if status in (PENDING_SETUP, ACTIVATED, INACTIVE):
         qry = qry.filter(Business.status == status)
+    return qry
+
+
+MAP_MAX_PINS = 5000          # one map never needs more; a tighter filter narrows it
+MAP_MAX_MISSING = 500
+
+
+@router.get("/map")
+def businesses_map(q: str = None, status: str = None, business_type_code: str = None, db: Session = Depends(get_db)):
+    """BUSINESSES MAP (console and Admin App). Every matching business that has a GPS position (pins), and a short list of the ones that do not
+    yet (so the Administrator can go and capture them). Read only; no phone numbers are returned, only the Owner's name."""
+    qry = _filtered(db, q, status)
+    if business_type_code:
+        qry = qry.filter(Business.business_type_code == business_type_code)
+    located_q = qry.filter(Business.latitude.isnot(None), Business.longitude.isnot(None))
+    missing_q = qry.filter(or_(Business.latitude.is_(None), Business.longitude.is_(None)))
+    n_located, n_missing = located_q.count(), missing_q.count()
+    pins = located_q.order_by(Business.business_name).limit(MAP_MAX_PINS).all()
+    missing = missing_q.order_by(Business.business_name).limit(MAP_MAX_MISSING).all()
+    shown = pins + missing
+    ids = [b.id for b in shown]
+    owners, counts = {}, {}
+    if ids:
+        for bid, name in db.query(BusinessUser.business_id, BusinessUser.full_name).filter(
+                BusinessUser.business_id.in_(ids), BusinessUser.role == OWNER, BusinessUser.status != INACTIVE).all():
+            owners[bid] = name
+        counts = dict(db.query(BusinessUser.business_id, func.count(BusinessUser.id)).filter(BusinessUser.business_id.in_(ids)).group_by(BusinessUser.business_id).all())
+    types = dict(db.query(BusinessTypeMaster.code, BusinessTypeMaster.display_name).all())
+    places = _place_names(db, shown)
+
+    def item(b):
+        p = _place(b, places)
+        return {"id": str(b.id), "business_name": b.business_name, "business_type": types.get(b.business_type_code), "status": b.status,
+                "owner_name": owners.get(b.id), "users": int(counts.get(b.id, 0)),
+                "latitude": p["latitude"], "longitude": p["longitude"], "location_accuracy_m": p["location_accuracy_m"],
+                "location_source": p["location_source"], "location_captured_at": p["location_captured_at"],
+                "place": ", ".join(x for x in (p["ward"], p["sub_county"], p["county"]) if x) or None}      # the old County / Sub-county / Ward text, if it has one
+    return {"total": n_located + n_missing, "located": n_located, "not_located": n_missing,
+            "items": [item(b) for b in pins], "missing": [item(b) for b in missing], "pins_truncated": n_located > len(pins), "missing_truncated": n_missing > len(missing)}
+
+
+@router.get("")
+def list_businesses(q: str = None, status: str = None, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
+                    db: Session = Depends(get_db)):
+    qry = _filtered(db, q, status)
     total = qry.count()
     rows = qry.order_by(Business.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
     users = db.query(BusinessUser).filter(BusinessUser.business_id.in_([b.id for b in rows])).all() if rows else []
@@ -251,11 +337,21 @@ def create_business(body: BusinessIn, db: Session = Depends(get_db), admin: Admi
             raise HTTPException(409, f"User {i} ({u.full_name}): {c['message']} Use a different number.")
         if i == 1 and not reuse and existing_owner(db, u.mobile_number):
             raise HTTPException(409, f"User 1 ({u.full_name}): this number already belongs to a Business Owner. Confirm 'same Owner' to register this business under them.")
-    _check_location(db, body.county_id, body.sub_county_id, body.ward_id)
+    has_gps = body.latitude is not None or body.longitude is not None
+    legacy = None not in (body.county_id, body.sub_county_id, body.ward_id)
+    if has_gps:
+        _check_gps(body.latitude, body.longitude, body.location_accuracy_m, body.location_source)      # refuse a bad position before anything is saved
+    elif legacy:
+        _check_location(db, body.county_id, body.sub_county_id, body.ward_id)                           # an app that has not updated yet (see the header)
+    else:
+        raise HTTPException(422, "Capture the business location (GPS) before registering.")
     type_code = _check_type(db, body.business_type_code)
     b = Business(business_name=body.business_name, status=PENDING_SETUP, created_by_admin_id=admin.id, business_type_code=type_code,
-                 sales_can_see_purchases=body.sales_can_see_purchases, sales_can_see_expenses=body.sales_can_see_expenses,
-                 county_id=body.county_id, sub_county_id=body.sub_county_id, ward_id=body.ward_id)
+                 sales_can_see_purchases=body.sales_can_see_purchases, sales_can_see_expenses=body.sales_can_see_expenses)
+    if has_gps:
+        _set_gps(b, body.latitude, body.longitude, body.location_accuracy_m, body.location_source)     # new registrations store the position, not the three place ids
+    else:
+        b.county_id, b.sub_county_id, b.ward_id = body.county_id, body.sub_county_id, body.ward_id
     db.add(b)
     db.flush()
     for i, u in enumerate(body.users):
@@ -304,7 +400,11 @@ class BusinessPatch(BaseModel):
     sales_can_see_purchases: Optional[bool] = None          # the business default: always a Yes or a No, never empty
     sales_can_see_expenses: Optional[bool] = None
     business_type_code: Optional[str] = None                # the Administrator may correct the Business Type
-    county_id: Optional[int] = None                         # change the location: send all three together
+    latitude: Optional[float] = None                        # capture the GPS position again (or for the first time, for a business registered before the change): send both
+    longitude: Optional[float] = None
+    location_accuracy_m: Optional[float] = None
+    location_source: Optional[str] = None
+    county_id: Optional[int] = None                         # OLD way, still accepted from an app that has not updated: all three together
     sub_county_id: Optional[int] = None
     ward_id: Optional[int] = None
 
@@ -351,7 +451,9 @@ def update_business(business_id: RowId, body: BusinessPatch, db: Session = Depen
         if not body.business_type_code:
             raise HTTPException(422, "Choose a valid business type.")
         b.business_type_code = _check_type(db, body.business_type_code)
-    if sent & {"county_id", "sub_county_id", "ward_id"}:                         # the Administrator changes the location: all three together
+    if sent & {"latitude", "longitude"}:                                          # the Administrator captures the GPS position (both together)
+        _set_gps(b, body.latitude, body.longitude, body.location_accuracy_m, body.location_source)
+    if sent & {"county_id", "sub_county_id", "ward_id"}:                         # OLD way (an app that has not updated): all three together
         if None in (body.county_id, body.sub_county_id, body.ward_id):
             raise HTTPException(422, "Choose the county, sub-county and ward together.")
         _check_location(db, body.county_id, body.sub_county_id, body.ward_id)

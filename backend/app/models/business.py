@@ -11,7 +11,7 @@
 # Tile permissions (can the Sales/Service Person see Business Purchases / Business Expenses) are stored here from day one
 # (business default + per-person override, NULL = "Same as business") but are only ENFORCED in a later release.
 import uuid
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Index, CheckConstraint, func, text
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Index, CheckConstraint, Numeric, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
 
@@ -42,14 +42,26 @@ class Business(Base):
     sales_can_see_expenses = Column(Boolean, nullable=False, default=False)
     status = Column(String(20), nullable=False, default=PENDING_SETUP)
     perm_changed_at = Column(DateTime(timezone=True))                                   # when the business tile defaults last changed (offline-created records stay valid)
-    # The business LOCATION is set by the Administrator at registration (County, Sub-county, Ward), exactly like a Treasurer's group.
+    # The business LOCATION is its GPS position, captured by the Administrator at registration (migration 004) and shown on the Businesses Map.
+    # county_id / sub_county_id / ward_id are the OLD way (County, Sub-county, Ward). They are kept, untouched, so every business registered
+    # before the change keeps its place name; new registrations no longer ask for them.
+    latitude = Column(Numeric(9, 6))                       # decimal degrees, 6 places (about 0.1 m); NULL = not captured yet
+    longitude = Column(Numeric(9, 6))
+    location_accuracy_m = Column(Numeric(8, 1))            # how close the phone said it was, in metres (NULL for a typed position)
+    location_source = Column(String(10))                   # 'gps' = taken from the device, 'manual' = typed or pasted by the Administrator
+    location_captured_at = Column(DateTime(timezone=True))
     county_id = Column(Integer, ForeignKey("counties.id"))
     sub_county_id = Column(Integer, ForeignKey("sub_counties.id"))
     ward_id = Column(Integer, ForeignKey("wards.id"))
     created_by_admin_id = Column(UUID(as_uuid=True), ForeignKey("admin_user.id", ondelete="SET NULL"))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    __table_args__ = (CheckConstraint("status IN ('pending_setup','activated','inactive')", name="ck_business_status"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('pending_setup','activated','inactive')", name="ck_business_status"),
+        CheckConstraint("(latitude IS NULL) = (longitude IS NULL)", name="ck_business_gps_pair"),                       # both or neither
+        CheckConstraint("latitude IS NULL OR (latitude BETWEEN -90 AND 90 AND longitude BETWEEN -180 AND 180)", name="ck_business_gps_range"),
+        CheckConstraint("location_source IS NULL OR location_source IN ('gps','manual')", name="ck_business_gps_source"),
+    )
 
 
 class BusinessUser(Base):

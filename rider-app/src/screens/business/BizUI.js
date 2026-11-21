@@ -90,6 +90,21 @@ export function Pager({ page, pages, from, to, total, onChange }) {
   );
 }
 
+/** Two (or one) shortcut icons side by side, e.g. Purchases | Expenses under the hero card on New Sale/Service. items: [{key, icon, label, route}] */
+export function ShortcutBar({ items, onGo }) {
+  if (!items || !items.length) return null;
+  return (
+    <View style={s.shortcuts} accessibilityLabel="Shortcuts">
+      {items.map((i) => (
+        <TouchableOpacity key={i.key} onPress={() => onGo(i.route)} accessibilityRole="button" accessibilityLabel={`Go to ${i.label}`} testID={`shortcut-${i.key}`} style={s.shortcut}>
+          <Text style={{ fontSize: 24 }}>{i.icon}</Text>
+          <Text style={s.shortcutText}>{i.label}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+}
+
 export const Empty = ({ children }) => <Text style={s.empty}>{children}</Text>;
 export const Banner = ({ text, tone = 'amber', onPress }) => (onPress
   ? <TouchableOpacity onPress={onPress} style={[s.banner, { backgroundColor: TONE[tone][1] }]}><Text style={[s.bannerText, { color: TONE[tone][0] }]}>{text}</Text></TouchableOpacity>
@@ -109,5 +124,8 @@ export const s = StyleSheet.create({
   tabText: { fontSize: 13, fontWeight: '700', color: C.ink }, hero: { backgroundColor: C.asphalt, borderRadius: 16, padding: 16, marginBottom: 12 },
   heroLabel: { color: '#c9ccd3', fontSize: 13 }, heroAmt: { color: C.white, fontSize: 30, fontWeight: '800', marginVertical: 4 }, heroRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   heroSmall: { color: '#e5e7eb', fontSize: 12.5, marginRight: 10 }, heroFormula: { color: '#9aa0ab', fontSize: 11.5, marginTop: 8 }, bar: { flexDirection: 'row', height: 12, borderRadius: 6, overflow: 'hidden', backgroundColor: C.line, marginVertical: 8 },
+  shortcuts: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  shortcut: { flex: 1, backgroundColor: C.white, borderRadius: 14, borderWidth: 1, borderColor: C.line, paddingVertical: 14, paddingHorizontal: 8, alignItems: 'center' },
+  shortcutText: { fontSize: 13, fontWeight: '700', color: C.ink, textAlign: 'center', marginTop: 4 },
   empty: { color: C.soft, textAlign: 'center', paddingVertical: 18 }, banner: { borderRadius: 12, padding: 12, marginBottom: 12 }, bannerText: { fontWeight: '700', fontSize: 13.5 },
 });

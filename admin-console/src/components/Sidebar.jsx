@@ -22,6 +22,7 @@ const SECTIONS = [
     items: [
       { to: '/businesses/register', label: 'Register a Business' },
       { to: '/businesses/list', label: 'Businesses and Users' },
+      { to: '/businesses/map', label: 'Businesses Map' },
       { to: '/businesses/permissions', label: 'Tile Permissions' },
       { to: '/businesses/types', label: 'Business Types' },
       { to: '/businesses/statements', label: 'Statement Requests' },

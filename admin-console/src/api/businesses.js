@@ -8,6 +8,7 @@ export const updateBusiness = async (id, b) => (await client.patch(`/admin/busin
 export const removeBusiness = async (id) => (await client.delete(`/admin/businesses/${id}`)).data;
 export const deactivateBusiness = async (id) => (await client.post(`/admin/businesses/${id}/deactivate`)).data;
 export const reactivateBusiness = async (id) => (await client.post(`/admin/businesses/${id}/reactivate`)).data;
+export const getBusinessesMap = async (params) => (await client.get('/admin/businesses/map', { params })).data;       // BUSINESSES MAP
 export const checkBusinessPhone = async (phone) => (await client.get('/admin/businesses/phone-check', { params: { phone } })).data;
 
 export const addBusinessUser = async (id, u) => (await client.post(`/admin/businesses/${id}/users`, u)).data;

@@ -10,7 +10,11 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -23,7 +27,7 @@
       "orientation": "portrait",
       "themeColor": "#ff7a1a",
       "backgroundColor": "#f6f4ef",
-      "description": "Smart Boda, Smart Bizna, Smart Cabz and more in one app — works fully offline."
+      "description": "Smart Boda, Smart Bizna, Smart Cabz and more in one app \u2014 works fully offline."
     },
     "extra": {
       "apiBaseUrl": "http://localhost:8000"
@@ -31,7 +35,13 @@
     "plugins": [
       "expo-localization",
       "expo-sharing",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Smart Apps - The simplest yet advanced business app."
+        }
+      ]
     ]
   }
 }

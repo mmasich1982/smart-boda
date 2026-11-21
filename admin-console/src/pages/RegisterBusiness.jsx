@@ -10,7 +10,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createBusiness, checkBusinessPhone } from '../api/businesses';
 import BusinessTypeSelect from '../components/BusinessTypeSelect';
-import LocationCascade from '../components/LocationCascade';   // REUSED: the same county > sub-county > ward picker as a Treasurer's group
+import GpsLocationField, { EMPTY_GPS, hasGps } from '../components/GpsLocationField';   // the business GPS position replaces County > Sub-county > Ward
 import TriChoice, { errText } from '../components/TriChoice';
 
 const PHONE_RE = /^(\+254|254|0)(7|1)[0-9]{8}$/;
@@ -22,7 +22,7 @@ const newRow = () => ({ key: ++seq, full_name: '', mobile_number: '', can_see_pu
 export default function RegisterBusiness() {
   const [name, setName] = useState('');
   const [type, setType] = useState('');                           // Business Type: chosen here by the Administrator, never by the business users
-  const [loc, setLoc] = useState({ county_id: '', sub_county_id: '', ward_id: '' });   // the business location, set here by the Administrator
+  const [loc, setLoc] = useState(EMPTY_GPS);                   // the business GPS position, captured here by the Administrator
   const [rows, setRows] = useState(() => [newRow()]);
   const [salesPurchases, setSalesPurchases] = useState(false);   // both start at No
   const [salesExpenses, setSalesExpenses] = useState(false);
@@ -60,9 +60,7 @@ export default function RegisterBusiness() {
     const e = {};
     if (name.trim().length < 2) e.name = 'Business name is required (2 to 80 characters)';
     if (!type) e.type = 'Choose the business type, or add a new one';
-    if (!loc.county_id) e.county_id = 'Select a county';
-    if (!loc.sub_county_id) e.sub_county_id = 'Select a sub-county';
-    if (!loc.ward_id) e.ward_id = 'Select a ward';
+    if (!hasGps(loc)) e.location = 'Capture the business location (or type the position)';
     rows.forEach((r) => {
       if (r.full_name.trim().length < 2) e[`n${r.key}`] = 'Name is required';
       if (!PHONE_RE.test(clean(r.mobile_number))) e[`m${r.key}`] = 'Enter a valid number, e.g. 0712345678';
@@ -77,7 +75,8 @@ export default function RegisterBusiness() {
     setSaving(true);
     try {
       const res = await createBusiness({
-        business_name: name.trim(), business_type_code: type, county_id: Number(loc.county_id), sub_county_id: Number(loc.sub_county_id), ward_id: Number(loc.ward_id),
+        business_name: name.trim(), business_type_code: type,
+        latitude: loc.latitude, longitude: loc.longitude, location_accuracy_m: loc.source === 'gps' ? loc.accuracy : null, location_source: loc.source,
         sales_can_see_purchases: salesPurchases, sales_can_see_expenses: salesExpenses,
         users: rows.map((r, i) => ({
           full_name: r.full_name.trim(), mobile_number: clean(r.mobile_number),
@@ -88,7 +87,7 @@ export default function RegisterBusiness() {
       setMsg({ ok: true, text: same
         ? `${res.business_name} was registered under the same Owner (${res.users[0] ? res.users[0].full_name : ''}). ${res.status === 'activated' ? 'The Owner will see it in their app, in the business switcher, the next time they are online.' : 'They will see both businesses after they set up in the Smart Boda app.'}`
         : `${res.business_name} was registered with ${res.users.length} ${res.users.length === 1 ? 'person' : 'people'}. They can now set up in the Smart Boda app with their own mobile numbers.` });
-      setName(''); setType(''); setLoc({ county_id: '', sub_county_id: '', ward_id: '' }); setRows([newRow()]); setSalesPurchases(false); setSalesExpenses(false); setChecks({}); setErrors({}); asked.current = {};
+      setName(''); setType(''); setLoc(EMPTY_GPS); setRows([newRow()]); setSalesPurchases(false); setSalesExpenses(false); setChecks({}); setErrors({}); asked.current = {};
     } catch (err) { setMsg({ ok: false, text: errText(err, 'Could not register the business.') }); } finally { setSaving(false); }
   }
 
@@ -103,7 +102,7 @@ export default function RegisterBusiness() {
   return (
     <div className="page">
       <h1>Register a Business</h1>
-      <p className="muted">Register a business and the people who work in it. You choose the business type and set the business location here; nobody on the business side is asked for either. Nobody receives a code or password: each person opens the Smart Boda app and types their own mobile number to finish the registration. To register a single motorcycle rider instead, use <Link to="/riders/individual">Individual Riders</Link>.</p>
+      <p className="muted">Register a business and the people who work in it. You choose the business type here and capture the business location (GPS); nobody on the business side is asked for either. Nobody receives a code or password: each person opens the Smart Boda app and types their own mobile number to finish the registration. To register a single motorcycle rider instead, use <Link to="/riders/individual">Individual Riders</Link>.</p>
       {msg && <div className="card" role="status" style={{ borderColor: msg.ok ? '#43a047' : '#d32f2f' }}>{msg.text} <button className="secondary" onClick={() => setMsg(null)}>OK</button>{msg.ok && <> <Link to="/businesses/list">View businesses</Link></>}</div>}
 
       <div className="card">
@@ -113,7 +112,7 @@ export default function RegisterBusiness() {
         </label>
         <BusinessTypeSelect value={type} onChange={setType} error={errors.type} />
         <h3 style={{ margin: '14px 0 6px' }}>Business location</h3>
-        <LocationCascade value={loc} errors={errors} onChange={(l) => setLoc({ ...loc, ...l })} />
+        <GpsLocationField value={loc} error={errors.location} onChange={setLoc} />
         <div className="muted" style={{ marginBottom: 8 }}>Number of users: <b>{rows.length}</b> (there is no limit)</div>
 
         {rows.map((r, i) => (

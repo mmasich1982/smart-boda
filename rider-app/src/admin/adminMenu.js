@@ -18,6 +18,7 @@ export const ADMIN_MENUS = [
   { key: 'businesses', icon: '🏪', label: 'Manage Businesses', roles: ALL, items: [
     { route: 'RegisterBusiness', icon: '➕', label: 'Register a Business', roles: ALL },
     { route: 'BusinessesList', icon: '📋', label: 'Businesses and Users', roles: ALL, badge: 'businesses_pending' },
+    { route: 'BusinessesMap', icon: '🗺️', label: 'Businesses Map', roles: ALL },
     { route: 'TilePermissions', icon: '🔐', label: 'Tile Permissions', roles: ALL },
     { route: 'BusinessTypes', icon: '🏷️', label: 'Business Types', roles: ALL },
     { route: 'StatementRequests', icon: '🧾', label: 'Statement Requests', roles: ALL, badge: 'pending_statement_requests' },

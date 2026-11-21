@@ -14,7 +14,8 @@ import MaskedPhone from '../components/MaskedPhone';
 import Pagination from '../components/Pagination';
 import TriChoice, { errText } from '../components/TriChoice';
 import BusinessTypeSelect from '../components/BusinessTypeSelect';
-import LocationCascade from '../components/LocationCascade';
+import GpsLocationField, { EMPTY_GPS, hasGps } from '../components/GpsLocationField';
+import { formatCoords, mapsUrl } from '../utils/gps';
 import BusinessPerformance from '../components/BusinessPerformance';
 
 const BIZ_STATUS = { pending_setup: '🟡 Pending setup', activated: '🟢 Activated', inactive: '⚫ Switched off' };
@@ -30,7 +31,7 @@ export default function BusinessesList() {
   const [pageSize, setPageSize] = useState(20);
   const [msg, setMsg] = useState(null);
   const [rename, setRename] = useState(null);      // { id, name }
-  const [place, setPlace] = useState(null);        // { bid, business_type_code, county_id, sub_county_id, ward_id }: the Administrator edits type and location
+  const [place, setPlace] = useState(null);        // { bid, business_type_code, gps }: the Administrator edits type and GPS position
   const [edit, setEdit] = useState(null);          // { bid, uid, full_name, mobile_number }
   const [tab, setTab] = useState({});             // per business: 'people' (default) | 'performance'
   const [add, setAdd] = useState(null);            // { bid, full_name, mobile_number, can_see_purchases, can_see_expenses }
@@ -75,10 +76,10 @@ export default function BusinessesList() {
               <span>{BIZ_STATUS[b.status] || b.status}</span>
               {(b.also_owns || []).length > 0 && <span className="muted" style={{ fontSize: 13 }} data-testid={`also-owns-${b.id}`}>👤 Owner also owns: {b.also_owns.join(', ')}</span>}
               <span className="muted" style={{ fontSize: 13 }} data-testid={`type-${b.id}`}>{b.business_type ? `Type: ${b.business_type}` : 'Type: not set'}</span>
-              <span className="muted" style={{ fontSize: 13 }} data-testid={`place-${b.id}`}>{b.ward || b.county ? `📍 ${[b.ward, b.sub_county, b.county].filter(Boolean).join(', ')}` : '📍 Location: not set'}</span>
+              <span className="muted" style={{ fontSize: 13 }} data-testid={`place-${b.id}`}>{b.has_gps ? <>📍 {formatCoords(b.latitude, b.longitude)} · <a href={mapsUrl(b.latitude, b.longitude)} target="_blank" rel="noopener noreferrer">map</a></> : b.ward || b.county ? `📍 ${[b.ward, b.sub_county, b.county].filter(Boolean).join(', ')} · GPS not captured` : '📍 GPS location not captured'}</span>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 <button className="secondary" onClick={() => setRename({ id: b.id, name: b.business_name })}>Rename</button>
-                <button className="secondary" onClick={() => setPlace({ bid: b.id, business_type_code: b.business_type_code || '', county_id: b.county_id || '', sub_county_id: b.sub_county_id || '', ward_id: b.ward_id || '' })}>Edit type and location</button>
+                <button className="secondary" onClick={() => setPlace({ bid: b.id, business_type_code: b.business_type_code || '', gps: b.has_gps ? { latitude: b.latitude, longitude: b.longitude, accuracy: b.location_accuracy_m, source: b.location_source } : EMPTY_GPS })}>Edit type and location</button>
                 <button className="secondary" onClick={() => setAdd({ bid: b.id, full_name: '', mobile_number: '', can_see_purchases: null, can_see_expenses: null })} disabled={b.status === 'inactive'}>+ Add person</button>
                 {b.status === 'inactive'
                   ? <button className="secondary" onClick={() => run(() => reactivateBusiness(b.id), `${b.business_name} is switched on again.`)}>Switch business on</button>
@@ -97,9 +98,9 @@ export default function BusinessesList() {
               <div className="card" style={{ marginTop: 10 }}>
                 <h4 style={{ marginTop: 0 }}>Business type and location of {b.business_name}</h4>
                 <BusinessTypeSelect value={place.business_type_code} onChange={(c) => setPlace({ ...place, business_type_code: c })} />
-                <LocationCascade value={place} onChange={(l) => setPlace({ ...place, ...l })} />
-                <button className="primary" disabled={!place.business_type_code || !place.county_id || !place.sub_county_id || !place.ward_id}
-                  onClick={() => run(() => updateBusiness(b.id, { business_type_code: place.business_type_code, county_id: Number(place.county_id), sub_county_id: Number(place.sub_county_id), ward_id: Number(place.ward_id) }), 'Business type and location saved.', () => setPlace(null))}>Save</button>{' '}
+                <GpsLocationField value={place.gps} auto={false} onChange={(g) => setPlace({ ...place, gps: g })} />
+                <button className="primary" disabled={!place.business_type_code || !hasGps(place.gps)}
+                  onClick={() => run(() => updateBusiness(b.id, { business_type_code: place.business_type_code, latitude: place.gps.latitude, longitude: place.gps.longitude, location_accuracy_m: place.gps.source === 'gps' ? place.gps.accuracy : null, location_source: place.gps.source }), 'Business type and location saved.', () => setPlace(null))}>Save</button>{' '}
                 <button className="secondary" onClick={() => setPlace(null)}>Cancel</button>
               </div>)}
 
