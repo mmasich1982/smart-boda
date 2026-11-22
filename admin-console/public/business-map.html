@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- OpenStreetMap's tile policy requires every tile request to carry a Referer. This page is served from the console's own site (not srcdoc), so it has a real URL to send. -->
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Businesses Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+html,body,#map{height:100%;margin:0}body{font:13px system-ui,sans-serif}
+.leaflet-popup-content{line-height:1.45}
+.legend{background:#fff;padding:6px 9px;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px}
+#msg{position:absolute;z-index:999;top:8px;left:50px;right:8px;background:#fff3cd;padding:6px 10px;border-radius:8px;display:none}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="msg">The map could not load. Check the internet connection.</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+// The console (BusinessMapFrame.jsx) sends the pins with postMessage: {type:'points', points:[...], cfg:{colors, labels}}.
+// Business names come from users, so everything below is built with textContent, never innerHTML.
+(function () {
+  if (!window.L) { document.getElementById('msg').style.display = 'block'; return; }
+  var map = L.map('map', { zoomControl: true }).setView([0.0236, 37.9062], 6);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, referrerPolicy: 'origin', attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  var pins = L.layerGroup().addTo(map), legend = null;
+
+  function line(parent, label, value) {
+    if (value == null || value === '') return;
+    var d = document.createElement('div'), b = document.createElement('b');
+    b.textContent = label + ' '; d.appendChild(b); d.appendChild(document.createTextNode(String(value))); parent.appendChild(d);
+  }
+
+  function draw(points, cfg) {
+    var colors = cfg.colors || {}, labels = cfg.labels || {}, bounds = [];
+    pins.clearLayers();
+    points.forEach(function (p) {
+      var ll = [Number(p.latitude), Number(p.longitude)];
+      if (!isFinite(ll[0]) || !isFinite(ll[1])) return;
+      bounds.push(ll);
+      var m = L.circleMarker(ll, { radius: 9, color: '#fff', weight: 2, fillColor: colors[p.status] || '#555', fillOpacity: 0.95 }).addTo(pins);
+      var box = document.createElement('div'), h = document.createElement('div');
+      h.style.fontWeight = '800'; h.style.fontSize = '14px'; h.textContent = p.business_name; box.appendChild(h);
+      line(box, 'Type:', p.business_type); line(box, 'Status:', labels[p.status] || p.status); line(box, 'Owner:', p.owner_name); line(box, 'People:', p.users);
+      if (p.location_accuracy_m != null) line(box, 'Accuracy:', 'about ' + Math.round(p.location_accuracy_m) + ' m');
+      line(box, 'Position:', p.location_source === 'manual' ? 'typed in' : 'GPS');
+      var a = document.createElement('a');
+      a.href = 'https://www.google.com/maps?q=' + ll[0] + ',' + ll[1]; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = 'Open in Google Maps';
+      box.appendChild(a); m.bindPopup(box);
+    });
+    if (bounds.length === 1) map.setView(bounds[0], 16);
+    else if (bounds.length > 1) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
+    if (legend) { map.removeControl(legend); }
+    legend = L.control({ position: 'bottomright' });
+    legend.onAdd = function () {
+      var d = L.DomUtil.create('div', 'legend');
+      Object.keys(labels).forEach(function (k) {
+        var r = document.createElement('div'), s = document.createElement('span');
+        s.className = 'dot'; s.style.background = colors[k]; r.appendChild(s); r.appendChild(document.createTextNode(labels[k])); d.appendChild(r);
+      });
+      return d;
+    };
+    legend.addTo(map);
+  }
+
+  window.addEventListener('message', function (e) {
+    if (e.source !== window.parent) return;
+    var d = e.data;
+    if (d && d.type === 'points' && Array.isArray(d.points)) draw(d.points, d.cfg || {});
+  });
+  window.parent.postMessage({ type: 'map-ready' }, '*');
+})();
+</script>
+</body>
+</html>
