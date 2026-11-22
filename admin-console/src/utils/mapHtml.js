@@ -5,6 +5,12 @@
 import { validPosition } from './gps';
 export const LEAFLET_JS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js';
 export const LEAFLET_CSS = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css';
+// Map tiles. The default is the free OpenStreetMap server, but OSM's volunteer servers block apps that send no Referer, and this page runs in a
+// sandboxed frame / WebView that sends none ("Access blocked - tile usage policy"). So set a tile provider with an API key in the environment:
+//   MapTiler: https://api.maptiler.com/maps/streets-v2/256/{z}/{x}/{y}.png?key=YOUR_KEY   (attribution: &copy; MapTiler &copy; OpenStreetMap contributors)
+// Do not restrict that key by HTTP referrer (this page sends none); limit it by quota instead.
+export const TILE_URL = import.meta.env.VITE_MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+export const TILE_ATTRIBUTION = import.meta.env.VITE_MAP_TILE_ATTRIBUTION || '&copy; OpenStreetMap contributors';
 export const STATUS_COLOR = { activated: '#1e9e6f', pending_setup: '#c98a12', inactive: '#7a7f8a' };
 export const STATUS_LABEL = { activated: 'Activated', pending_setup: 'Pending setup', inactive: 'Switched off' };
 
@@ -19,14 +25,14 @@ export function buildMapHtml(points, { height = '100%' } = {}) {
 #msg{position:absolute;z-index:999;top:8px;left:50px;right:8px;background:#fff3cd;padding:6px 10px;border-radius:8px;display:none}</style></head>
 <body><div id="map"></div><div id="msg">The map could not load. Check the internet connection.</div>
 <script type="application/json" id="pts">${safeJson(pts)}</script>
-<script type="application/json" id="cfg">${safeJson({ colors: STATUS_COLOR, labels: STATUS_LABEL })}</script>
+<script type="application/json" id="cfg">${safeJson({ colors: STATUS_COLOR, labels: STATUS_LABEL, tileUrl: TILE_URL, attribution: TILE_ATTRIBUTION })}</script>
 <script src="${LEAFLET_JS}"></script>
 <script>
 (function(){
   var pts = JSON.parse(document.getElementById('pts').textContent), cfg = JSON.parse(document.getElementById('cfg').textContent);
   if (!window.L) { document.getElementById('msg').style.display = 'block'; return; }
   var map = L.map('map', { zoomControl: true }).setView([0.0236, 37.9062], 6);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  L.tileLayer(cfg.tileUrl, { maxZoom: 19, attribution: cfg.attribution }).addTo(map);
   function line(parent, label, value) { if (value == null || value === '') return; var d = document.createElement('div'); var b = document.createElement('b'); b.textContent = label + ' '; d.appendChild(b); d.appendChild(document.createTextNode(String(value))); parent.appendChild(d); }
   var bounds = [];
   pts.forEach(function (p) {
