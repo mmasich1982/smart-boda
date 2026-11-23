@@ -15,12 +15,16 @@ import * as Sharing from 'expo-sharing';
 import indexedDbAdapter from './adapters/indexedDbAdapter';
 import { addToSyncQueue } from './syncQueue';
 import { brandName } from '../vehicle/vehicleStore';      // SMART CABZ
+import { applyBrand } from './statementBrand';
 
 /**
  * ✅ Generate detailed HTML for statement PDF
  * Uses the same format as online statements for consistency
  */
 function renderStatementHtml(statement) {
+  return applyBrand(renderStatementHtmlRaw(statement), { app: brandName(), title: 'Financial Statement' });
+}
+function renderStatementHtmlRaw(statement) {
   const income = statement.income || statement.financial_summary?.income || 0;
   const expense = statement.total_expense || statement.financial_summary?.totalExpense || 0;
   const netProfit = statement.net_profit || statement.financial_summary?.netProfit || 0;
@@ -166,8 +170,7 @@ function renderStatementHtml(statement) {
           </div>
 
           <div class="footer">
-            <p>This statement was generated on your device and is valid for 6 months from creation.</p>
-            <p>For inquiries, contact ${brandName()} Customer Support.</p>
+            
           </div>
         </div>
       </body>

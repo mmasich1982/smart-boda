@@ -73,8 +73,6 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
         return { start: lastMonthStart, end: thisMonthStart - 1 };
       case 'last6':
         return { start: sixMonthsStart, end: now.getTime() };
-      case 'sinceJoining':
-        return { start: 0, end: now.getTime() };
       default:
         return { start: thisMonthStart, end: now.getTime() };
     }
@@ -312,7 +310,7 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
 
       {/* Period Tabs */}
       <View style={styles.periodTabs}>
-        {['thisMonth', 'lastMonth', 'last6', 'sinceJoining'].map((p) => (
+        {['thisMonth', 'lastMonth', 'last6'].map((p) => (
           <TouchableOpacity
             key={p}
             style={[styles.periodTab, period === p && styles.periodTabActive]}
@@ -322,7 +320,6 @@ export default function FuelHistoryScreen({ bikeProfile, navigation }) {
               {p === 'thisMonth' && (t('thisMonth') || 'This Month')}
               {p === 'lastMonth' && (t('lastMonth') || 'Last Month')}
               {p === 'last6' && (t('last6Months') || 'Last 6')}
-              {p === 'sinceJoining' && (t('sinceJoining') || 'All Time')}
             </Text>
           </TouchableOpacity>
         ))}

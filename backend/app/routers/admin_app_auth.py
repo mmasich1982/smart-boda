@@ -32,6 +32,7 @@ from app.models.business import Business, ACTIVATED, INACTIVE, PENDING_SETUP
 from app.models.business_ops import BusinessStatementRequest, REQUESTED
 from app.models.individual_rider import IndividualRiderPreRegistration
 from app.models.rider import Rider
+from app.services import rider_scope
 from app.routers.mobile_number import validate_mobile_number
 from app.services import admin_app_service as svc
 from app.services import session_service           # SMART APPS: one active session per user
@@ -176,8 +177,8 @@ def dashboard(db: Session = Depends(get_db), _admin: AdminUser = Depends(require
     count = lambda col: db.query(func.count(col)).scalar() or 0       # noqa: E731
     biz = dict(db.query(Business.status, func.count(Business.id)).group_by(Business.status).all())
     return {
-        "total_riders": count(Rider.id),
-        "active_riders": db.query(func.count(Rider.id)).filter(Rider.registration_status == "active").scalar() or 0,
+        "total_riders": db.query(func.count(Rider.id)).filter(rider_scope.is_rider_expr(db)).scalar() or 0,        # actual riders and drivers only: a business account (vehicle type n/a) is never a rider
+        "active_riders": db.query(func.count(Rider.id)).filter(rider_scope.is_rider_expr(db), Rider.registration_status == "active").scalar() or 0,
         "individual_riders": count(IndividualRiderPreRegistration.id),
         "total_groups": count(BodaGroup.id),
         "businesses_pending": biz.get(PENDING_SETUP, 0),

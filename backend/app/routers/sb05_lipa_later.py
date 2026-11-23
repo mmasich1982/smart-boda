@@ -191,6 +191,19 @@ def calculate_days_overdue(due_date: date) -> int:
     return delta.days
 
 
+def check_payment_not_over_balance(amount, remaining) -> None:
+    """THE NO-OVERPAYMENT RULE (Smart Boda / Smart Cabz Lipa Later customers): a payment is more than 0 and never more than what is still owed,
+    compared in whole cents. A settled record (nothing owed) therefore takes no payment. Refused with 422 and a plain message; nothing is changed."""
+    amt = int((Decimal(str(amount)) * 100).to_integral_value())
+    owed = int((Decimal(str(remaining)) * 100).to_integral_value())
+    if amt <= 0:
+        raise HTTPException(422, "Enter a payment amount greater than zero.")
+    if owed <= 0:
+        raise HTTPException(422, "This Lipa Later record is already fully paid. No further payment can be recorded.")
+    if amt > owed:
+        raise HTTPException(422, f"The payment cannot be more than the balance of KSh {Decimal(owed) / 100:,.2f}.")
+
+
 def get_remaining_balance(lipa_later_record: LipaLaterRecord, db: Session) -> float:
     """Calculate remaining balance for a Lipa Later record"""
     if not lipa_later_record:
@@ -482,9 +495,7 @@ def record_payment_for_record(
             logger.warning(f"[LIPA_LATER] Record not found: {record_id}")
             raise HTTPException(404, f"Lipa Later record not found: {record_id}")
         
-        remaining_before = get_remaining_balance(record, db)
-        if payload.amount_paid > remaining_before:
-            raise HTTPException(400, f"Payment amount exceeds remaining balance of {remaining_before}.")
+        check_payment_not_over_balance(payload.amount_paid, get_remaining_balance(record, db))
         
         # ✅ Use LipaLaterPayment model!
         payment = LipaLaterPayment(
@@ -626,9 +637,7 @@ def record_payment(
                 f"This error typically means the trip recording didn't sync to the server - " +
                 f"try recording the trip again while online.")
         
-        remaining_before = get_remaining_balance(record, db)
-        if payload.amount > remaining_before:
-            raise HTTPException(400, f"Payment amount exceeds remaining balance of {remaining_before}.")
+        check_payment_not_over_balance(payload.amount, get_remaining_balance(record, db))
         
         payment = LipaLaterPayment(
             rider_id=record.rider_id,

@@ -12,6 +12,7 @@
 // rider-app/src/utils/pdfGenerator.js
 import * as Print from 'expo-print';
 import { brandName } from '../vehicle/vehicleStore';      // SMART CABZ
+import { applyBrand } from '../offline/statementBrand';   // the logo, "Simple Smart Apps Hub" and one look for every statement
 
 /**
  * Generate statement PDF
@@ -66,7 +67,8 @@ export async function generateDetailedReportPDF(statement, transactions) {
  * Generate HTML for Statement PDF
  * @private
  */
-function generateStatementHTML(statement) {
+const generateStatementHTML = (statement) => applyBrand(generateStatementHTMLRaw(statement), { app: brandName(), title: 'Earnings Statement' });
+function generateStatementHTMLRaw(statement) {
   const startDate = new Date(statement.startMs).toLocaleDateString();
   const endDate = new Date(statement.endMs).toLocaleDateString();
   const generatedDate = new Date(statement.generatedAt).toLocaleString();
@@ -234,7 +236,8 @@ function generateStatementHTML(statement) {
  * Generate HTML for Detailed Report PDF
  * @private
  */
-function generateDetailedReportHTML(statement, transactions) {
+const generateDetailedReportHTML = (statement, transactions) => applyBrand(generateDetailedReportHTMLRaw(statement, transactions), { app: brandName(), title: 'Detailed Earnings Report' });
+function generateDetailedReportHTMLRaw(statement, transactions) {
   const startDate = new Date(statement.startMs).toLocaleDateString();
   const endDate = new Date(statement.endMs).toLocaleDateString();
 
@@ -492,7 +495,8 @@ export async function generateGroupStatementPDF(st) {
   }
 }
 
-function generateGroupStatementHTML(st) {
+const generateGroupStatementHTML = (st) => applyBrand(generateGroupStatementHTMLRaw(st), { app: brandName(), title: 'Group Statement' });
+function generateGroupStatementHTMLRaw(st) {
   const hasReceived = Number(st.totals?.received || 0) > 0;          // Merry-Go-Round payouts
   const rows = st.members.map((m, i) => `
     <tr class="${i % 2 ? 'odd' : 'even'}">
@@ -571,7 +575,8 @@ export async function generateMemberStatementPDF(st) {
   await Print.printAsync({ html: generateMemberStatementHTML(st) });
 }
 
-function generateMemberStatementHTML(st) {
+const generateMemberStatementHTML = (st) => applyBrand(generateMemberStatementHTMLRaw(st), { app: brandName(), title: 'Member Statement' });
+function generateMemberStatementHTMLRaw(st) {
   const T = st.totals || {};
   const lines = st.detailed ? (st.lines || []).map((l, i) => `<tr class="${i % 2 ? 'odd' : 'even'}"><td>${esc(new Date(l.at).toLocaleDateString())}</td><td>${esc(l.label)}<div class="sub">${esc(l.reference)}</div></td><td class="num">${kes(l.amount)}</td></tr>`).join('') : '';
   return `<!DOCTYPE html><html><head><meta charset="UTF-8" /><title>${brandName()} My Statement</title>

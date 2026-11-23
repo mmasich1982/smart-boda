@@ -359,6 +359,8 @@ app.include_router(business_types.router)              # public: GET /onboarding
 from app.routers import business_ops, business_lipa_later, admin_business_statements
 app.include_router(business_ops.router)               # Smart Bizna user app: /business/...
 app.include_router(business_lipa_later.router)        # Smart Bizna Lipa Later (business tables): /business/lipa-later/...
+from app.routers import admin_settings
+app.include_router(admin_settings.router)             # /admin/settings/statement-fees (configurable)
 app.include_router(admin_business_statements.router)  # admin: /admin/business-statements (requests + check a code)
 
 # ---- Admin App: an Administrator signs in to the mobile app with mobile number + PIN ----

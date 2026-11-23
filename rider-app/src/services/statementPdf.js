@@ -5,6 +5,7 @@
 // already been fetched, matching the app's offline-first design.
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { applyBrand } from '../offline/statementBrand';
 
 // StatementPreviewScreen.js checks this before offering the "Share/Save PDF" button, since
 // expo-print/expo-sharing are native modules unavailable on some platforms (e.g. plain web).
@@ -13,6 +14,9 @@ export function isPdfLibReady() {
 }
 
 function renderStatementHtml(stmt) {
+  return applyBrand(renderStatementHtmlRaw(stmt), { app: 'Smart Boda', title: 'Financial Statement' });
+}
+function renderStatementHtmlRaw(stmt) {
   const rows = (stmt.transactions || [])
     .map(
       (t) => `<tr>
@@ -54,7 +58,7 @@ export async function generateAndSharePdf(stmt) {
   if (canShare) {
     await Sharing.shareAsync(uri, {
       mimeType: 'application/pdf',
-      dialogTitle: 'Save or share your Smart Boda statement',
+      dialogTitle: 'Simple Smart Apps Hub · Statement',
     });
   }
   return uri;

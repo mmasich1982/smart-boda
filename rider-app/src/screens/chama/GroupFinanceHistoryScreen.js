@@ -1,6 +1,6 @@
 // rider-app/src/screens/chama/GroupFinanceHistoryScreen.js
 // Group Finance History & Statements (Treasurer only).
-// Matches the prototype: ranges This Month / Last Month / Last 3 / Last 6 / Since Joining;
+// Matches the prototype: ranges This Month / Last Month / Last 3 / Last 6;
 // type chips All / Contributions / Payouts / Loans; model chips (Whole group / Merry-Go-Round /
 // Digital Table Banking) appear only when the group's ledger holds BOTH models, as in the prototype.
 import React, { useCallback, useRef, useState } from 'react';
@@ -21,17 +21,16 @@ import { clampDateRangeToRetention, CHAMA_RETENTION_CONFIG } from '../../offline
 
 const PAGE = 50;
 const iso = (d) => d.toISOString().slice(0, 10);
-const RANGES = { thisMonth: 'This Month', lastMonth: 'Last Month', last3: 'Last 3 Months', last6: 'Last 6 Months', sinceJoining: 'Since Joining' };
+const RANGES = { thisMonth: 'This Month', lastMonth: 'Last Month', last3: 'Last 3 Months', last6: 'Last 6 Months' };
 function rawRange(k) {
   const n = new Date(), y = n.getFullYear(), m = n.getMonth(), day = 864e5;
   if (k === 'lastMonth') return [iso(new Date(y, m - 1, 1, 12)), iso(new Date(y, m, 0, 12))];   // noon avoids a timezone day-shift
   if (k === 'last3') return [iso(new Date(Date.now() - 90 * day)), iso(n)];
   if (k === 'last6') return [iso(new Date(Date.now() - 180 * day)), iso(n)];
-  if (k === 'sinceJoining') return ['2000-01-01', iso(n)];
   return [iso(new Date(y, m, 1, 12)), iso(n)];                                                    // this month
 }
 // SIX-MONTH RETENTION: Rider, Treasurer and Official apps keep the last 6 months on the phone, so no range may reach
-// further back than that. "Since Joining" therefore means "since joining, within the last 6 months".
+// further back than that ("Since Joining" has been removed).
 // Older statements are available from the Smart Boda Administrator (the notice below says so).
 function range(k) {
   const [f, t] = rawRange(k);

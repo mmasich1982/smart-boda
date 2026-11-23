@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.auth import require_admin     # ADMIN APP: these three routes returned rider names and numbers to ANYONE; they now need an Administrator
 from app.models.rider import Rider
+from app.services import rider_scope as scope        # who counts as a rider: motorcycle riders and car drivers only, never a business account
 from app.models.subscription import RiderSubscription, SubscriptionPlan
 from app.models.payment import Payment
 from app.models.trip import Trip
@@ -36,10 +37,9 @@ def dashboard_summary(db: Session = Depends(get_db)):
     Payments, subscriptions and revenue figures were removed from the dashboard along
     with the Payments & Reconciliation, Subscriptions and Reporting menus.
     """
-    total_riders = db.query(func.count(Rider.id)).scalar() or 0
-    active_riders = db.query(func.count(Rider.id)).filter(
-        Rider.registration_status == "active"
-    ).scalar() or 0
+    is_rider = scope.is_rider_expr(db)                                    # business accounts (vehicle type n/a) are NOT riders
+    total_riders = db.query(func.count(Rider.id)).filter(is_rider).scalar() or 0
+    active_riders = db.query(func.count(Rider.id)).filter(is_rider, Rider.registration_status == "active").scalar() or 0
     individual_riders = db.query(func.count(IndividualRiderPreRegistration.id)).scalar() or 0
     total_groups = db.query(func.count(BodaGroup.id)).scalar() or 0
 
@@ -295,7 +295,7 @@ def relock_account(rider_id: str, reason: str = "Manual re-lock by admin", db: S
 @router.get("/riders", dependencies=[Depends(require_admin)])
 def list_riders(status: str | None = None, page: int = 1, page_size: int = 20, db: Session = Depends(get_db)):
     """List all riders with pagination and optional status filter"""
-    q = db.query(Rider)
+    q = db.query(Rider).filter(scope.is_rider_expr(db))                  # riders and drivers only; business accounts are not listed here
     if status == "active":
         q = q.filter(Rider.registration_status == "active")
     total = q.count()
@@ -323,7 +323,7 @@ def rider_stats(db: Session = Depends(get_db)):
     """Headline numbers for the Active Riders screen."""
     from app.models.business import BusinessUser                       # SMART BIZNA FIX: a business user is not a rider, so is not counted as one
     now = datetime.now(timezone.utc)
-    not_business = ~Rider.id.in_(db.query(BusinessUser.rider_id).filter(BusinessUser.rider_id.isnot(None)))
+    not_business = scope.is_rider_expr(db)                             # actual riders and drivers only (vehicle type n/a = a business account, never a rider)
     total = db.query(func.count(Rider.id)).filter(not_business).scalar() or 0
     active = db.query(func.count(Rider.id)).filter(not_business, Rider.registration_status == "active").scalar() or 0
     joined_7 = db.query(func.count(Rider.id)).filter(
@@ -332,7 +332,7 @@ def rider_stats(db: Session = Depends(get_db)):
     joined_30 = db.query(func.count(Rider.id)).filter(
         not_business, Rider.registration_status == "active", Rider.created_at >= now - timedelta(days=30)
     ).scalar() or 0
-    business_users = db.query(func.count(Rider.id)).filter(~not_business).scalar() or 0
+    business_users = db.query(func.count(Rider.id)).filter(scope.is_business_account_expr(db)).scalar() or 0      # counted apart, as business accounts
     return {
         "business_users": business_users,           # SMART BIZNA FIX: counted apart from the riders
         "total_riders": total,
@@ -437,16 +437,15 @@ def user_engagement_metrics(db: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
     seven_days_ago = now - timedelta(days=7)
 
-    trips_last_7_days = db.query(func.count(Trip.id)).filter(Trip.created_at >= seven_days_ago).scalar() or 0
+    trips_last_7_days = db.query(func.count(Trip.id)).filter(Trip.created_at >= seven_days_ago, Trip.rider_id.in_(db.query(Rider.id).filter(scope.is_rider_expr(db)))).scalar() or 0
+    is_rider = scope.is_rider_expr(db)
     riders_with_trips = (
         db.query(func.count(func.distinct(Trip.rider_id)))
-        .filter(Trip.created_at >= seven_days_ago)
+        .filter(Trip.created_at >= seven_days_ago, Trip.rider_id.in_(db.query(Rider.id).filter(is_rider)))
         .scalar()
         or 0
     )
-    total_active_riders = db.query(func.count(Rider.id)).filter(
-        Rider.registration_status == "active"
-    ).scalar() or 0
+    total_active_riders = db.query(func.count(Rider.id)).filter(is_rider, Rider.registration_status == "active").scalar() or 0
 
     avg_trips_per_active_rider = round(trips_last_7_days / riders_with_trips, 1) if riders_with_trips else 0
     pct_riders_engaged = round((riders_with_trips / total_active_riders) * 100, 1) if total_active_riders else 0

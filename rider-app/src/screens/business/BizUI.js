@@ -31,11 +31,11 @@ export function Btn({ label, onPress, kind = 'primary', disabled, small, style }
 }
 export const Badge = ({ text, tone = 'soft' }) => (<View style={[s.badge, { backgroundColor: TONE[tone][1] }]}><Text style={[s.badgeText, { color: TONE[tone][0] }]}>{text}</Text></View>);
 
-export function Field({ label, error, hint, ...input }) {
+export function Field({ label, error, hint, style, ...input }) {
   return (
     <View style={{ marginBottom: 12 }}>
       {label ? <Text style={s.label}>{label}</Text> : null}
-      <TextInput placeholderTextColor="#9aa0ab" style={[s.input, error && { borderColor: C.red }]} {...input} />
+      <TextInput placeholderTextColor="#9aa0ab" style={[s.input, error && { borderColor: C.red }, style]} {...input} />
       {error ? <Text style={s.err}>{error}</Text> : hint ? <Text style={s.hint}>{hint}</Text> : null}
     </View>
   );
@@ -84,7 +84,7 @@ export function Pager({ page, pages, from, to, total, onChange }) {
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
       <Btn label="‹ Previous" kind="ghost" small disabled={page <= 1} onPress={() => onChange(page - 1)} />
-      <Text style={s.hint}>{from}-{to} of {total} · Page {page}/{pages}</Text>
+      <Text style={s.hint} testID="pager-counter">{from} to {to} of {total} · page {page} of {pages}</Text>
       <Btn label="Next ›" kind="ghost" small disabled={page >= pages} onPress={() => onChange(page + 1)} />
     </View>
   );

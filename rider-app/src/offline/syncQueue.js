@@ -153,6 +153,13 @@ const RECORD_TYPE_VALIDATORS = {
     requiredEndpointParams: [],
     description: 'Smart Bizna request for a statement older than six months',
   },
+  // The DAILY SUMMARY of a person's day (replaces sending every sale, purchase and expense line). A newer summary of the same day REPLACES the one still waiting.
+  business_daily_summary: {
+    priority: PRIORITY_LEVELS.NORMAL,
+    requiredFields: ['rider_id', 'business_id', 'client_id', 'day', 'summary'],
+    requiredEndpointParams: [],
+    description: 'Smart Bizna daily summary (one per person per day; the final one is made at the end-of-day close)',
+  },
   business_lipa_payment: {
     priority: PRIORITY_LEVELS.HIGH,
     requiredFields: ['rider_id', 'business_id', 'client_id', 'sale_client_id', 'amount'],
@@ -870,6 +877,13 @@ export async function processPendingSync() {
           retryCount: item.retryCount || 0
         });
         
+        // A Lipa Later payment the SERVER refuses (422: it no longer fits the balance, e.g. someone else paid in between) is never retried and never
+        // silently changed: it is kept as it was, flagged "rejected", and the person is told on the Lipa Later screens (components/RejectedPaymentsNotice).
+        if (statusCode === 422 && PAYMENT_TYPES.includes(item.type)) {
+          await markPaymentRejected(item.id, plainReason(errorData));
+          continue;
+        }
+
         // Mark as failed with error message
         await markAsFailed(item.id, errorMsg);
       }
@@ -1046,6 +1060,18 @@ export async function addToSyncQueue(record) {
     // Load existing queue
     const queue = await loadSyncQueue();
 
+    // A daily summary REPLACES the older version of the same day that is still waiting (and a final one is never replaced by a provisional one).
+    if (record.type === 'business_daily_summary') {
+      const old = queue.find((q) => q.id === record.id && q.type === record.type && q.status !== 'synced');
+      if (old) {
+        if (old.data && old.data.final && !(record.data && record.data.final)) return true;
+        const keep = queue.filter((q) => q !== old);
+        keep.push({ ...record, status: 'pending', retryCount: 0 });
+        await saveSyncQueue(keep);
+        return true;
+      }
+    }
+
     // Check for duplicate
     const isDuplicate = queue.some(
       q => q.id === record.id && q.type === record.type
@@ -1168,6 +1194,48 @@ export async function markAsSynced(recordId) {
     console.error('❌ Error marking as synced:', err);
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------------------------- refused Lipa Later payments
+export const PAYMENT_TYPES = ['business_lipa_payment', 'supplier_lipa_payment', 'lipa_later_payment'];
+
+/** The server's reason in plain words: detail may be a text, or { code, message } (the Smart Bizna routes). */
+export function plainReason(data) {
+  const d = data && (data.detail !== undefined ? data.detail : data.message);
+  if (d && typeof d === 'object') return String(d.message || d.detail || 'The server did not accept this payment.');
+  return String(d || 'The server did not accept this payment.');
+}
+
+/** Keep the payment exactly as recorded on the phone, stop retrying it, and remember why it was refused so the person can be told. */
+export async function markPaymentRejected(recordId, reason) {
+  try {
+    const queue = await loadSyncQueue();
+    const item = queue.find((q) => q.id === recordId);
+    if (!item) return false;
+    item.status = 'failed';                       // out of the retry loop (getPendingItems skips 'failed')
+    item.rejected = true; item.rejectionMessage = reason; item.rejectedAt = new Date().toISOString(); item.rejectionSeen = false;
+    item.lastError = reason; item.nextRetryTime = null;
+    await saveSyncQueue(queue);
+    return true;
+  } catch (err) { console.error('❌ Error marking payment rejected:', err); return false; }
+}
+
+/** Refused payments the person has not dismissed yet: [{ id, type, amount, message, rejectedAt }]. */
+export async function getRejectedPayments() {
+  try {
+    const queue = await loadSyncQueue();
+    return queue.filter((q) => q.rejected && !q.rejectionSeen && PAYMENT_TYPES.includes(q.type))
+      .map((q) => ({ id: q.id, type: q.type, amount: Number((q.data && (q.data.amount ?? q.data.paymentAmount)) || 0), message: q.rejectionMessage, rejectedAt: q.rejectedAt }));
+  } catch (err) { return []; }
+}
+
+export async function dismissRejectedPayment(recordId) {
+  try {
+    const queue = await loadSyncQueue();
+    const item = queue.find((q) => q.id === recordId);
+    if (!item) return false;
+    item.rejectionSeen = true; await saveSyncQueue(queue); return true;
+  } catch (err) { return false; }
 }
 
 /**

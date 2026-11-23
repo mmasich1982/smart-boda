@@ -25,6 +25,7 @@ import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { addToSyncQueue } from '../../offline/syncQueue';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import api from '../../api/client';
+import { isAmountLocked, defaultAmount, amountHint, amountToSave, validatePayment } from '../../utils/lipaPaymentRules';
 import {
   loadCustomerPaymentHistory,
   saveCustomerPaymentHistory,
@@ -45,7 +46,6 @@ export default function RecordPaymentScreen({ route, navigation }) {
   const { isConnected, isInitialized } = useNetworkStatus();
   const { error: criticalError, showError: showCriticalError, clearError: clearCriticalError } = useCriticalError();
   
-  const hasAutoFilledRef = useRef(false);
 
   // ✅ LOAD RIDER ID ON MOUNT
   useEffect(() => {
@@ -70,14 +70,12 @@ export default function RecordPaymentScreen({ route, navigation }) {
   const remaining = (customerData?.totalOutstanding || 0);
   const originalAmount = totalPaid + remaining;
 
-  // ✅ AUTO-FILL TOTAL OUTSTANDING AMOUNT ON MOUNT - ONLY ONCE
-  useEffect(() => {
-    if (remaining > 0 && !hasAutoFilledRef.current) {
-      setPaymentAmount(remaining.toString());
-      hasAutoFilledRef.current = true;
-      console.log('✅ Auto-filled payment amount:', remaining);
-    }
-  }, [remaining]);
+  // THE PAYMENT RULES (utils/lipaPaymentRules.js): Full payment is pre-selected and the box shows the whole balance, greyed out and NOT editable;
+  // Partial payment starts blank, is editable and must be below the balance. A payment is never more than what is owed.
+  const amountLocked = isAmountLocked(paymentType);
+  const check = validatePayment(paymentType, paymentAmount, remaining);
+  const shownAmount = amountLocked ? defaultAmount('full', remaining) : paymentAmount;
+  const choosePaymentType = (t) => { setPaymentType(t); setPaymentAmount(''); };
 
   // ✅ UPDATE DAILY TRADE SUMMARY - Creates if doesn't exist
   const updateDailyTradeSummary = async (amount) => {
@@ -195,30 +193,11 @@ export default function RecordPaymentScreen({ route, navigation }) {
   const handleSave = async () => {
     try {
       // Validation
-      const amount = parseFloat(paymentAmount);
-      if (!paymentAmount || amount <= 0) {
-        showCriticalError(
-          t('validationError_enterValidCost') || 'Please enter a valid payment amount greater than zero.',
-          'validation'
-        );
+      if (!check.ok) {
+        showCriticalError(check.message || t('validationError_enterValidCost') || 'Please enter a valid payment amount greater than zero.', 'validation');
         return;
       }
-
-      if (paymentType === 'full' && amount < remaining) {
-        showCriticalError(
-          `Full settlement must be at least KSh ${remaining.toLocaleString()}`,
-          'validation'
-        );
-        return;
-      }
-
-      if (paymentType === 'partial' && amount >= remaining) {
-        showCriticalError(
-          `Partial payment must be less than KSh ${remaining.toLocaleString()}`,
-          'validation'
-        );
-        return;
-      }
+      const amount = amountToSave(paymentType, paymentAmount, remaining);   // Full: exactly the balance; Partial: what was typed (already checked)
 
       if (!customerId) {
         showCriticalError(
@@ -333,7 +312,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
       console.log('💾 Recorded payment locally:', { 
         recordId, 
         customerId, 
-        amount: paymentAmount,
+        amount,
         isFullySettled 
       });
 
@@ -525,7 +504,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
               styles.radioOptionHalf,
               paymentType === 'full' && styles.radioOptionSelected
             ]}
-            onPress={() => setPaymentType('full')}
+            onPress={() => choosePaymentType('full')}
             activeOpacity={0.7}
           >
             <View style={[
@@ -546,7 +525,7 @@ export default function RecordPaymentScreen({ route, navigation }) {
               styles.radioOptionHalf,
               paymentType === 'partial' && styles.radioOptionSelected
             ]}
-            onPress={() => setPaymentType('partial')}
+            onPress={() => choosePaymentType('partial')}
             activeOpacity={0.7}
           >
             <View style={[
@@ -570,20 +549,18 @@ export default function RecordPaymentScreen({ route, navigation }) {
           <Text style={styles.required}> *</Text>
         </Text>
         <TextInput
-          style={styles.input}
-          placeholder={remaining.toString()}
+          testID="pay-amount"
+          style={[styles.input, amountLocked && styles.inputLocked]}
+          placeholder="0"
           placeholderTextColor="#b0a89d"
           keyboardType="decimal-pad"
-          value={paymentAmount}
-          onChangeText={setPaymentAmount}
-          editable={!saving}
+          value={shownAmount}
+          onChangeText={(v) => setPaymentAmount(v.replace(/[^0-9.]/g, ''))}
+          editable={!saving && !amountLocked}
+          selectTextOnFocus={!amountLocked}
         />
-        <Text style={styles.hint}>
-          {paymentType === 'full' 
-            ? `Full settlement must be at least KSh ${remaining.toLocaleString()}`
-            : `Partial payment must be less than KSh ${remaining.toLocaleString()}`
-          }
-        </Text>
+        {check.message ? <Text style={[styles.hint, { color: '#c0392b' }]}>{check.message}</Text> : null}
+        <Text style={styles.hint}>{amountHint(paymentType, remaining)}</Text>
       </View>
 
       {/* Notes */}
@@ -605,10 +582,10 @@ export default function RecordPaymentScreen({ route, navigation }) {
       <TouchableOpacity
         style={[
           styles.primaryBtn,
-          saving && styles.primaryBtnDisabled
+          (saving || !check.ok) && styles.primaryBtnDisabled
         ]}
         onPress={handleSave}
-        disabled={saving}
+        disabled={saving || !check.ok}
         activeOpacity={0.8}
       >
         <View style={styles.btnContent}>
@@ -775,6 +752,7 @@ const styles = StyleSheet.create({
     color: '#1a1c20',
   },
 
+  inputLocked: { backgroundColor: '#eceae4', color: '#7a7f8a' },
   input: {
     width: '100%',
     padding: 14,

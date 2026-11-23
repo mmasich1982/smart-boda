@@ -98,6 +98,7 @@ export function runBusinessSyncCycle() {
       }
       if (!(await isBusinessUser())) return { ...out, skipped: 'not_business' };
       await ensureBusinessProfile();                                                         // Home is right even before the first answer
+      try { await require('./businessDayClose').closeAllBusinessDays(require('./businessRepository')); } catch { /* never blocks the sync */ }   // END-OF-DAY CLOSE for every business, even offline
       if (!(await isOnlineNow())) return { ...out, skipped: 'offline' };
       const client = require('../api/businessClient');
       let list;

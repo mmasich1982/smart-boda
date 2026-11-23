@@ -1,43 +1,84 @@
 // rider-app/src/offline/businessStatementPdf.js
-// SMART BIZNA statements: the PDF is built ON THE PHONE from the saved statement (Summary or Detailed). No email, no internet, no server call.
-// renderBusinessStatementHtml() is pure (tested); downloadBusinessStatement() prints it with expo-print and opens the share sheet.
-import { kes, fmtDateTime, methodLabel, KIND_LABEL } from '../utils/businessFormat';
+// SMART BIZNA STATEMENTS. The document is built on the phone from the saved statement (Summary or Detailed). renderBusinessStatementHtml() is pure (and tested);
+// downloadBusinessStatement() prints it with expo-print and opens the share sheet.
+//
+// WHAT THE DOCUMENT SHOWS (and nothing else): the Smart Apps logo and "Simple Smart Apps Hub"; the business and period; Sales, Purchases, Expenses and Net Income;
+//   Summary  : one row per month, then the Total, and Net Income by month.
+//   Detailed : for each month one row per DAY (that day's total sales, purchases and expenses), then the month's Total, and a Grand Total over a longer period.
+// followed by Sales by Payment Method, Where the Money Went (cost breakdown), the Team, and a verification code. Every figure is a daily total, never a single transaction.
+// Net Income = Sales - (Purchases + Expenses).
+import { PROVIDER_NAME, esc, brandCss, brandHeaderHtml, brandFooterHtml } from './statementBrand';
 
-const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const money = (n) => esc(kes(n));
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const num = (v) => Number(v || 0);
+const n0 = (v) => num(v).toLocaleString('en-KE', { maximumFractionDigits: 2, minimumFractionDigits: num(v) % 1 ? 2 : 0 });
+const ksh = (v) => `KSh ${n0(v)}`;
+const day = (iso) => { const [y, m, d] = String(iso || '').slice(0, 10).split('-').map(Number); return d ? `${d} ${MONTHS[m - 1]} ${y}` : ''; };
+const longStamp = (iso) => { const t = new Date(new Date(iso).getTime() + 3 * 3600000); return Number.isNaN(t.getTime()) ? '' : `${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]} ${t.getUTCFullYear()}`; };
+const pct = (v, max) => (max > 0 ? Math.max(0, Math.min(100, Math.round((Math.abs(num(v)) / max) * 100))) : 0);
+const NETCLS = (v) => (num(v) < 0 ? 'neg' : 'pos');
 
+function kpis(t) {
+  const cell = (l, v, cls = '') => `<td class="${cls}"><div class="l">${l}</div><div class="v">${esc(ksh(v))}</div></td>`;
+  return `<table class="kpi"><tr>${cell('Sales', t.income)}<td class="gap"></td>${cell('Purchases', t.purchases)}<td class="gap"></td>${cell('Expenses', t.expenses)}<td class="gap"></td>${cell('Net Income', t.net_profit, `net ${num(t.net_profit) < 0 ? 'neg' : ''}`)}</tr></table>`;
+}
+
+const head = (first) => `<tr><th>${first}</th><th class="r">Sales (KSh)</th><th class="r">Purchases (KSh)</th><th class="r">Expenses (KSh)</th><th class="r">Net Income (KSh)</th></tr>`;
+const row = (label, r, cls = '', sub = '') => `<tr${cls ? ` class="${cls}"` : ''}><td>${label}${sub ? ` <span class="muted">${esc(sub)}</span>` : ''}</td><td class="r">${n0(r.sales)}</td><td class="r">${n0(r.purchases)}</td><td class="r">${n0(r.expenses)}</td><td class="r ${NETCLS(r.net)}">${n0(r.net)}</td></tr>`;
+const weekday = (iso) => WEEKDAYS[new Date(`${iso}T00:00:00Z`).getUTCDay()];
+
+function netChart(months) {
+  if (!months || months.length < 2) return '';
+  const max = Math.max(...months.map((m) => Math.abs(num(m.totals.net))), 1);
+  return `<h2>Net Income by Month</h2><table class="t"><tr><th style="width:90px">Month</th><th>Net Income</th><th class="r" style="width:110px">KSh</th></tr>${months.map((m) => `<tr><td>${esc(m.label)}</td><td><div class="bar ${num(m.totals.net) < 0 ? '' : 'g'}"><i style="width:${pct(m.totals.net, max)}%"></i></div></td><td class="r ${NETCLS(m.totals.net)}">${n0(m.totals.net)}</td></tr>`).join('')}</table>`;
+}
+
+function renderTables(st) {
+  const tb = st.tables;
+  if (!tb || !Array.isArray(tb.months)) return '';
+  if (st.type !== 'detailed') {
+    return `<h2>Summary by Month</h2><table class="t">${head('Month')}${tb.months.map((m) => row(esc(m.label), m.totals, '', m.partial ? `${day(m.from)} – ${day(m.to)}` : '')).join('')}${row('Total', tb.grand, 'tot')}</table>${netChart(tb.months)}`;
+  }
+  const month = (m, i) => `<div class="month${i ? ' pb' : ''}">${esc(m.label)}${m.partial ? ` <span class="muted" style="font-weight:normal">(${esc(day(m.from))} – ${esc(day(m.to))})</span>` : ''}</div><table class="t">${head('Day')}${m.days.map((d) => row(`${d.dom} <span class="muted">${weekday(d.day)}</span>`, d)).join('')}${row('Total', m.totals, 'tot')}</table>`;
+  const grand = tb.multiMonth ? `<h2>Grand Total</h2><table class="t">${head('Period')}${row(`${esc(day(st.date_from))} – ${esc(day(st.date_to))}`, tb.grand, 'tot')}</table>${netChart(tb.months)}` : '';
+  return `${tb.months.map(month).join('')}${grand}`;
+}
+
+function insights(t) {
+  const pm = (t.by_payment_method || []).filter((m) => num(m.count) || num(m.amount));
+  const max = Math.max(...pm.map((m) => num(m.amount)), 1);
+  const pay = pm.length ? `<h2>Sales by Payment Method</h2><table class="t"><tr><th style="width:90px">Method</th><th>Share of sales</th><th class="r" style="width:70px">Count</th><th class="r" style="width:100px">KSh</th><th class="r" style="width:46px">%</th></tr>${pm.map((m) => `<tr><td>${esc(m.label)}</td><td><div class="bar"><i style="width:${pct(m.amount, max)}%"></i></div></td><td class="r">${n0(m.count)}</td><td class="r">${n0(m.amount)}</td><td class="r">${esc(m.percent)}%</td></tr>`).join('')}</table>` : '';
+  const cb = (t.cost_breakdown || []);
+  const cmax = Math.max(...cb.map((c) => num(c.amount)), 1);
+  const cost = cb.length ? `<h2>Where the Money Went</h2><table class="t"><tr><th style="width:150px">Cost</th><th>Share of costs</th><th class="r" style="width:100px">KSh</th><th class="r" style="width:46px">%</th></tr>${cb.map((c) => `<tr><td>${esc(c.label)}</td><td><div class="bar n"><i style="width:${pct(c.amount, cmax)}%"></i></div></td><td class="r">${n0(c.amount)}</td><td class="r">${esc(c.percent)}%</td></tr>`).join('')}</table>` : '';
+  const people = (t.by_person || []).filter((p) => num(p.income) || num(p.costs) || num(p.sales_count));
+  const team = people.length > 1 ? `<h2>Team Performance</h2><table class="t"><tr><th>Name</th><th>Role</th><th class="r">Sales made</th><th class="r">Sales (KSh)</th><th class="r">Costs recorded (KSh)</th></tr>${people.map((p) => `<tr><td>${esc(p.full_name)}</td><td>${p.role === 'OWNER' ? 'Owner' : 'Sales/Service'}</td><td class="r">${n0(p.sales_count)}</td><td class="r">${n0(p.income)}</td><td class="r">${n0(p.costs)}</td></tr>`).join('')}</table>` : '';
+  return pay + cost + team;
+}
+
+/** The whole statement as one HTML document. st.sample = true adds the SAMPLE tag (demonstration documents only). */
 export function renderBusinessStatementHtml(st) {
   const t = st.totals || {};
-  const rows = (arr, cols) => arr.map((r) => `<tr>${cols.map((c) => `<td${c.right ? ' class="r"' : ''}>${c.f(r)}</td>`).join('')}</tr>`).join('');
-  const detailed = st.type === 'detailed' && Array.isArray(st.lines);
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-body{font-family:Helvetica,Arial,sans-serif;color:#1a1c20;font-size:11px;padding:24px}h1{font-size:18px;margin:0 0 2px}h2{font-size:13px;margin:18px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
-table{width:100%;border-collapse:collapse}td,th{padding:4px 6px;border-bottom:1px solid #e7e4db;text-align:left}.r{text-align:right}.big{font-size:15px;font-weight:bold}
-.void{text-decoration:line-through;color:#999}.code{font-family:monospace;font-size:13px;border:1px solid #999;padding:4px 8px;display:inline-block}.muted{color:#666}</style></head><body>
-<h1>Smart Bizna ${detailed ? 'Detailed' : 'Summary'} Statement</h1>
-<div>${esc(st.business_name)}${st.business_type ? ' (' + esc(st.business_type) + ')' : ''}</div>
-<div class="muted">Period: ${esc(st.date_from)} to ${esc(st.date_to)} · Generated: ${esc(fmtDateTime(st.generated_at))} · ${st.source === 'server' ? 'Prepared by Smart Bizna Admin from the server records' : 'Built on this phone'}</div>
-<h2>Summary</h2>
-<table><tr><td>Total Income (Sales/Services)</td><td class="r">${money(t.income)}</td></tr><tr><td>Total Purchases (paid)</td><td class="r">${money(t.purchases)}</td></tr>
-<tr><td>Total Expenses</td><td class="r">${money(t.expenses)}</td></tr><tr class="big"><td>Net Profit</td><td class="r">${money(t.net_profit)}</td></tr></table>
-<div class="muted">Net Profit = Sales/Services Income − (Purchases + Expenses). A Lipa Later sale counts as income only when the customer pays. A Lipa Later purchase counts as a cost only as the supplier is paid.</div>
-<h2>By Payment Method</h2>
-<table>${rows(t.by_payment_method || [], [{ f: (r) => esc(r.label) }, { f: (r) => `${esc(r.count)} ${r.method === 'LIPA_LATER' ? 'repayments' : 'sales'}` }, { f: (r) => money(r.amount), right: true }, { f: (r) => `${esc(r.percent)}%`, right: true }])}</table>
-<h2>Cost Breakdown</h2>
-<table>${rows(t.cost_breakdown || [], [{ f: (r) => esc(r.label) }, { f: (r) => money(r.amount), right: true }, { f: (r) => `${esc(r.percent)}%`, right: true }]) || '<tr><td class="muted">No costs in this period.</td></tr>'}</table>
-<h2>By Sales/Service Person</h2>
-<table><tr><th>Person</th><th class="r">Income</th><th class="r">Sales</th><th class="r">Costs recorded</th></tr>${rows(t.by_person || [], [{ f: (r) => `${esc(r.full_name)} (${esc(r.role === 'OWNER' ? 'Owner' : 'Sales/Service')})` },
-    { f: (r) => money(r.income), right: true }, { f: (r) => esc(r.sales_count), right: true }, { f: (r) => money(r.costs), right: true }])}</table>
-${detailed ? `<h2>Every transaction</h2><table><tr><th>Date &amp; time</th><th>Type</th><th>Details</th><th>Payment</th><th class="r">Amount</th><th>Recorded by</th></tr>${st.lines.map((l) => `<tr class="${l.status === 'voided' ? 'void' : ''}">
-<td>${esc(fmtDateTime(l.when))}</td><td>${esc(KIND_LABEL[l.type] || l.type)}${l.status === 'voided' ? ' · VOID' : ''}${l.status === 'corrected' || l.corrected ? ' · Corrected' : ''}</td><td>${esc(l.details)}</td><td>${esc(methodLabel(l.payment_method))}</td>
-<td class="r">${money(l.amount)}</td><td>${esc(l.recorded_by)}${l.role ? ' (' + esc(l.role === 'OWNER' ? 'Owner' : 'Sales/Service') + ')' : ''}</td></tr>`).join('')}</table><div class="muted">Voided records are listed but not counted in any total.</div>` : ''}
-<h2>Verification code</h2><div class="code">${esc(st.verification_code)}</div>
-<div class="muted">The code is worked out from the business, the period and the four totals. If any figure above is changed, it will no longer match.</div></body></html>`;
+  const detailed = st.type === 'detailed';
+  const title = detailed ? 'Detailed Business Statement' : 'Business Summary Statement';
+  const when = st.generated_at ? longStamp(st.generated_at) : '';
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)} · ${esc(st.business_name)}</title><style>${brandCss()}</style></head><body>
+${brandHeaderHtml({ app: 'Smart Bizna', title, sample: !!st.sample })}
+<h1>${esc(st.business_name)}</h1>
+<table class="meta"><tr><td class="k">Statement</td><td>${esc(title)}</td></tr>${st.business_type ? `<tr><td class="k">Business type</td><td>${esc(st.business_type)}</td></tr>` : ''}<tr><td class="k">Period</td><td><b>${esc(day(st.date_from))} – ${esc(day(st.date_to))}</b></td></tr>${when ? `<tr><td class="k">Issued</td><td>${esc(when)}</td></tr>` : ''}</table>
+<div style="height:10px"></div>
+${kpis(t)}
+${renderTables(st)}
+<div class="${st.tables && st.tables.months && st.tables.months.length > 6 ? 'pb' : ''}">${insights(t)}</div>
+<div class="note">Net Income = Sales − (Purchases + Expenses). Each figure is the total for that day or month. All amounts are in Kenya Shillings (KSh).</div>
+${brandFooterHtml({ left: `<div class="muted">Verification code</div><div class="code">${esc(st.verification_code || '')}</div><div class="note">Quote this code to confirm that this statement is genuine.</div>`, right: `${esc(st.business_name)}<br/>${esc(day(st.date_from))} – ${esc(day(st.date_to))}` })}
+</body></html>`;
 }
 
 export async function downloadBusinessStatement(st) {
   const Print = require('expo-print'), Sharing = require('expo-sharing');
   const { uri } = await Print.printToFileAsync({ html: renderBusinessStatementHtml(st) });
-  if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: `Smart Bizna Statement${st.business_name ? ' - ' + st.business_name : ''} ${st.date_from} to ${st.date_to}` });
+  if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: `${PROVIDER_NAME} · Statement${st.business_name ? ' - ' + st.business_name : ''} ${st.date_from} to ${st.date_to}` });
   return { uri };
 }

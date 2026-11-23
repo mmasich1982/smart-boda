@@ -29,6 +29,7 @@ import { getLocalRiderId } from '../../offline/db';
 import indexedDbAdapter from '../../offline/adapters/indexedDbAdapter';
 import { useNetworkStatus, useCriticalError } from '../../hooks/useNetworkStatus';
 import api from '../../api/client';
+import RejectedPaymentsNotice from '../../components/RejectedPaymentsNotice';
 import {
   loadLipaLaterCustomersCache,
   getPendingLipaLaterCustomers,
@@ -395,6 +396,7 @@ export default function LipaLaterCustomersScreen({ navigation }) {
       <BackLink onPress={() => navigation.navigate('Home')} label={t('backLabel') || '← Back'} />
       
       <Text style={styles.title}>Lipa Later Customers Report</Text>
+      <RejectedPaymentsNotice />
 
       {/* CRITICAL ERROR ONLY - Never show status/offline info */}
       {criticalError && (

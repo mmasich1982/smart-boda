@@ -5,17 +5,19 @@
 // first and queued for the business's own server routes (/business/lipa-later/supplier-payments). Everything here needs the Purchases permission.
 // Back links: from the Home tile the report goes back to Home; after saving a Lipa Later purchase it goes back to Business Purchases.
 import AgeingReport from './AgeingReport';
+import RejectedPaymentsNotice from '../../components/RejectedPaymentsNotice';
 import { groupAgeing } from '../../utils/ageingGroups';
 import BizDateField from './BizDateField';
 import React, { useState } from 'react';
 import { Alert, View, Text } from 'react-native';
-import { Screen, BackLink, Title, Sub, Card, Row, Field, Btn, Tabs, Badge, Banner, Empty, Hint, s, C } from './BizUI';
+import { Screen, BackLink, Title, Sub, Card, Row, Field, Btn, Tabs, Badge, Banner, Empty, Hint, Pager, s, C } from './BizUI';
+import { paginate } from '../../utils/businessLists';
 import { useBizData } from '../../hooks/useBusiness';
 import store, { BusinessRuleError } from '../../offline/businessRepository';
 import { kes, fmtDate, BADGE, AGEING_ORDER, supplierBanner, defaultDueDate } from '../../utils/businessFormat';
+import { isAmountLocked, defaultAmount, amountHint, amountToSave, validatePayment } from '../../utils/lipaPaymentRules';
 
 const say = (e) => (e instanceof BusinessRuleError ? e.message : 'Something went wrong. Please try again.');
-const PAGE = 20;
 const backTarget = (route) => (route.params && route.params.back) || 'BusinessHome';
 const backLabel = (target) => (target === 'BusinessPurchases' ? '← Purchases' : '← Home');
 
@@ -57,15 +59,18 @@ export function SupplierLipaReportScreen({ navigation, route }) {
   const digits = term.replace(/\D/g, '');
   const list = all.filter((c) => !term || c.purchase.supplier_name.toLowerCase().includes(term) || (digits && c.purchase.supplier_phone.replace(/\D/g, '').includes(digits)));
   const banner = supplierBanner(all);
+  const pg = paginate(list, page);                  // PAGING: 20 suppliers a page, back to page 1 on a new search
   return (
     <Screen>
       <BackLink label={backLabel(back)} onPress={() => navigation.navigate(back)} />
       <Title>Lipa Later Suppliers Report</Title>
       <Sub>Suppliers that you still owe. Record a payment when you pay.</Sub>
+      <RejectedPaymentsNotice />
       {banner ? <Banner tone="amber" text={`⚠️ ${banner}`} /> : null}
       <Btn label="📊 View Payment Ageing Report" kind="dark" onPress={() => navigation.navigate('SupplierLipaAgeing', { back })} />
       <Field placeholder="🔍 Search by supplier name or mobile number…" value={q} onChangeText={(v) => { setQ(v); setPage(1); }} />
-      {list.slice(0, page * PAGE).map((c, i) => (
+      <Pager {...pg} onChange={setPage} />
+      {pg.rows.map((c, i) => (
         <Card key={c.purchase.client_id}>
           <Text style={{ fontWeight: '800', color: C.ink, fontSize: 15 }}>{i + 1}. {c.purchase.supplier_name}</Text>
           <Hint>{c.purchase.supplier_phone} · purchased {fmtDate(c.purchase.trading_at)} · due {fmtDate(c.purchase.due_date)}</Hint>
@@ -76,7 +81,7 @@ export function SupplierLipaReportScreen({ navigation, route }) {
         </Card>
       ))}
       {!list.length ? <Empty>{term ? 'No supplier matches your search.' : 'You do not owe any supplier right now.'}</Empty> : null}
-      {list.length > page * PAGE ? <Btn label="Next →" kind="ghost" onPress={() => setPage(page + 1)} /> : null}
+      <Pager {...pg} onChange={setPage} />
     </Screen>
   );
 }
@@ -86,13 +91,16 @@ export function RecordSupplierPaymentScreen({ navigation, route }) {
   const { purchaseClientId } = route.params || {};
   const back = backTarget(route);
   const { data: c } = useBizData(async () => (await store.supplierLipaList({ includeSettled: true })).find((x) => x.purchase.client_id === purchaseClientId) || null, [purchaseClientId], { pollMs: 0 });
-  const [type, setType] = useState('full'), [amount, setAmount] = useState(null), [notes, setNotes] = useState(''), [busy, setBusy] = useState(false);
+  const [type, setType] = useState('full'), [typed, setTyped] = useState(''), [notes, setNotes] = useState(''), [busy, setBusy] = useState(false);
   if (!c) return <Screen><BackLink label="← Back" onPress={() => navigation.goBack()} /><Empty>Payment not found.</Empty></Screen>;
-  const amt = amount === null ? String(c.balance) : amount;
+  // THE PAYMENT RULES (utils/lipaPaymentRules.js): Full shows the whole balance greyed out and not editable; Partial is blank, editable and below the balance.
+  const locked = isAmountLocked(type), check = validatePayment(type, typed, c.balance);
+  const shown = locked ? defaultAmount('full', c.balance) : typed;
   const save = async () => {
+    if (!check.ok) return;
     setBusy(true);
     try {
-      const r = await store.recordSupplierPayment({ purchaseClientId, type, amount: parseFloat(amt), notes });
+      const r = await store.recordSupplierPayment({ purchaseClientId, type, amount: amountToSave(type, typed, c.balance), notes });
       Alert.alert('Payment recorded', r.balance > 0 ? `You still owe ${c.purchase.supplier_name} ${kes(r.balance)}.` : `${c.purchase.supplier_name} is fully paid.`);
       navigation.navigate('SupplierLipaReport', { back });
     } catch (e) { Alert.alert('Record Payment', say(e)); } finally { setBusy(false); }
@@ -109,11 +117,11 @@ export function RecordSupplierPaymentScreen({ navigation, route }) {
       </Card>
       <Text style={s.label}>Payment Type</Text>
       <Tabs tabs={[{ key: 'full', label: 'Full Payment (complete settlement)' }, { key: 'partial', label: 'Partial Payment' }]} value={type}
-        onChange={(t) => { setType(t); setAmount(t === 'full' ? String(c.balance) : ''); }} />
-      <Hint style={{ marginBottom: 8 }}>{type === 'full' ? `Full must be at least ${kes(c.balance)}.` : `Partial must be less than ${kes(c.balance)}.`}</Hint>
-      <Field label="Amount Paid (KSh)" value={amt} onChangeText={(v) => setAmount(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="0" />
+        onChange={(t) => { setType(t); setTyped(''); }} />
+      <Field label="Amount Paid (KSh)" value={shown} onChangeText={(v) => setTyped(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" placeholder="0" testID="pay-amount"
+        editable={!locked} selectTextOnFocus={!locked} error={check.message} hint={amountHint(type, c.balance)} style={locked ? { backgroundColor: '#eceae4', color: '#7a7f8a' } : undefined} />
       <Field label="Notes (optional)" value={notes} onChangeText={setNotes} maxLength={200} placeholder="e.g. Paid via M-Pesa, balance next week…" />
-      <Btn label="Record Payment →" onPress={save} disabled={busy || !(parseFloat(amt) > 0) || c.balance <= 0} />
+      <Btn label="Record Payment →" onPress={save} disabled={busy || !check.ok} />
       <Hint>The payment counts as a purchase cost today.</Hint>
     </Screen>
   );

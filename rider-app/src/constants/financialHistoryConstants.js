@@ -2,7 +2,7 @@
  * financialHistoryConstants.js
  * Configuration constants for financial history and statement features
  */
-
+// rider-app/src/constants/financialHistoryConstants.js
 // Statement purposes - predefined options for statement generation
 export const STATEMENT_PURPOSES = [
   'Loan Application',
@@ -42,11 +42,6 @@ export const QUICK_SELECT_PERIODS = {
     key: 'last6',
     label: 'Last 6 Months',
     description: 'Past 180 days',
-  },
-  sinceJoining: {
-    key: 'sinceJoining',
-    label: 'Since Joining',
-    description: 'From registration date',
   },
 };
 

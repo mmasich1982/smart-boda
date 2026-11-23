@@ -31,7 +31,7 @@ from app.routers.mobile_number import validate_mobile_number
 from app.services import business_net_profit_service as npf
 
 router = APIRouter(prefix="/business", tags=["business"])
-RETENTION_MONTHS = 6
+RETENTION_MONTHS = 3          # the phone keeps this month and the 3 before it; anything older is requested from the Administrator (with a fee)
 
 
 # ----------------------------------------------------------------------------------------------- who is calling
@@ -587,7 +587,16 @@ def _bundle(db, c, kinds, own_only, since):
         if t:
             sq = sq.filter(BusinessSupplierLipaPayment.created_at > t)
         spays = [_pay_row(p, users, purchases[sl_ids[p.lipa_later_id]].client_id, "purchase_client_id") for p in sq.all() if p.lipa_later_id in sl_ids]
-    return {"business_id": str(c.biz.id), "records": out_recs, "payments": pays, "supplier_payments": spays, "server_time": _iso(_now())}   # business_id: the phone refuses a bundle meant for another business
+    from app.services import business_daily_service as daily
+    today = daily.eat_today()
+    first = date(today.year + (today.month - 1 - RETENTION_MONTHS) // 12, (today.month - 1 - RETENTION_MONTHS) % 12 + 1, 1)      # the 3 months the phone keeps
+    sq = db.query(daily.BusinessDailySummary).filter(daily.BusinessDailySummary.business_id == c.biz.id, daily.BusinessDailySummary.day >= first)
+    if own_only:
+        sq = sq.filter(daily.BusinessDailySummary.business_user_id == c.bu.id)
+    if t:
+        sq = sq.filter(daily.BusinessDailySummary.updated_at > t)
+    return {"business_id": str(c.biz.id), "records": out_recs, "payments": pays, "supplier_payments": spays, "daily_summaries": daily.summary_dicts(sq.all()),
+            "server_time": _iso(_now())}   # business_id: the phone refuses a bundle meant for another business
 
 
 @router.get("/mine")
@@ -624,8 +633,9 @@ def record_dicts(db, business_id):
 
 
 def _totals(db, c, start, end):
-    recs, pays, users, spays = record_dicts(db, c.biz.id)
-    return npf.compute(recs, pays, start, end, users, spays)
+    """The business's totals for a period, from the DAILY SUMMARIES (the server no longer stores every sale, purchase and expense line)."""
+    from app.services import business_daily_service as daily
+    return daily.totals_for(db, c.biz.id, start, end)
 
 
 def _range(date_from, date_to):
@@ -712,7 +722,33 @@ def transactions(date_from: date, date_to: date, kind: Optional[str] = None, lim
     return {"total": len(rows), "items": rows[offset: offset + limit]}
 
 
-# ----------------------------------------------------------------------------------------------- statements older than six months
+# ----------------------------------------------------------------------------------------------- daily summaries (replace the lines)
+class DailySummaryIn(BaseModel):
+    business_id: Optional[str] = None
+    client_id: str = Field(min_length=6, max_length=140)       # "<business id>:<person id>:<day>" is 84 characters
+    day: date
+    final: bool = False
+    summary: dict
+
+
+@router.post("/daily-summaries")
+def save_daily_summary(body: DailySummaryIn, rider=Depends(get_current_rider), bid: Optional[str] = Depends(business_header), db: Session = Depends(get_db)):
+    """A person's summary of one day (a running one while the day is open, the final one at the end-of-day close). Idempotent: the same day replaces itself; a final
+    summary is never replaced by a running one. Always saved under the signed-in person, whatever the summary says."""
+    from app.services import business_daily_service as daily
+    c = get_ctx(db, rider, bid)
+    same_business(c, body)
+    return {"status": daily.upsert_summary(db, c.biz.id, c.bu, body.day, body.final, body.summary), "client_id": body.client_id}
+
+
+@router.get("/statement-fees")
+def statement_fees(rider=Depends(get_current_rider), db: Session = Depends(get_db)):
+    """What a statement older than the 3 months on the phone costs (bands of months back), set by the Administrator."""
+    from app.services import business_daily_service as daily
+    return {"tiers": daily.get_fee_tiers(db), "on_phone_months": RETENTION_MONTHS, "archive_months": 12}
+
+
+# ----------------------------------------------------------------------------------------------- statements older than the 3 months on the phone
 def window_cutoff(today: date = None) -> date:
     t = today or _now().astimezone(npf.EAT).date()
     m = t.month - RETENTION_MONTHS
@@ -735,18 +771,22 @@ def create_statement_request(body: StatementReqIn, rider=Depends(get_current_rid
         raise HTTPException(422, "The end date is before the start date.")
     if body.period_to > today:
         raise HTTPException(422, "The period cannot be in the future.")
-    if body.period_from >= window_cutoff(today):
+    from app.services import business_daily_service as daily
+    fee = daily.fee_for(db, body.period_from, today)
+    if fee["on_phone"]:
         raise HTTPException(422, {"code": "WITHIN_WINDOW", "message": "You can generate this statement yourself in the app."})
+    if not fee["available"]:
+        raise HTTPException(422, {"code": "NOT_AVAILABLE", "message": "Statements are kept for one year. This period is older than that."})
     r = BusinessStatementRequest(business_id=c.biz.id, requested_by=c.bu.id, client_id=body.client_id, statement_type=body.statement_type,
-                                 period_from=body.period_from, period_to=body.period_to, purpose=body.purpose)
+                                 period_from=body.period_from, period_to=body.period_to, purpose=body.purpose, fee_ksh=fee["fee"])    # the fee is worked out here, never trusted from the phone
     if not _save(db, r):
         return {"status": "duplicate", "client_id": body.client_id}
-    return {"status": "requested", "client_id": r.client_id}
+    return {"status": "requested", "client_id": r.client_id, "fee_ksh": fee["fee"]}
 
 
 def request_out(r, include_statement=True):
     return {"client_id": r.client_id, "statement_type": r.statement_type, "period_from": r.period_from.isoformat(), "period_to": r.period_to.isoformat(),
-            "purpose": r.purpose, "status": r.status, "requested_at": _iso(r.requested_at), "ready_at": _iso(r.ready_at),
+            "purpose": r.purpose, "fee_ksh": float(r.fee_ksh) if r.fee_ksh is not None else None, "status": r.status, "requested_at": _iso(r.requested_at), "ready_at": _iso(r.ready_at),
             "statement": r.statement if include_statement and r.status == "ready" else None}
 
 

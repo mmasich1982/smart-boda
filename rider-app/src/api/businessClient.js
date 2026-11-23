@@ -19,4 +19,6 @@ export const businessSuppliers = (businessId) => api.get('/business/suppliers', 
 export const businessMine = (businessId, since) => api.get('/business/mine', forBusiness(businessId, { params: since ? { since } : undefined })).then(data);
 export const businessSnapshot = (businessId, since) => api.get('/business/snapshot', forBusiness(businessId, { params: since ? { since } : undefined })).then(data);
 export const businessStatementRequests = (businessId) => api.get('/business/statement-requests', forBusiness(businessId)).then(data);
+/** The fees for statements older than the 3 months on the phone (set by the Administrator): [{ from, to, fee }] months back from this month. */
+export const businessStatementFees = () => api.get('/business/statement-fees').then(data);
 export { forBusiness };

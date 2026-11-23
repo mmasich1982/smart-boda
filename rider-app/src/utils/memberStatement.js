@@ -4,8 +4,8 @@
 //   Loan repaid    loan repayments confirmed by the Treasurer
 //   Received       loans paid out to the member and Merry-Go-Round payouts (only what the server has told the phone)
 //   Balance owing  what is still owed on the member's loan (from the server; blank when it has not been read yet)
-// Only CONFIRMED payments count. Periods: This Month, Last Month, 6 Months (what the phone keeps), Since Joining (server totals, any age).
-export const PERIODS = [['thisMonth', 'This Month'], ['lastMonth', 'Last Month'], ['sixMonths', '6 Months'], ['sinceJoining', 'Since Joining']];
+// Only CONFIRMED payments count. Periods: This Month, Last Month, 6 Months (what the phone keeps; the longest period, "Since Joining" was removed).
+export const PERIODS = [['thisMonth', 'This Month'], ['lastMonth', 'Last Month'], ['sixMonths', '6 Months']];
 
 const t = (e) => new Date(e.at).getTime();
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -24,14 +24,13 @@ export function inPeriod(rows, period, now = new Date()) {
   const { thisStart, lastStart, windowStart } = periodStarts(now);
   if (period === 'thisMonth') return ok.filter((e) => t(e) >= thisStart);
   if (period === 'lastMonth') return ok.filter((e) => t(e) >= lastStart && t(e) < thisStart);
-  if (period === 'sixMonths') return ok.filter((e) => t(e) >= windowStart);
-  return ok;
+  return ok.filter((e) => t(e) >= windowStart);       // 6 Months, and what an old saved 'sinceJoining' now opens on
 }
 
 /**
  * @param {{savings?:Array, repayments?:Array, mgr?:Array, received?:Array}} src   rows shaped { amount, status, at }
  * @param {string} period
- * @param {{owing?:number|null, sinceJoining?:{paid_in?:number, repaid?:number, received?:number}|null}} extra  server figures
+ * @param {{owing?:number|null}} extra  server figures
  */
 export function memberTotals(src, period, now = new Date(), extra = {}) {
   const s = src || {};
@@ -40,12 +39,6 @@ export function memberTotals(src, period, now = new Date(), extra = {}) {
   const repaid = sum(inPeriod(s.repayments, period, now));
   const received = sum(inPeriod(s.received, period, now));
   const out = { paidIn, repaid, received, owing: extra.owing === undefined || extra.owing === null ? null : num(extra.owing) };
-  const sj = extra.sinceJoining;
-  if (period === 'sinceJoining' && sj) {      // the server covers payments older than the phone keeps: never show less than the phone knows
-    out.paidIn = Math.max(out.paidIn, num(sj.paid_in));
-    out.repaid = Math.max(out.repaid, num(sj.repaid));
-    out.received = Math.max(out.received, num(sj.received));
-  }
   return out;
 }
 

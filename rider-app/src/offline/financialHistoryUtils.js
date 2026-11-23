@@ -36,7 +36,7 @@ import indexedDbAdapter from './adapters/indexedDbAdapter';
  *
  * financial_earliest_date_${riderId}
  *   - Earliest transaction date for rider
- *   - Used to calculate "Since Joining" range
+ *   - (No longer used by a screen: "Since Joining" was removed)
  *   - Updated when new oldest entry found
  *
  * statement_${statementId}
@@ -270,7 +270,7 @@ export async function getFinancialSummaryForRange(riderId, rangeStart, rangeEnd)
 
 /**
  * Get earliest transaction date for rider
- * Used to calculate "Since Joining" period
+ * (No screen uses this now that "Since Joining" was removed)
  */
 export async function getEarliestTransactionDate(riderId) {
   try {

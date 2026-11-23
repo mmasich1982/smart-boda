@@ -10,6 +10,7 @@ import { useBizData } from '../../hooks/useBusiness';
 import store from '../../offline/businessRepository';
 import { RecordRow } from './RecordParts';
 import * as R from '../../offline/businessReportUtils';
+import DailyTotalRow from './DailyTotalRow';
 import { kes, PERF_TABS, FIN_TABS, histRange, rangeLabel, fmtDateTime } from '../../utils/businessFormat';
 
 const METHOD_COLOR = { CASH: C.green, MPESA: C.orange, CARD: '#8b5cf6', LIPA_LATER: C.amber };
@@ -150,18 +151,21 @@ export function BusinessTransactionsScreen({ navigation, route }) {
   const [filter, setFilter] = useState('all');
   const [page, setPage] = useState(1);                       // 20 a page, on every tab (All, Sales/Services, Purchases, Expenses)
   const range = histRange(key);
-  const { data } = useBizData(async () => (await store.transactions(range[0], range[1], filter)).map((r) => (r.record ? { ...r.record, _row: r } : { ...r, kind: r.type, _row: r })), [key, filter]);
+  const { data } = useBizData(async () => {          // today's lines (this person's own), then one row per earlier day
+    const v = await store.transactionsView(range, filter);
+    return [...v.today.map((r) => ({ t: 'rec', r: r.record ? { ...r.record, _row: r } : { ...r, kind: r.type, _row: r } })), ...v.days.map((r) => ({ t: 'day', r }))];
+  }, [key, filter]);
   const pg = paginate(data || [], page);
   const changeFilter = (f) => { setFilter(f); setPage(1); };
   return (
     <Screen>
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
       <Title>Transactions</Title>
-      <Hint style={{ marginBottom: 8 }}>{rangeLabel(range)}</Hint>
+      <Hint style={{ marginBottom: 8 }}>{rangeLabel(range)} · individual transactions are shown for today only; earlier days show one daily total.</Hint>
       <Tabs tabs={FILTERS} value={filter} onChange={changeFilter} />
       <Pager {...pg} onChange={setPage} />
       <Card>
-        {data && data.length ? pg.rows.map((r) => <RecordRow key={r.client_id + (r.kind || '')} rec={r} navigation={navigation} showWho transaction={r._row} back="BusinessTransactions" />) : <Empty>No transactions in this range.</Empty>}
+        {data && data.length ? pg.rows.map((x) => (x.t === 'rec' ? <RecordRow key={x.r.client_id + (x.r.kind || '')} rec={x.r} navigation={navigation} showWho transaction={x.r._row} back="BusinessTransactions" /> : <DailyTotalRow key={x.r.day} row={x.r} />)) : <Empty>No transactions in this range.</Empty>}
       </Card>
       <Pager {...pg} onChange={setPage} />
     </Screen>

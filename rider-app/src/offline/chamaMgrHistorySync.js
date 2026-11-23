@@ -18,7 +18,7 @@
 //         at most every 15 minutes per group. Never on a timer of its own, never while offline.
 //         A sync that ran in the last 5 minutes is skipped.
 //
-//   SINCE JOINING: the total for any age comes from GET /me/contributions/summary and is remembered for offline.
+//   (The server's all-ages total, GET /me/contributions/summary, is still fetched by refreshSummary but no screen shows it: "Since Joining" was removed.)
 //         The list of payments older than the phone keeps is read online, page by page (fetchMgrHistoryPage).
 // ============================================================================
 
@@ -89,7 +89,7 @@ export async function syncAllMgrHistory() {
 /** Tell the app this group's history should be kept up to date in the background. */
 export const registerMgrHistoryGroup = (groupId) => addGroupToIndex(groupId);
 
-/** The "Since Joining" total from the server, remembered for offline. Returns the last known one when offline. */
+/** The server's total (no screen shows it now that "Since Joining" is removed), remembered for offline. Returns the last known one when offline. */
 export async function refreshSummary(groupId, circleId) {
   try {
     if (!(await isOnlineNow())) return null;
@@ -102,7 +102,7 @@ export async function refreshSummary(groupId, circleId) {
 export class HistoryOfflineError extends Error {
   constructor() { super('Older payments need an internet connection.'); this.code = 'HISTORY_OFFLINE'; this.isOffline = true; }
 }
-/** One page of the WHOLE confirmed history (any age), newest first, for "Since Joining". Not stored on the phone. */
+/** One page of the WHOLE confirmed history (any age), newest first, (no screen uses it now that "Since Joining" is removed). Not stored on the phone. */
 export async function fetchMgrHistoryPage(groupId, circleId, { offset = 0, limit = 5 } = {}) {
   if (!(await isOnlineNow())) throw new HistoryOfflineError();
   try { return await mgrContributionsPage(groupId, { circle_id: circleId || undefined, order: 'desc', status: 'confirmed', offset, limit }); }

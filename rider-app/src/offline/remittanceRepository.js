@@ -69,8 +69,6 @@ export async function getRemittanceSummary(period) {
       const start = new Date(now);
       start.setDate(start.getDate() - 180);
       filtered = remittances.filter((r) => new Date(r.ts) >= start);
-    } else if (period === 'sinceJoining') {
-      filtered = remittances;
     }
 
     const totalSent = filtered.reduce((sum, r) => sum + (r.amount || 0), 0);

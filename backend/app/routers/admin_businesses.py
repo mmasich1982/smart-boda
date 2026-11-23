@@ -7,9 +7,8 @@
 #   DELETE /admin/businesses/{id}                 -> only while nobody in it has set up yet (typo clean-up)
 #   GET    /admin/businesses/map?q=&status=&business_type_code=  -> BUSINESSES MAP: every business with a GPS position, plus the ones still without one
 # LOCATION (migration 004): a new business is registered with its GPS position (latitude, longitude, accuracy, source) captured by the
-# Administrator; County / Sub-county / Ward are no longer asked. Businesses registered before keep their place name and have no position until the
-# Administrator captures one (PATCH). TRANSITION: an OLD admin app build that still sends all three of county_id / sub_county_id / ward_id and no GPS
-# is still accepted (the business then shows as "not located"), so a phone that has not updated yet can keep registering.
+# Administrator; County / Sub-county / Ward are no longer asked or accepted. Businesses registered before keep their place name and have no position until
+# the Administrator captures one (PATCH). There is NO transition: an old admin app build that sends no GPS position is refused with a clear message.
 # Changing a business later (journey L of the scope document):
 #   PATCH  /admin/businesses/{id}                       -> name and the two business tile defaults (Purchases / Expenses)
 #   POST   /admin/businesses/{id}/deactivate | /reactivate   -> switch the whole business off / on
@@ -85,9 +84,6 @@ class BusinessIn(BaseModel):
     longitude: Optional[float] = None
     location_accuracy_m: Optional[float] = None            # metres, as reported by the device (omit for a typed position)
     location_source: Optional[str] = None                  # 'gps' (taken from the device) or 'manual' (typed / pasted); anything else is stored as 'manual'
-    county_id: Optional[int] = None                        # OLD way, accepted only from an app that has not updated yet (all three together, no GPS)
-    sub_county_id: Optional[int] = None
-    ward_id: Optional[int] = None
     users: List[BusinessUserIn] = Field(min_length=1)      # no maximum
 
     @field_validator("business_name")
@@ -102,17 +98,6 @@ def _check_type(db: Session, code):
     if not bt:
         raise HTTPException(422, "Choose a valid business type.")
     return bt.code
-
-
-def _check_location(db: Session, county_id, sub_county_id, ward_id):
-    """Server-side twin of the County > Sub-county > Ward cascade (same rule as a Treasurer's group)."""
-    from app.models.location_models import County, SubCounty, Ward
-    if not db.query(County).filter(County.id == county_id).first():
-        raise HTTPException(422, "Choose a valid county.")
-    sc = db.query(SubCounty).filter(SubCounty.id == sub_county_id, SubCounty.county_id == county_id).first()
-    w = db.query(Ward).filter(Ward.id == ward_id, Ward.sub_county_id == sub_county_id).first()
-    if not sc or not w:
-        raise HTTPException(422, "Sub-county or ward does not belong to the selected county.")
 
 
 def _check_gps(latitude, longitude, accuracy=None, source=None):
@@ -337,21 +322,13 @@ def create_business(body: BusinessIn, db: Session = Depends(get_db), admin: Admi
             raise HTTPException(409, f"User {i} ({u.full_name}): {c['message']} Use a different number.")
         if i == 1 and not reuse and existing_owner(db, u.mobile_number):
             raise HTTPException(409, f"User 1 ({u.full_name}): this number already belongs to a Business Owner. Confirm 'same Owner' to register this business under them.")
-    has_gps = body.latitude is not None or body.longitude is not None
-    legacy = None not in (body.county_id, body.sub_county_id, body.ward_id)
-    if has_gps:
-        _check_gps(body.latitude, body.longitude, body.location_accuracy_m, body.location_source)      # refuse a bad position before anything is saved
-    elif legacy:
-        _check_location(db, body.county_id, body.sub_county_id, body.ward_id)                           # an app that has not updated yet (see the header)
-    else:
+    if body.latitude is None and body.longitude is None:
         raise HTTPException(422, "Capture the business location (GPS) before registering.")
+    _check_gps(body.latitude, body.longitude, body.location_accuracy_m, body.location_source)      # refuse a bad position before anything is saved
     type_code = _check_type(db, body.business_type_code)
     b = Business(business_name=body.business_name, status=PENDING_SETUP, created_by_admin_id=admin.id, business_type_code=type_code,
                  sales_can_see_purchases=body.sales_can_see_purchases, sales_can_see_expenses=body.sales_can_see_expenses)
-    if has_gps:
-        _set_gps(b, body.latitude, body.longitude, body.location_accuracy_m, body.location_source)     # new registrations store the position, not the three place ids
-    else:
-        b.county_id, b.sub_county_id, b.ward_id = body.county_id, body.sub_county_id, body.ward_id
+    _set_gps(b, body.latitude, body.longitude, body.location_accuracy_m, body.location_source)         # new registrations store the position, never the three place ids
     db.add(b)
     db.flush()
     for i, u in enumerate(body.users):
@@ -404,9 +381,6 @@ class BusinessPatch(BaseModel):
     longitude: Optional[float] = None
     location_accuracy_m: Optional[float] = None
     location_source: Optional[str] = None
-    county_id: Optional[int] = None                         # OLD way, still accepted from an app that has not updated: all three together
-    sub_county_id: Optional[int] = None
-    ward_id: Optional[int] = None
 
     @field_validator("business_name")
     @classmethod
@@ -453,11 +427,6 @@ def update_business(business_id: RowId, body: BusinessPatch, db: Session = Depen
         b.business_type_code = _check_type(db, body.business_type_code)
     if sent & {"latitude", "longitude"}:                                          # the Administrator captures the GPS position (both together)
         _set_gps(b, body.latitude, body.longitude, body.location_accuracy_m, body.location_source)
-    if sent & {"county_id", "sub_county_id", "ward_id"}:                         # OLD way (an app that has not updated): all three together
-        if None in (body.county_id, body.sub_county_id, body.ward_id):
-            raise HTTPException(422, "Choose the county, sub-county and ward together.")
-        _check_location(db, body.county_id, body.sub_county_id, body.ward_id)
-        b.county_id, b.sub_county_id, b.ward_id = body.county_id, body.sub_county_id, body.ward_id
     for f in ("sales_can_see_purchases", "sales_can_see_expenses"):
         if f in sent:
             if getattr(body, f) is None:
@@ -620,11 +589,12 @@ def _lipa_rows(db: Session, business_id):
 @router.get("/{business_id}/performance")
 def business_performance(business_id: RowId, view: str = Query("monthly"), periods: Optional[int] = Query(None, ge=1, le=90), db: Session = Depends(get_db)):
     """BUSINESS PERFORMANCE of one business for the Administrator (console and Admin app). Read only. Uses the same money formula as the Owner's reports."""
-    from app.routers.business_ops import record_dicts
+    from app.services.business_daily_service import SummaryView
     b = _get(db, business_id)
     if view not in perf.VIEWS:
         raise HTTPException(422, "view must be one of: " + ", ".join(perf.VIEWS))
-    recs, pays, users, spays = record_dicts(db, b.id)
-    out = perf.build_performance(view, datetime.now(timezone.utc), recs, pays, users, spays, _lipa_rows(db, b.id), periods)
+    sv = SummaryView(db, b.id)                      # the figures come from the daily summaries (the lines are no longer stored on the server)
+    users = sv.users
+    out = perf.build_performance(view, datetime.now(timezone.utc), sv, [], users, [], _lipa_rows(db, b.id), periods)
     out["business"] = {"id": str(b.id), "business_name": b.business_name, "status": b.status, "people": len(users)}
     return out

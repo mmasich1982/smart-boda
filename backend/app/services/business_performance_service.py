@@ -93,7 +93,7 @@ def build_series(view: str, now: datetime, records, payments, users, supplier_pa
     """One row per period with the money figures and the change in income, expenses and net profit against the period before it."""
     rows, prev = [], None
     for p in build_periods(view, now, count):
-        t = npf.compute(records, payments, p["start"], p["end"], users, supplier_payments)
+        t = records.totals(p["start"], p["end"]) if hasattr(records, "totals") else npf.compute(records, payments, p["start"], p["end"], users, supplier_payments)     # a SummaryView reads the daily summaries
         row = {"label": p["label"], "from": p["from"], "to": p["to"], "complete": p["complete"], "income": t["income"], "purchases": t["purchases"],
                "expenses": t["expenses"], "net_profit": t["net_profit"], "sales_count": t["sales_made"],
                "income_change_pct": None, "expenses_change_pct": None, "net_profit_change_pct": None, "_totals": t, "_start": p["start"], "_end": p["end"]}
@@ -218,9 +218,10 @@ def build_performance(view, now, records, payments, users, supplier_payments, li
                 "by_payment_method": t["by_payment_method"], "cost_breakdown": t["cost_breakdown"],
                 "by_person": [x for x in t["by_person"] if x["income"] or x["costs"] or x["sales_count"]]}
     lipa = lipa_exposure(lipa_rows, now.astimezone(npf.EAT).date())
-    act = activity_of(records, now)
-    window_records = sel_row["sales_count"] + sum(1 for r in records if r.get("kind") != npf.SALE and r.get("status") != "voided"
-                                                   and sel_row["_start"] <= npf.to_dt(r["trading_at"]) < sel_row["_end"])
+    from_summaries = hasattr(records, "totals")
+    act = activity_of(records.activity_records if from_summaries else records, now)
+    window_records = (sel_row["sales_count"] + t.get("purchases_count", 0) + t.get("expenses_count", 0)) if from_summaries else sel_row["sales_count"] + sum(
+        1 for r in records if r.get("kind") != npf.SALE and r.get("status") != "voided" and sel_row["_start"] <= npf.to_dt(r["trading_at"]) < sel_row["_end"])
     advice = advice_for(head, selected, lipa, act, len(users), window_records)
     clean = [{k: v for k, v in r.items() if not k.startswith("_")} for r in series]
     return {"view": view, "series": clean, "headline": head, "selected": selected, "lipa_later": lipa, "activity": act, "advice": advice}

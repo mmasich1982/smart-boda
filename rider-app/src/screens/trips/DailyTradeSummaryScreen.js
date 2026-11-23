@@ -389,13 +389,7 @@ export default function DailyTradeSummaryScreen({ navigation, route }) {
         )}
       </View>
 
-      {totalPages > 1 && (
-        <PaginationControls
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={setCurrentPage}
-        />
-      )}
+      <PaginationControls page={Math.min(currentPage, Math.max(1, totalPages))} totalPages={totalPages} totalItems={trips.length} pageSize={ITEMS_PER_PAGE} onPageChange={setCurrentPage} />
     </ScrollView>
   );
 }

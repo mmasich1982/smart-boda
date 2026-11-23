@@ -18,7 +18,6 @@ export default {
   "adminWillProcess": "Admin Will Process",
   "ageingReport": "Ageing Report",
   "allLipaLaterPaidUp": "All Lipa Later Paid Up",
-  "allTime": "All Time",
   "allTransactions": "All Transactions",
   "amount": "Amount",
   "amountDue": "Amount Due",
@@ -490,7 +489,6 @@ export default {
   "share": "Share",
   "showPinLabel": "Show Pin Label",
   "showing": "Showing",
-  "sinceJoining": "Since Joining",
   "statement": "Statement",
   "statementGeneratedLocally": "Statement Generated Locally",
   "statementGeneratedSuccess": "Statement Generated Success",
@@ -691,7 +689,6 @@ export default {
   "thisMonth": "This Month",
   "lastMonth": "Last Month",
   "last6": "Last 6 Months",
-  "sinceJoining": "Since Joining",
  
   // Summary labels
   "totalSpent": "Total Spent",

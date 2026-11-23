@@ -327,7 +327,8 @@ class StatementService:
         </html>
         """
         
-        return html
+        from app.services.brand import apply_brand
+        return apply_brand(html, app="Smart Boda", title="Financial Statement")        # the logo and "Simple Smart Apps Hub" on every statement
 
 
 # ✅ FIX (ImportError - see the comment near the top of this file for the

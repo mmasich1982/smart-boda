@@ -1,5 +1,5 @@
 # backend/app/routers/admin_business_statements.py
-# SMART BIZNA (admin side), journeys J and O of the scope document.
+# SMART BIZNA (admin side), journeys J and O of the scope document.  Statements are built from the DAILY SUMMARIES (the server keeps one year).
 #   GET  /admin/business-statements?status=            Statement Requests: every request with business, period, type and status
 #   POST /admin/business-statements/{id}/prepare       the Administrator prepares the statement FROM THE SERVER RECORDS and marks it Ready
 # The phone renders the PDF from the prepared statement, so nothing is e-mailed.
@@ -19,19 +19,15 @@ router = APIRouter(prefix="/admin/business-statements", tags=["admin-business-st
 
 
 def build_statement(db: Session, b: Business, date_from: date, date_to: date, detailed: bool):
-    from app.routers.business_ops import record_dicts, transaction_lines, Ctx
-    recs, pays, users, spays = record_dicts(db, b.id)
-    start, end = npf.range_bounds(date_from, date_to)
-    totals = npf.compute(recs, pays, start, end, users, spays)
-    out = {"business_id": str(b.id), "business_name": b.business_name, "date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
-           "generated_at": _iso(_now()), "source": "server", "type": "detailed" if detailed else "summary", "totals": totals,
-           "verification_code": npf.statement_code(b.id, date_from.isoformat(), date_to.isoformat(), totals)}
-    if detailed:
-        rows = transaction_lines(db, Ctx(None, b), start, end)
-        out["lines"] = [{"when": x["when"], "type": x["type"], "details": x["details"], "payment_method": x["payment_method"], "amount": x["amount"],
-                         "status": x["status"], "recorded_by": (x["recorded_by"] or {}).get("name"), "role": (x["recorded_by"] or {}).get("role")}
-                        for x in sorted(rows, key=lambda r: r["when"])]
-    return out
+    """A statement for ANY period inside the year the server keeps, from the DAILY SUMMARIES: the same totals, tables and verification code as the phone builds."""
+    from app.services import business_daily_service as svc
+    rows = svc.summary_dicts(svc.rows_in(db, b.id, date_from, date_to))
+    users = [{"id": u.id, "full_name": u.full_name, "role": u.role} for u in db.query(BusinessUser).filter_by(business_id=b.id).all()]
+    totals = svc.merge_summaries(rows, users)
+    kind = "detailed" if detailed else "summary"
+    return {"business_id": str(b.id), "business_name": b.business_name, "date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
+            "generated_at": _iso(_now()), "source": "server", "type": kind, "totals": totals, "tables": svc.build_tables(kind, date_from, date_to, rows),
+            "verification_code": npf.statement_code(b.id, date_from.isoformat(), date_to.isoformat(), totals)}
 
 
 @router.get("")

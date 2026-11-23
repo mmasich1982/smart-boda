@@ -12,6 +12,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import BackLink from '../../components/BackLink';
+import PaginationControls from '../../components/PaginationControls';
 import { getLocalRiderId } from '../../offline/db';
 import { getTransactionList } from '../../offline/financialHistoryUtils';
 
@@ -30,6 +31,7 @@ export default function TransactionListScreen({ navigation, route }) {
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState('all');
+  const [page, setPage] = useState(1);              // PAGING: 20 a page (Smart Boda's pager); back to page 1 whenever the filter changes
 
   // ✅ Load rider ID on mount
   useEffect(() => {
@@ -99,7 +101,6 @@ export default function TransactionListScreen({ navigation, route }) {
     lastMonth: 'for Last Month',
     last3: 'for the Last 3 Months',
     last6: 'for the Last 6 Months',
-    sinceJoining: 'Since Joining',
   };
 
   const periodLabel = periodLabels[selectedPeriod] || 'for the Selected Period';
@@ -108,12 +109,16 @@ export default function TransactionListScreen({ navigation, route }) {
   const filteredTransactions = typeFilter === 'all' 
     ? transactions 
     : transactions.filter(t => t.type === typeFilter);
+  const PAGE_SIZE = 20;
+  const totalPages = Math.max(1, Math.ceil(filteredTransactions.length / PAGE_SIZE));
+  const curPage = Math.min(page, totalPages);
+  const pageRows = filteredTransactions.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
   const renderTransaction = ({ item, index }) => {
     const isIncome = item.category === 'Income';
     const date = new Date(item.date);
     const dateStr = date.toLocaleString();
-    const isLastItem = index === filteredTransactions.length - 1;
+    const isLastItem = index === pageRows.length - 1;
 
     return (
       <View style={[
@@ -164,7 +169,7 @@ export default function TransactionListScreen({ navigation, route }) {
               styles.typeChip,
               typeFilter === filter.key && styles.typeChipActive,
             ]}
-            onPress={() => setTypeFilter(filter.key)}
+            onPress={() => { setTypeFilter(filter.key); setPage(1); }}
           >
             <Text style={[
               styles.typeChipText,
@@ -176,10 +181,11 @@ export default function TransactionListScreen({ navigation, route }) {
         ))}
       </ScrollView>
 
+      <PaginationControls page={curPage} totalPages={totalPages} totalItems={filteredTransactions.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
       <View style={styles.card}>
         {filteredTransactions.length > 0 ? (
           <FlatList
-            data={filteredTransactions}
+            data={pageRows}
             renderItem={renderTransaction}
             keyExtractor={(item) => `${item.type}_${item.id}`}
             scrollEnabled={false}
@@ -188,6 +194,7 @@ export default function TransactionListScreen({ navigation, route }) {
           <Text style={styles.emptyText}>No transactions match this filter.</Text>
         )}
       </View>
+      <PaginationControls page={curPage} totalPages={totalPages} totalItems={filteredTransactions.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
     </ScrollView>
   );
 }

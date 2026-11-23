@@ -19,7 +19,6 @@ export default {
   "adminWillProcess": "Msimamizi Atakukamatia",
   "ageingReport": "Ripoti ya Umri",
   "allLipaLaterPaidUp": "Lipa Baadaye Yote Yalilipwa",
-  "allTime": "Wakati Wote",
   "allTransactions": "Muamala Yote",
   "amount": "Kiasi",
   "amountDue": "Kiasi Kinachotalipwa",
@@ -419,7 +418,6 @@ export default {
   "share": "Sambaza",
   "showPinLabel": "Onesha PIN",
   "showing": "Inaonyesha",
-  "sinceJoining": "Tangu Kujifunga",
   "statement": "Kauli",
   "statementGeneratedLocally": "Kauli iliundwa kimakini",
   "statementGeneratedOnDevice": "Kauli iliundwa kwenye kifaa",
@@ -575,7 +573,6 @@ export default {
   "thisMonth": "Mwezi Huu",
   "lastMonth": "Mwezi Uliopita",
   "last6": "Miezi 6 Iliyopita",
-  "sinceJoining": "Tangu Kujiunga",
  
   // Summary labels
   "totalSpent": "Jumla Iliyotumwa",

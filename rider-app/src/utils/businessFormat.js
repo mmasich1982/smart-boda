@@ -17,8 +17,8 @@ export function fmtDate(v) {
   return `${String(d).padStart(2, '0')} ${MONTHS[m - 1]} ${y}`;
 }
 
-export const HIST_TABS = [{ key: 'thisMonth', label: 'This Month' }, { key: 'lastMonth', label: 'Last Month' }, { key: 'last6', label: '6 Months' }, { key: 'sinceJoining', label: 'Since Joining' }];
-export const FIN_TABS = [{ key: 'thisMonth', label: 'This Month' }, { key: 'lastMonth', label: 'Last Month' }, { key: 'last3', label: 'Last 3 Months' }, { key: 'last6', label: 'Last 6 Months' }, { key: 'sinceJoining', label: 'Since Joining' }];
+export const HIST_TABS = [{ key: 'thisMonth', label: 'This Month' }, { key: 'lastMonth', label: 'Last Month' }, { key: 'last2', label: 'Last 2 Months' }, { key: 'last3', label: 'Last 3 Months' }];
+export const FIN_TABS = HIST_TABS;       // the same four periods everywhere
 export const PERF_TABS = [{ key: 'today', label: 'Today' }, { key: 'week', label: 'This Week' }, { key: 'month', label: 'This Month' }];
 export const histRange = (key, nowMs = Date.now()) => R.quickRange(key, nowMs);
 export const rangeLabel = ([a, z]) => `${fmtDate(a + R.EAT_MS + 1)} – ${fmtDate(z - 1)}`;

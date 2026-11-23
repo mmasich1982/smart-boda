@@ -7,6 +7,7 @@ import { View, ActivityIndicator } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useBusinessProfile, useBusinessSession } from '../hooks/useBusiness';
 import { guardBusinessRoute } from '../utils/userTypeRouting';
+import { closeAllBusinessDays, startMidnightCloser } from '../offline/businessDayClose';
 
 import BusinessHomeScreen from '../screens/business/BusinessHomeScreen';
 import NewSaleScreen from '../screens/business/NewSaleScreen';
@@ -56,6 +57,12 @@ export default function BusinessNavigator() {
   // MULTIPLE BUSINESSES + DATA ISOLATION: the whole navigator is rebuilt whenever the open business changes, so no screen, list, search box or total
   // from one business can still be on screen (or loading into it) after a switch. The key changes on every switch, even back to the same business.
   const session = useBusinessSession();
+  // THE END-OF-DAY CLOSE: now (the app has just opened, or a day has passed since) and again at every midnight East Africa Time while the app stays open.
+  useEffect(() => {
+    const run = () => closeAllBusinessDays(require('../offline/businessRepository'));
+    run().catch(() => {});
+    return startMidnightCloser(run);
+  }, []);
   return (
     <Stack.Navigator key={`${session.id || 'none'}:${session.epoch}`} initialRouteName="BusinessHome" screenOptions={{ headerShown: false, animation: 'fade' }}>
       {Object.keys(BUSINESS_ROUTES).map((name) => <Stack.Screen key={name} name={name} component={GUARDED[name]} />)}

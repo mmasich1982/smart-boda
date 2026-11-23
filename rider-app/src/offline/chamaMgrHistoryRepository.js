@@ -7,13 +7,12 @@
 //   In the existing chamaRecords store (collection "mgr_contribution"), so it follows the SAME rules as the rest of the Chama history
 //   (chamaRetentionPolicy.js): a six-month rolling window, a weekly cleanup that removes only rows the server already has, and removal
 //   from the phone at logout (clearChamaData removes every row of the rider).
-//   The server keeps every payment for ever. The phone keeps the last six months; "Since Joining" is read from the server when online.
+//   The server keeps every payment for ever. The phone keeps the last six months; anything older is requested from the Administrator.
 //
-// THE PERIODS (what the four tiles mean)
+// THE PERIODS (what the three tiles mean; "Since Joining" has been removed)
 //   This Month    the current calendar month
 //   Last Month    the previous calendar month
 //   6 Months      the last six months (this month and last month included): exactly the window the phone keeps
-//   Since Joining everything since the rider joined: the total comes from the server (works for any age); offline, the last known total
 //
 // A ROW
 //   { id, rider_id, collection: 'mgr_contribution', group_id, circle_id, ts (ms), date, syncStatus: 'synced', status,
@@ -65,7 +64,7 @@ export function periodBounds(now = new Date()) {
 
 /**
  * Split CONFIRMED payments into the four tiles. The periods overlap on purpose, as their names say:
- * "6 Months" includes this month and last month, and "Since Joining" includes everything.
+ * "6 Months" includes this month and last month,.
  */
 export function bucketContributions(confirmed, now = new Date()) {
   const { thisStart, lastStart, windowStart } = periodBounds(now);
@@ -74,7 +73,6 @@ export function bucketContributions(confirmed, now = new Date()) {
     thisMonth: confirmed.filter((e) => t(e) >= thisStart),
     lastMonth: confirmed.filter((e) => t(e) >= lastStart && t(e) < thisStart),
     sixMonths: confirmed.filter((e) => t(e) >= windowStart),
-    sinceJoining: confirmed.slice(),
   };
 }
 export const sumAmounts = (rows) => rows.reduce((n, r) => n + Number(r.amount), 0);
@@ -109,7 +107,7 @@ export async function setMeta(groupId, patch, riderId) {
   const next = { ...(await getMeta(groupId, r)), ...patch };
   await indexedDbAdapter.kvSet(`${META_PREFIX}${r}_${groupId}`, next); return next;
 }
-/** Remember the "Since Joining" total the server gave for a circle, so it can still be shown offline. */
+/** Remember the server's totals (kept for the server-side reports; no screen shows a "Since Joining" total any more). */
 export async function saveSummary(groupId, circleId, summary, riderId) {
   const r = await rid(riderId); if (!r) return;
   const meta = await getMeta(groupId, r);

@@ -38,9 +38,6 @@ export function getPeriodRange(period) {
     const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 6);
     start = sixMonthsAgo.getTime();
     end = endMs;
-  } else if (period === 'sinceJoining') {
-    start = 0;
-    end = endMs;
   }
   
   return { start, end };
@@ -50,7 +47,6 @@ export const PERIOD_LABELS = {
   thisMonth: 'This Month',
   lastMonth: 'Last Month',
   last6: 'Last 6 Months',
-  sinceJoining: 'Since Joining',
 };
 
 export function formatDate(timestamp) {

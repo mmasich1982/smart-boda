@@ -19,7 +19,7 @@
 //         at most every 15 minutes per group. Never on a timer of its own, never while offline.
 //         A sync that ran in the last 5 minutes is skipped.
 //
-//   SINCE JOINING: the totals for any age come from GET /chama/me/history/summary and are remembered for offline.
+//   (The server's all-ages totals, GET /chama/me/history/summary, are still fetched by refreshTbSummary but no screen shows them: "Since Joining" was removed.)
 //         Payments older than the phone keeps are read online, page by page (fetchTbHistoryPage). They are not stored on the phone.
 // ============================================================================
 
@@ -87,7 +87,7 @@ export async function syncAllTbHistory() {
 /** Tell the app this group's history should be kept up to date in the background. */
 export const registerTbHistoryGroup = (groupId) => addGroupToIndex(groupId);
 
-/** The "Since Joining" totals from the server, remembered for offline. Returns null when offline (the last known ones stay saved). */
+/** The server's totals (no screen shows them now that "Since Joining" is removed), remembered for offline. Returns null when offline (the last known ones stay saved). */
 export async function refreshTbSummary(groupId) {
   try {
     if (!(await isOnlineNow())) return null;
@@ -100,7 +100,7 @@ export async function refreshTbSummary(groupId) {
 export class TbHistoryOfflineError extends Error {
   constructor() { super('Older payments need an internet connection.'); this.code = 'HISTORY_OFFLINE'; this.isOffline = true; }
 }
-/** One page of the WHOLE confirmed history (any age), newest first, for "Since Joining". `kind` = 'savings' | 'loan_repayment' | undefined (both). */
+/** One page of the WHOLE confirmed history (any age), newest first, (no screen uses it now that "Since Joining" is removed). `kind` = 'savings' | 'loan_repayment' | undefined (both). */
 export async function fetchTbHistoryPage(groupId, { kind, offset = 0, limit = 5 } = {}) {
   if (!(await isOnlineNow())) throw new TbHistoryOfflineError();
   try { return await tbHistoryPage(groupId, { kind: kind || undefined, order: 'desc', status: 'confirmed', offset, limit }); }

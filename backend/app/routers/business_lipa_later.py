@@ -60,10 +60,12 @@ def record_payment(body: PaymentIn, rider=Depends(get_current_rider), bid: Optio
     if balance <= 0:
         raise HTTPException(409, "This sale is already settled.")
     amt = npf.cents(body.amount)
-    if body.pay_type == "full" and amt < balance:
-        raise HTTPException(422, "A full payment must cover the balance.")
+    if amt > balance:                                                      # NEVER more than what is owed (Full or Partial)
+        raise HTTPException(422, {"code": "OVERPAYMENT", "message": f"The payment cannot be more than the balance of KSh {npf.money(balance):,.2f}."})
+    if body.pay_type == "full" and amt != balance:
+        raise HTTPException(422, {"code": "FULL_MUST_EQUAL_BALANCE", "message": f"A full payment must be exactly the balance of KSh {npf.money(balance):,.2f}. Use a partial payment for less."})
     if body.pay_type == "partial" and amt >= balance:
-        raise HTTPException(422, "A partial payment must be less than the balance.")
+        raise HTTPException(422, {"code": "PARTIAL_BELOW_BALANCE", "message": f"A partial payment must be less than the balance of KSh {npf.money(balance):,.2f}. Use a full payment to settle it."})
     when = _clock(body.paid_at)
     pay = BusinessLipaLaterPayment(business_id=c.biz.id, lipa_later_id=rec.id, business_user_id=c.bu.id, client_id=body.client_id,
                                    amount_ksh=Decimal(str(npf.money(amt))), payment_date=when.astimezone(npf.EAT).date(), paid_at=when,
@@ -153,10 +155,12 @@ def record_supplier_payment(body: SupplierPaymentIn, rider=Depends(get_current_r
     if balance <= 0:
         raise HTTPException(409, "This supplier is already fully paid.")
     amt = npf.cents(body.amount)
-    if body.pay_type == "full" and amt < balance:
-        raise HTTPException(422, "A full payment must cover the balance.")
+    if amt > balance:                                                      # NEVER more than what is owed (Full or Partial)
+        raise HTTPException(422, {"code": "OVERPAYMENT", "message": f"The payment cannot be more than the balance of KSh {npf.money(balance):,.2f}."})
+    if body.pay_type == "full" and amt != balance:
+        raise HTTPException(422, {"code": "FULL_MUST_EQUAL_BALANCE", "message": f"A full payment must be exactly the balance of KSh {npf.money(balance):,.2f}. Use a partial payment for less."})
     if body.pay_type == "partial" and amt >= balance:
-        raise HTTPException(422, "A partial payment must be less than the balance.")
+        raise HTTPException(422, {"code": "PARTIAL_BELOW_BALANCE", "message": f"A partial payment must be less than the balance of KSh {npf.money(balance):,.2f}. Use a full payment to settle it."})
     when = _clock(body.paid_at)
     pay = BusinessSupplierLipaPayment(business_id=c.biz.id, lipa_later_id=rec.id, business_user_id=c.bu.id, client_id=body.client_id,
                                       amount_ksh=Decimal(str(npf.money(amt))), payment_date=when.astimezone(npf.EAT).date(), paid_at=when,

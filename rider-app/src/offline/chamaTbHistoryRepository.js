@@ -7,17 +7,16 @@
 //   In the existing chamaRecords store (collection "tb_history"), so it follows the SAME rules as the rest of the Chama history
 //   (chamaRetentionPolicy.js): a six-month rolling window, a weekly cleanup that removes only rows the server already has, and removal
 //   from the phone at logout (clearChamaData removes every row of the rider; clearTbHistoryKv forgets the cursors and totals).
-//   The server keeps every payment for ever. The phone keeps the last six months; "Since Joining" is read from the server when online.
+//   The server keeps every payment for ever. The phone keeps the last six months; anything older is requested from the Administrator.
 //
 // TWO CATEGORIES (every row has a `kind`)
 //   savings          a contribution into the group's savings
 //   loan_repayment   a repayment of the member's loan
 //
-// THE PERIODS (what the four tiles mean). Dates are the day the Treasurer confirmed the payment (or the day it was sent, while waiting).
+// THE PERIODS (what the three tiles mean; "Since Joining" has been removed). Dates are the day the Treasurer confirmed the payment (or the day it was sent, while waiting).
 //   This Month    the current calendar month
 //   Last Month    the previous calendar month
 //   6 Months      the last six months (this and last month included): exactly the window the phone keeps
-//   Since Joining everything: the totals come from the server (any age); offline, the last known totals
 //
 // A ROW
 //   { id, rider_id, collection: 'tb_history', group_id, kind, ts (ms), date, syncStatus: 'synced', status,
@@ -73,7 +72,7 @@ export const byKind = (rows, kind) => (!kind || kind === 'all' ? rows.slice() : 
 
 /**
  * Split CONFIRMED payments into the four tiles. The periods overlap on purpose, as their names say:
- * "6 Months" includes this and last month, and "Since Joining" includes everything.
+ * "6 Months" includes this and last month,.
  * `thisMonth` is [this month 1st, now]; `lastMonth` is [last month 1st, this month 1st): a payment is in exactly one of them.
  */
 export function bucketPayments(confirmed, now = new Date()) {
@@ -83,7 +82,6 @@ export function bucketPayments(confirmed, now = new Date()) {
     thisMonth: confirmed.filter((e) => t(e) >= thisStart),
     lastMonth: confirmed.filter((e) => t(e) >= lastStart && t(e) < thisStart),
     sixMonths: confirmed.filter((e) => t(e) >= windowStart),
-    sinceJoining: confirmed.slice(),
   };
 }
 export const sumAmounts = (rows) => rows.reduce((n, r) => n + Number(r.amount), 0);
@@ -118,7 +116,7 @@ export async function setMeta(groupId, patch, riderId) {
   const next = { ...(await getMeta(groupId, r)), ...patch };
   await indexedDbAdapter.kvSet(`${META_PREFIX}${r}_${groupId}`, next); return next;
 }
-/** Remember the "Since Joining" totals the server gave, so they can still be shown offline. */
+/** Remember the server's totals (kept for the server-side reports; no screen shows a "Since Joining" total any more). */
 export async function saveSummary(groupId, summary, riderId) {
   const r = await rid(riderId); if (!r) return;
   const one = (k) => ({ count: Number(summary?.[k]?.count) || 0, total: Number(summary?.[k]?.total) || 0 });

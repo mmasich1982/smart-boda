@@ -39,7 +39,7 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Smart Apps - The simplest yet advanced business app."
+          "locationWhenInUsePermission": "Smart Apps uses your location to record where a business is when an Administrator registers it."
         }
       ]
     ]

@@ -15,7 +15,6 @@ import BackLink from '../../components/BackLink';
 import { getLocalRiderId } from '../../offline/db';
 import {
   getFinancialSummaryForRange,
-  getEarliestTransactionDate,
 } from '../../offline/financialHistoryUtils';
 
 const QUICK_SELECT_PERIODS = [
@@ -23,8 +22,7 @@ const QUICK_SELECT_PERIODS = [
   { key: 'lastMonth', label: 'Last Month' },
   { key: 'last3', label: 'Last 3 Months' },
   { key: 'last6', label: 'Last 6 Months' },
-  { key: 'sinceJoining', label: 'Since Joining' },
-];
+];       // six months is the longest period ("Since Joining" was removed)
 
 export default function FinancialHistoryScreen({ navigation, route }) {
   const { t } = useTranslation();
@@ -38,7 +36,6 @@ export default function FinancialHistoryScreen({ navigation, route }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [earliestDate, setEarliestDate] = useState(null);
 
   // ✅ Load rider ID on mount
   useEffect(() => {
@@ -57,7 +54,7 @@ export default function FinancialHistoryScreen({ navigation, route }) {
     loadRiderId();
   }, []);
 
-  const calculateDateRange = useCallback((period, earliest) => {
+  const calculateDateRange = useCallback((period) => {
     const now = new Date();
     const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
     const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
@@ -78,16 +75,8 @@ export default function FinancialHistoryScreen({ navigation, route }) {
       case 'last6':
         start = Date.now() - 180 * 24 * 3600000;
         break;
-      case 'sinceJoining':
-        start = earliest || thisMonthStart;
-        break;
       default:
         start = thisMonthStart;
-    }
-
-    // Only constrain to earliest date for "sinceJoining" period
-    if (period === 'sinceJoining' && earliest !== null) {
-      start = Math.max(start, earliest);
     }
 
     end = Math.max(end, start);
@@ -101,12 +90,8 @@ export default function FinancialHistoryScreen({ navigation, route }) {
       setLoading(true);
       setError(null);
 
-      // Get earliest transaction date
-      const earliest = await getEarliestTransactionDate(riderId);
-      setEarliestDate(earliest);
-
       // Calculate date range for selected period
-      const { start, end } = calculateDateRange(selectedPeriod, earliest);
+      const { start, end } = calculateDateRange(selectedPeriod);
       setRangeStart(start);
       setRangeEnd(end);
 

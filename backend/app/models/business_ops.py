@@ -102,6 +102,7 @@ class BusinessStatementRequest(Base):
     period_from = Column(Date, nullable=False)
     period_to = Column(Date, nullable=False)
     purpose = Column(String(120))
+    fee_ksh = Column(Numeric(10, 2))                                    # the fee shown to the customer when the request was made (configurable by the Administrator)
     status = Column(String(10), nullable=False, default=REQUESTED)
     statement = Column(JSONB)                                           # prepared by the Admin from the server records; the phone renders the PDF
     prepared_by_admin_id = Column(UUID(as_uuid=True), ForeignKey("admin_user.id", ondelete="SET NULL"))

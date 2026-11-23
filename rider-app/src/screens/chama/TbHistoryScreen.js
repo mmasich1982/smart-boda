@@ -3,7 +3,7 @@
 //   My Savings > "My Savings Contribution"   (route.params.kind = 'savings')        only savings contributions
 //   My Loans   > "My Loan Repayment"         (route.params.kind = 'loan_repayment') only loan repayments
 // Same layout as the Merry-Go-Round history (MgrHistoryScreen).
-//   Period tiles     This Month, Last Month, 6 Months, Since Joining, each with its total for the chosen category
+//   Period tiles     This Month, Last Month, 6 Months, each with its total for the chosen category
 //   "Waiting for Treasurer" card, then the confirmed payments 5 to a page.
 // route.params: { groupId, kind }   kind = 'savings' (default) | 'loan_repayment'
 //
@@ -11,10 +11,9 @@
 // and shown at once, with or without a connection. A quiet sync then brings in only what changed (offline/chamaTbHistorySync.js).
 //   This Month    the current calendar month           Last Month    the previous calendar month
 //   6 Months      the last six months (this and last month included)
-//   Since Joining everything: the totals and the list come from the server, so it works for any age; offline it shows the last known
-//                 totals and the payments saved on the phone.
+//   Older payments  the phone keeps the last six months; anything older is requested from the Administrator (no "Since Joining" any more)
 // Dates are the day the payment was confirmed by the Treasurer (or, for one still waiting, the day it was sent).
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { ScrollView, Text, View, TouchableOpacity } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import BackLink from '../../components/BackLink';
@@ -22,13 +21,13 @@ import { completeSeen, mySavings } from '../../api/groupsClient';
 import { s, fmt } from './chamaStyles';
 import { Card, Badge, Pager, ScreenTitle, monthDay } from './mgrUi';
 import { loadTbPayments, bucketPayments, byKind, sumAmounts, getMeta, setMeta } from '../../offline/chamaTbHistoryRepository';
-import { syncTbHistory, registerTbHistoryGroup, refreshTbSummary, fetchTbHistoryPage } from '../../offline/chamaTbHistorySync';
+import { syncTbHistory, registerTbHistoryGroup } from '../../offline/chamaTbHistorySync';
 import colors from '../../theme/colors';
 
 const PER_PAGE = 5;
 const REJECTED_SHOWN_DAYS = 14;               // a rejection stays in the "waiting" card this long
-const TILES = [['thisMonth', '📅', 'This Month'], ['lastMonth', '📆', 'Last Month'], ['sixMonths', '📊', '6 Months'], ['sinceJoining', '👥', 'Since Joining']];
-const LABELS = { thisMonth: 'This Month', lastMonth: 'Last Month', sixMonths: 'Last 6 Months', sinceJoining: 'Since Joining' };
+const TILES = [['thisMonth', '📅', 'This Month'], ['lastMonth', '📆', 'Last Month'], ['sixMonths', '📊', '6 Months']];
+const LABELS = { thisMonth: 'This Month', lastMonth: 'Last Month', sixMonths: 'Last 6 Months' };
 const TITLE = { savings: '💰 My Savings Contribution', loan_repayment: '🏦 My Loan Repayment' };
 const EMPTY = { savings: 'No savings contributions for this period yet.', loan_repayment: 'No loan repayments for this period yet.' };
 
@@ -37,7 +36,6 @@ function TbHistoryScreen({ navigation, route }) {
   const kind = kindParam === 'loan_repayment' ? 'loan_repayment' : 'savings';   // fixed by where the screen was opened from
   const [rows, setRows] = useState(null), [meta, setMetaState] = useState({});
   const [cat, setCat] = useState('thisMonth'), [page, setPage] = useState(1);
-  const [remote, setRemote] = useState(null);       // Since Joining from the server: null = loading, false = could not reach it, {items,total}
 
   const reloadLocal = useCallback(async () => {
     const [r, m] = await Promise.all([loadTbPayments(groupId), getMeta(groupId)]);
@@ -52,7 +50,6 @@ function TbHistoryScreen({ navigation, route }) {
       await registerTbHistoryGroup(groupId);
       const res = await syncTbHistory(groupId);                       // only what changed since the last time
       await Promise.all([
-        refreshTbSummary(groupId),                                    // the "Since Joining" totals (any age)
         mySavings().then((sv) => {                                    // the Treasurer's first name for "Approved by" (remembered for offline)
           const g = (sv.groups || []).find((x) => x.group_id === groupId);
           const first = String(g?.treasurer?.name || '').split(' ')[0];
@@ -65,38 +62,22 @@ function TbHistoryScreen({ navigation, route }) {
     return () => { live = false; };
   }, [groupId, reloadLocal]));
 
-  // Since Joining: the whole history from the server, one page at a time.
-  useEffect(() => {
-    if (cat !== 'sinceJoining') return undefined;
-    let live = true;
-    setRemote(null);
-    fetchTbHistoryPage(groupId, { kind, offset: (page - 1) * PER_PAGE, limit: PER_PAGE })
-      .then((res) => { if (live) setRemote({ items: res.items, total: res.total }); })
-      .catch(() => { if (live) setRemote(false); });
-    return () => { live = false; };
-  }, [cat, page, kind, groupId]);
-
   const list = rows || [];
   const confirmed = list.filter((x) => x.status === 'confirmed');
   const fresh = Date.now() - REJECTED_SHOWN_DAYS * 86400000;
   const notDone = byKind(list, kind).filter((x) => x.status === 'pending' || (x.status === 'rejected' && new Date(x.at).getTime() >= fresh)).slice(0, 5);
   const tFirst = String(meta.treasurer_first || '');
 
-  // The tiles, for the chosen category. Server totals (any age) win over the phone's six months when they are larger.
+  // The tiles, for the chosen category. The phone keeps six months; older payments are requested from the Administrator.
   const by = bucketPayments(byKind(confirmed, kind));
-  const sv = meta.summary || {};
-  const srv = (k) => sv[k] || { count: 0, total: 0 };
-  const tot = { thisMonth: sumAmounts(by.thisMonth), lastMonth: sumAmounts(by.lastMonth), sixMonths: sumAmounts(by.sixMonths), sinceJoining: sumAmounts(by.sinceJoining) };
-  tot.sinceJoining = Math.max(srv(kind).total, tot.sinceJoining);
-  const sinceCount = Math.max(srv(kind).count, by.sinceJoining.length);
+  const tot = { thisMonth: sumAmounts(by.thisMonth), lastMonth: sumAmounts(by.lastMonth), sixMonths: sumAmounts(by.sixMonths) };
 
-  const onServer = cat === 'sinceJoining' && !!remote;
   const local = by[cat] || [];
-  const totalCount = onServer ? remote.total : local.length;
+  const totalCount = local.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / PER_PAGE));
   const pg = Math.min(page, totalPages);
-  const pageRecords = onServer ? remote.items : local.slice((pg - 1) * PER_PAGE, pg * PER_PAGE);
-  const shownCount = cat === 'sinceJoining' ? Math.max(totalCount, sinceCount) : totalCount;
+  const pageRecords = local.slice((pg - 1) * PER_PAGE, pg * PER_PAGE);
+  const shownCount = totalCount;
   const last = meta.lastSyncAt ? monthDay(new Date(meta.lastSyncAt).toISOString()) : confirmed[0] ? monthDay(confirmed[0].at) : monthDay(new Date().toISOString());
 
   return (
@@ -128,8 +109,6 @@ function TbHistoryScreen({ navigation, route }) {
 
       <Card>
         <Text style={h.title}>{LABELS[cat]}</Text>
-        {cat === 'sinceJoining' && remote === false && (
-          <Text style={h.offlineNote}>Older payments need an internet connection. Showing what is saved on this phone (the last 6 months).</Text>)}
         {(rows !== null && shownCount > 0) ? (<>
           <View style={h.totalBox}>
             <Text style={h.totalTxt}>Total for period: <Text style={{ fontWeight: '700' }}>{fmt(tot[cat])}</Text> • {shownCount} transaction{shownCount !== 1 ? 's' : ''}</Text>
@@ -158,7 +137,7 @@ function TbHistoryScreen({ navigation, route }) {
 
 const h = {
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
-  tile: { width: '48.5%', borderWidth: 1.5, borderColor: colors.line, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 8, alignItems: 'center', backgroundColor: '#fff' },
+  tile: { width: '31.5%', borderWidth: 1.5, borderColor: colors.line, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 8, alignItems: 'center', backgroundColor: '#fff' },
   tileOn: { borderColor: colors.bodaOrange, backgroundColor: '#fff6ee' },
   tileLbl: { fontSize: 11.5, fontWeight: '700', color: colors.ink },
   tileAmt: { fontSize: 11, fontWeight: '700', color: colors.inkSoft, marginTop: 3 },

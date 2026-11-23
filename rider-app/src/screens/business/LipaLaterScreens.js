@@ -4,16 +4,18 @@
 // is a connection. Ageing and balances are worked out on the phone.
 // A Lipa Later sale is a receivable, not income; only the money the customer pays counts, on the day it is received.
 import AgeingReport from './AgeingReport';
+import RejectedPaymentsNotice from '../../components/RejectedPaymentsNotice';
 import { groupAgeing } from '../../utils/ageingGroups';
 import React, { useState } from 'react';
 import { Alert, View, Text } from 'react-native';
-import { Screen, BackLink, Title, Sub, Card, Row, Field, Btn, Tabs, Badge, Banner, Section, Empty, Hint, s, C } from './BizUI';
+import { Screen, BackLink, Title, Sub, Card, Row, Field, Btn, Tabs, Badge, Banner, Section, Empty, Hint, Pager, s, C } from './BizUI';
+import { paginate } from '../../utils/businessLists';
 import { useBizData, useBusinessProfile } from '../../hooks/useBusiness';
 import store, { BusinessRuleError } from '../../offline/businessRepository';
 import { kes, fmtDate, fmtDateTime, BADGE, AGEING_ORDER, lipaBanner } from '../../utils/businessFormat';
+import { PAYMENT_TABS, isAmountLocked, defaultAmount, amountHint, amountToSave, validatePayment } from '../../utils/lipaPaymentRules';
 
 const say = (e) => (e instanceof BusinessRuleError ? e.message : 'Something went wrong. Please try again.');
-const PAGE = 20;
 
 export function LipaLaterCustomersScreen({ navigation }) {
   const [q, setQ] = useState(''), [page, setPage] = useState(1);
@@ -23,19 +25,22 @@ export function LipaLaterCustomersScreen({ navigation }) {
   const term = q.trim().toLowerCase();
   const list = all.filter((c) => !term || c.sale.customer_name.toLowerCase().includes(term) || c.sale.customer_phone.replace(/\D/g, '').includes(term.replace(/\D/g, '') || '§'));
   const banner = lipaBanner(all);
+  const pg = paginate(list, page);                  // PAGING: 20 customers a page, back to page 1 on a new search
   return (
     <Screen>
       <BackLink onPress={() => navigation.navigate('BusinessHome')} />
       <Title>Lipa Later Customers Report</Title>
       <Sub>Customers who still owe. Lipa Later is not income until the customer pays.</Sub>
+      <RejectedPaymentsNotice />
       {banner ? <Banner tone="red" text={banner} /> : null}
       <Btn label="📊 View Payment Ageing Report" kind="dark" onPress={() => navigation.navigate('LipaLaterAgeing')} />
       <Field placeholder="Search by name or phone" value={q} onChangeText={(v) => { setQ(v); setPage(1); }} />
-      {list.slice(0, page * PAGE).map((c, i) => {
+      <Pager {...pg} onChange={setPage} />
+      {pg.rows.map((c, i) => {
         const b = BADGE[c.bucket];
         return (
           <Card key={c.sale.client_id}>
-            <Text style={{ fontWeight: '800', color: C.ink, fontSize: 15 }}>{i + 1}. {c.sale.customer_name}</Text>
+            <Text style={{ fontWeight: '800', color: C.ink, fontSize: 15 }}>{pg.from + i}. {c.sale.customer_name}</Text>
             <Hint>{c.sale.customer_phone} · sold {fmtDate(c.sale.trading_at)} · due {fmtDate(c.sale.due_date)}</Hint>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}><Badge {...b} />{c.days_overdue > 0 ? <Badge text={`${c.days_overdue} day${c.days_overdue === 1 ? '' : 's'} overdue`} tone="red" /> : null}</View>
             <Row k="Original amount" v={kes(c.sale.total)} /><Row k="Paid so far" v={kes(c.paid)} /><Row k="Still owing" v={kes(c.balance)} bold color={C.red} />
@@ -46,7 +51,7 @@ export function LipaLaterCustomersScreen({ navigation }) {
         );
       })}
       {!list.length ? <Empty>{term ? 'No customer matches your search.' : 'No customers owe you right now.'}</Empty> : null}
-      {list.length > page * PAGE ? <Btn label="Show more" kind="ghost" onPress={() => setPage(page + 1)} /> : null}
+      <Pager {...pg} onChange={setPage} />
     </Screen>
   );
 }
@@ -54,12 +59,16 @@ export function LipaLaterCustomersScreen({ navigation }) {
 export function RecordLipaPaymentScreen({ navigation, route }) {
   const { saleClientId } = route.params || {};
   const { data: c } = useBizData(async () => (await store.lipaCustomers({ includeSettled: true })).find((x) => x.sale.client_id === saleClientId) || null, [saleClientId], { pollMs: 0 });
-  const [type, setType] = useState('full'), [amount, setAmount] = useState(''), [notes, setNotes] = useState(''), [busy, setBusy] = useState(false);
+  const [type, setType] = useState('full'), [typed, setTyped] = useState(''), [notes, setNotes] = useState(''), [busy, setBusy] = useState(false);
   if (!c) return <Screen><BackLink label="← Back" onPress={() => navigation.goBack()} /><Empty>Customer not found.</Empty></Screen>;
+  // THE PAYMENT RULES (utils/lipaPaymentRules.js): Full is pre-selected, the box shows the whole balance greyed out and cannot be edited; Partial is blank, editable and below the balance.
+  const locked = isAmountLocked(type), check = validatePayment(type, typed, c.balance);
+  const shown = locked ? defaultAmount('full', c.balance) : typed;
   const save = async () => {
+    if (!check.ok) return;
     setBusy(true);
     try {
-      const r = await store.recordLipaPayment({ saleClientId, type, amount: parseFloat(amount), notes });
+      const r = await store.recordLipaPayment({ saleClientId, type, amount: amountToSave(type, typed, c.balance), notes });
       Alert.alert('Payment recorded', r.balance > 0 ? `${c.sale.customer_name} still owes ${kes(r.balance)}.` : `${c.sale.customer_name} is fully settled.`);
       navigation.navigate('LipaLaterCustomers');
     } catch (e) { Alert.alert('Record Payment', say(e)); } finally { setBusy(false); }
@@ -69,11 +78,11 @@ export function RecordLipaPaymentScreen({ navigation, route }) {
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
       <Title>Record Payment</Title>
       <Card><Text style={{ fontWeight: '800', color: C.ink }}>{c.sale.customer_name}</Text><Row k="Still owing" v={kes(c.balance)} bold color={C.red} /></Card>
-      <Tabs tabs={[{ key: 'full', label: 'Full payment' }, { key: 'partial', label: 'Partial payment' }]} value={type} onChange={(t) => { setType(t); setAmount(t === 'full' ? String(c.balance) : ''); }} />
-      <Hint style={{ marginBottom: 8 }}>{type === 'full' ? `Full must be at least ${kes(c.balance)}.` : `Partial must be less than ${kes(c.balance)}.`}</Hint>
-      <Field label="Amount received (KSh)" value={amount} onChangeText={(v) => setAmount(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" />
+      <Tabs tabs={PAYMENT_TABS} value={type} onChange={(t) => { setType(t); setTyped(''); }} />
+      <Field label="Amount received (KSh)" value={shown} onChangeText={(v) => setTyped(v.replace(/[^0-9.]/g, ''))} keyboardType="decimal-pad" testID="pay-amount"
+        editable={!locked} selectTextOnFocus={!locked} error={check.message} hint={amountHint(type, c.balance)} style={locked ? { backgroundColor: '#eceae4', color: '#7a7f8a' } : undefined} />
       <Field label="Notes (optional)" value={notes} onChangeText={setNotes} maxLength={200} />
-      <Btn label="Record Payment" onPress={save} disabled={busy || !(parseFloat(amount) > 0) || c.balance <= 0} />
+      <Btn label="Record Payment" onPress={save} disabled={busy || !check.ok} />
       <Hint>The payment counts as income today.</Hint>
     </Screen>
   );

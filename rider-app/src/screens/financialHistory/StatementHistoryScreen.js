@@ -12,6 +12,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from '../../i18n/LocalizationProvider';
 import { useToast } from '../../components/Toast';
 import BackLink from '../../components/BackLink';
+import PaginationControls from '../../components/PaginationControls';
 import { getLocalRiderId } from '../../offline/db';
 import { getStatementHistory } from '../../offline/financialHistoryUtils';
 
@@ -22,6 +23,7 @@ export default function StatementHistoryScreen({ navigation }) {
   const hasLoadedRef = useRef(false);
   const [riderId, setRiderId] = useState(null);
   const [statements, setStatements] = useState([]);
+  const [page, setPage] = useState(1);              // PAGING: 20 a page (Smart Boda's pager)
   const [loading, setLoading] = useState(true);
 
   // ✅ Load rider ID on mount
@@ -129,15 +131,21 @@ export default function StatementHistoryScreen({ navigation }) {
     );
   }
 
+  const PAGE_SIZE = 20;
+  const totalPages = Math.max(1, Math.ceil(statements.length / PAGE_SIZE));
+  const curPage = Math.min(page, totalPages);
+  const pageRows = statements.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+
   return (
     <ScrollView style={styles.container}>
       <BackLink label="← Back" onPress={() => navigation.goBack()} />
       <Text style={styles.screenTitle}>Statement History</Text>
 
+      <PaginationControls page={curPage} totalPages={totalPages} totalItems={statements.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
       <View style={styles.card}>
         {statements.length > 0 ? (
           <FlatList
-            data={statements}
+            data={pageRows}
             renderItem={renderStatement}
             keyExtractor={(item) => item.id}
             scrollEnabled={false}
@@ -147,6 +155,7 @@ export default function StatementHistoryScreen({ navigation }) {
           <Text style={styles.emptyText}>No statements generated yet</Text>
         )}
       </View>
+      <PaginationControls page={curPage} totalPages={totalPages} totalItems={statements.length} pageSize={PAGE_SIZE} onPageChange={setPage} />
 
       <TouchableOpacity
         style={styles.generateButton}

@@ -68,8 +68,8 @@ export const CHAMA_COLLECTIONS = [
   'loan_payment',
   'group_ledger',
   'notification',
-  'mgr_contribution',   // My Contribution History (Merry-Go-Round): same six-month window; "Since Joining" is read from the server
-  'tb_history',         // My Payments History (Table Banking: savings + loan repayments): same six-month window; "Since Joining" is read from the server
+  'mgr_contribution',   // My Contribution History (Merry-Go-Round): same six-month window; older payments are requested from the Administrator
+  'tb_history',         // My Payments History (Table Banking: savings + loan repayments): same six-month window; older payments are requested from the Administrator
 ];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -189,8 +189,8 @@ export function filterToRetentionWindow(records, cutoffDate = getRetentionCutoff
 }
 
 /**
- * Pull a requested date range back inside the window. Used by Group Finance History so "Since Joining"
- * and "Last 6 Months" never ask for more than the phone is meant to hold.
+ * Pull a requested date range back inside the window. Used by Group Finance History so
+ * "Last 6 Months" never asks for more than the phone is meant to hold.
  *
  * @param {string} fromIso  YYYY-MM-DD
  * @param {string} toIso    YYYY-MM-DD

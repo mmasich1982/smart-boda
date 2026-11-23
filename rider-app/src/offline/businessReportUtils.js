@@ -11,13 +11,14 @@
 //   * Voided records are left out of EVERY figure. Corrected records count with their corrected values.
 //   * A day runs midnight to midnight in East Africa Time (UTC+3). All arithmetic is in whole cents.
 import { sha256Hex } from './sha256';
+import { paymentError as rulesPaymentError } from '../utils/lipaPaymentRules';
 
 export const EAT_MS = 3 * 3600 * 1000;
 const DAY = 86400000;
 export const METHODS = ['CASH', 'MPESA', 'CARD', 'LIPA_LATER'];
 export const METHOD_LABEL = { CASH: 'Cash', MPESA: 'M-Pesa', CARD: 'Card', LIPA_LATER: 'Lipa Later' };
-export const CORRECTION_WINDOW_HOURS = 24;
-export const RETENTION_MONTHS = 6;
+export const CORRECTION_WINDOW_HOURS = 24;        // (no longer the rule: a record can be changed only on the day it was made, before the end-of-day close)
+export const RETENTION_MONTHS = 3;                // the phone keeps 3 months of DAILY SUMMARIES (plus this month); the server keeps 1 year
 
 /** Whole cents, rounding half up exactly like the server (Decimal ROUND_HALF_UP). */
 export const cents = (v) => Math.round(parseFloat((Number(v || 0) * 100).toPrecision(15)));
@@ -38,26 +39,27 @@ export function periodBounds(period, nowMs = Date.now()) {
   throw new Error('period must be today, yesterday, week or month');
 }
 
-/** The quick selects of Financial History: thisMonth | lastMonth | last3 | last6 | sinceJoining (since joining = the six months kept on the phone). */
+/** The four periods of every Smart Bizna history, report and statement (full calendar months, EAT):
+ *   thisMonth = 1st to today · lastMonth · last2 = the two full months before this one · last3 = the three full months before this one.
+ *  On 22 Nov 2026: thisMonth = Nov, lastMonth = Oct, last2 = Sep+Oct, last3 = Aug+Sep+Oct. Nothing older than 1 August is on the phone.
+ *  "Last 6 Months" and "Since Joining" no longer exist; an old saved 'last6' / 'sinceJoining' opens on Last 3 Months. */
 export function quickRange(key, nowMs = Date.now()) {
+  if (key === 'sinceJoining' || key === 'last6') key = 'last3';
   const d = new Date(nowMs + EAT_MS), y = d.getUTCFullYear(), m = d.getUTCMonth(), end = eatDayStart(nowMs) + DAY;
   const first = (yy, mm) => Date.UTC(yy, mm, 1) - EAT_MS;
   if (key === 'thisMonth') return [first(y, m), end];
   if (key === 'lastMonth') return [first(y, m - 1), first(y, m)];
-  if (key === 'last3') return [first(y, m - 2), end];
-  if (key === 'last6' || key === 'sinceJoining') return [retentionCutoffMs(nowMs), end];
+  if (key === 'last2') return [first(y, m - 2), first(y, m)];
+  if (key === 'last3') return [first(y, m - 3), first(y, m)];
   throw new Error('unknown range');
 }
 
 export const rangeBounds = (fromStr, toStr) => [dayFromString(fromStr), dayFromString(toStr) + DAY];
 
-/** The start of the six months kept on the phone: six calendar months before today (EAT), clamped to the month's last day. */
+/** The start of what the phone keeps: the 1st of the month RETENTION_MONTHS (3) before this one, 00:00 EAT. On 22 Nov 2026 it is 1 Aug 2026. */
 export function retentionCutoffMs(nowMs = Date.now()) {
   const d = new Date(nowMs + EAT_MS);
-  let y = d.getUTCFullYear(), m = d.getUTCMonth() - RETENTION_MONTHS;
-  y += Math.floor(m / 12); m = ((m % 12) + 12) % 12;
-  const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-  return Date.UTC(y, m, Math.min(d.getUTCDate(), last)) - EAT_MS;
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - RETENTION_MONTHS, 1) - EAT_MS;
 }
 
 /** Whole-number percentages that add up to exactly 100 (or all 0 when the total is 0). Same tie-break as the server. */
@@ -131,8 +133,8 @@ export function statementCode(businessId, dateFrom, dateTo, totals) {
   return `${h.slice(0, 4)}-${h.slice(4, 8)}-${h.slice(8, 12)}`;
 }
 
-/** A record can be corrected or voided for 24 hours from when it was made (the same rule as rider trips). `actedMs` defaults to now. */
-export const withinCorrectionWindow = (madeAt, actedMs = Date.now(), hours = CORRECTION_WINDOW_HOURS) => toMs(actedMs) - toMs(madeAt) < hours * 3600000;
+/** A record can be corrected or voided ONLY ON THE DAY IT WAS MADE (EAT): at the end of the day it is rolled into the daily summary and the line is deleted. `actedMs` defaults to now. */
+export const withinCorrectionWindow = (madeAt, actedMs = Date.now()) => eatDateString(toMs(madeAt)) === eatDateString(toMs(actedMs));
 
 // -------------------------------------------------------------------------------------------------- Lipa Later (phone side)
 /** What the customer still owes, from the sale total and the payments recorded against it. */
@@ -150,11 +152,5 @@ export function ageingBucket(dueDate, nowMs = Date.now()) {
 }
 export const daysOverdue = (dueDate, nowMs = Date.now()) => Math.floor((dayFromString(eatDateString(nowMs)) - dayFromString(dueDate)) / DAY);
 
-/** Payment checks shared by Record Payment: Full must cover the balance, Partial must be below it. Returns an error text or null. */
-export function paymentError(type, amount, balance) {
-  const a = cents(amount), b = cents(balance);
-  if (!(a > 0)) return 'Enter a payment amount greater than zero.';
-  if (type === 'full' && a < b) return `Full payment must be at least KSh ${money(b).toLocaleString()} (remaining balance).`;
-  if (type === 'partial' && a >= b) return `Partial payment must be less than KSh ${money(b).toLocaleString()} (remaining).`;
-  return null;
-}
+/** Payment checks shared by Record Payment (customers and suppliers): Full must EQUAL the balance, Partial is above 0 and below it, nothing exceeds it. The rules live in utils/lipaPaymentRules.js. */
+export const paymentError = rulesPaymentError;
