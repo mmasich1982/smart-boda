@@ -66,7 +66,7 @@ from app.models.trip import Trip
 from app.models.boda_group import (BodaGroup, GroupSlotRequest, AppNotification, GroupMember)
 from app.models.individual_rider import IndividualRiderPreRegistration   # Individual riders
 from app.models.business import BusinessTypeMaster, Business, BusinessUser   # Smart Bizna
-from app.models.business_daily import BusinessDailySummary, AppSetting      # Smart Bizna daily summaries, app settings
+from app.models.business_daily import BusinessDailySummary, BusinessRecordTombstone, AppSetting      # Smart Bizna daily summaries, app settings
 from app.models.business_ops import (BusinessSale, BusinessPurchase, BusinessExpense,
                                       BusinessStatementRequest)
 from app.models.business_lipa_later import (BusinessLipaLaterRecord, BusinessLipaLaterPayment, BusinessSupplierLipaRecord,

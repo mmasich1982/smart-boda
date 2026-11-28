@@ -1060,16 +1060,16 @@ export async function addToSyncQueue(record) {
     // Load existing queue
     const queue = await loadSyncQueue();
 
-    // A daily summary REPLACES the older version of the same day that is still waiting (and a final one is never replaced by a provisional one).
+    // DAILY SUMMARY: every revision has its OWN id (business_daily_summary_<client_id>:<stamp>), so a summary that already synced (it stays in the queue as 'synced')
+    // can never make the next one a "duplicate" and silently drop it. A newer summary REPLACES the older revisions of the same person-day that are still waiting
+    // (pending or failed; one being sent right now is left alone), and a provisional (running) summary never replaces a waiting FINAL one.
     if (record.type === 'business_daily_summary') {
-      const old = queue.find((q) => q.id === record.id && q.type === record.type && q.status !== 'synced');
-      if (old) {
-        if (old.data && old.data.final && !(record.data && record.data.final)) return true;
-        const keep = queue.filter((q) => q !== old);
-        keep.push({ ...record, status: 'pending', retryCount: 0 });
-        await saveSyncQueue(keep);
-        return true;
-      }
+      const same = (q) => q.type === 'business_daily_summary' && q.data && q.data.client_id === record.data.client_id;
+      if (!record.data.final && queue.some((q) => same(q) && q.data.final && q.status !== 'synced')) return true;
+      const keep = queue.filter((q) => !(same(q) && (q.status === 'pending' || q.status === 'failed')));
+      keep.push(record);
+      await indexedDbAdapter.kvSet(SYNC_QUEUE_KEY, keep);
+      return true;
     }
 
     // Check for duplicate

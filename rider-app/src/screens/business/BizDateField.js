@@ -11,9 +11,12 @@ import { todayEat } from '../../utils/businessFormat';
 const iso = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 const display = (v) => { if (!v) return ''; const [y, m, d] = v.split('-'); return `${m}/${d}/${y.slice(-2)}`; };
 
-export default function BizDateField({ label = 'Payment Due Date', value, onChange, hint = 'Must be after today. This is not income until the customer pays.', error }) {
+// min / max (YYYY-MM-DD, inclusive) set which days can be chosen. Default: tomorrow onwards (a Lipa Later due date). The older-statement dates use min = one year ago and
+// max = the day before the 3 months kept on the phone; the calendar then opens on `max`'s month and no day outside the range can be tapped.
+export default function BizDateField({ label = 'Payment Due Date', value, onChange, hint = 'Must be after today. This is not income until the customer pays.', error, min, max, testID }) {
   const today = todayEat();
-  const start = value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : today;
+  const lo = min || new Date(Date.parse(`${today}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+  const start = value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : (max && max < today ? max : today);
   const [open, setOpen] = useState(false);
   const [cursor, setCursor] = useState({ y: +start.slice(0, 4), m: +start.slice(5, 7) - 1 });
   const first = new Date(cursor.y, cursor.m, 1).getDay();
@@ -23,7 +26,7 @@ export default function BizDateField({ label = 'Payment Due Date', value, onChan
   return (
     <View style={{ marginBottom: 12 }}>
       <Text style={s.label}>{label} <Text style={{ color: C.red }}>*</Text></Text>
-      <TouchableOpacity onPress={() => setOpen(true)} accessibilityRole="button" accessibilityLabel={`${label}. ${value ? display(value) : 'Not chosen'}. Open calendar`}
+      <TouchableOpacity testID={testID} onPress={() => setOpen(true)} accessibilityRole="button" accessibilityLabel={`${label}. ${value ? display(value) : 'Not chosen'}. Open calendar`}
         style={[st.input, error && { borderColor: C.red }]}>
         <Text style={{ fontSize: 15, color: value ? C.ink : '#9aa0ab' }}>{value ? display(value) : 'mm/dd/yy'}</Text>
         <Text style={{ fontSize: 18 }}>📅</Text>
@@ -42,7 +45,7 @@ export default function BizDateField({ label = 'Payment Due Date', value, onChan
               {cells.map((d, i) => {
                 if (d === null) return <View key={`e${i}`} style={st.day} />;
                 const cell = iso(cursor.y, cursor.m, d);
-                const off = cell <= today, on = cell === value;
+                const off = cell < lo || (max && cell > max), on = cell === value;
                 return (
                   <TouchableOpacity key={d} disabled={off} style={[st.day, on && st.daySel]} accessibilityLabel={cell} onPress={() => { onChange(cell); setOpen(false); }}>
                     <Text style={[{ color: C.ink, fontSize: 14 }, on && { color: C.white, fontWeight: '800' }, off && { color: '#c4c7ce' }]}>{d}</Text>

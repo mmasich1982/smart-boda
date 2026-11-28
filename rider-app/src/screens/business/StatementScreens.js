@@ -11,11 +11,14 @@ import { useBizData } from '../../hooks/useBusiness';
 import store, { BusinessRuleError } from '../../offline/businessRepository';
 import * as R from '../../offline/businessReportUtils';
 import { kes, fmtDateTime, fmtDate, histRange, rangeLabel, todayEat, HIST_TABS } from '../../utils/businessFormat';
-import { statementFee, DEFAULT_STATEMENT_FEES } from '../../offline/businessDaily';
+import { statementFee, DEFAULT_STATEMENT_FEES, olderDateBounds } from '../../offline/businessDaily';
+import BizDateField from './BizDateField';
+import { useTimedMessage } from '../../hooks/useTimedMessage';
 import StatementTablesPreview from './StatementTablesPreview';
 import { downloadBusinessStatement } from '../../offline/businessStatementPdf';
 
 const TYPES = [{ key: 'summary', label: 'Summary' }, { key: 'detailed', label: 'Detailed' }];
+export const REQUEST_SENT_TEXT = 'Your statement request has been successfully submitted to the Smart Bizna Administration Team. Your statement will be prepared and made available within the next 24 hours. Please ensure that you regularly connect to the internet so that the statement can be delivered to your device.';
 const RANGES = [...HIST_TABS, { key: 'older', label: 'Older than 3 months' }];     // the four periods on the phone, then the Administrator
 const say = (e) => (e instanceof BusinessRuleError ? e.message : 'Something went wrong. Please try again.');
 
@@ -24,6 +27,9 @@ export function StatementSetupScreen({ navigation, route }) {
   const [key, setKey] = useState(route.params && RANGES.some((r) => r.key === route.params.key) ? route.params.key : 'thisMonth');
   const [from, setFrom] = useState(''), [to, setTo] = useState(''), [purpose, setPurpose] = useState(''), [busy, setBusy] = useState(false);
   const older = key === 'older';
+  const sent = useTimedMessage(12000);                             // the green success notice
+  const [problem, setProblem] = useState(null);                  // a refused request (for example the same request within 48 hours), shown in the screen, not a pop-up
+  const bounds = olderDateBounds(Date.now());                      // From and To: from one year ago to the day before the 3 months kept on the phone
   const [fees, setFees] = useState(DEFAULT_STATEMENT_FEES);       // the Administrator's fees (fetched when online; these are the fallback)
   useEffect(() => { let live = true; try { require('../../api/businessClient').businessStatementFees().then((f) => live && Array.isArray(f && f.tiers) && setFees(f.tiers)).catch(() => {}); } catch (e) { /* offline */ } return () => { live = false; }; }, []);
   const fee = older && /^\d{4}-\d{2}-\d{2}$/.test(from.trim()) ? statementFee(from.trim(), Date.now(), fees) : null;
@@ -40,10 +46,11 @@ export function StatementSetupScreen({ navigation, route }) {
   const request = async () => {
     setBusy(true);
     try {
-      const r = await store.requestStatement({ type, from: from.trim(), to: to.trim(), purpose: purpose.trim(), fees });
-      Alert.alert('Request sent', `Your request is saved. The fee for this statement is KSh ${r.fee}. Smart Bizna Admin will prepare it within 24 hours and it will appear under Saved Statements and Requests.`);
-      navigation.navigate('StatementList');
-    } catch (e) { Alert.alert('Request', say(e)); } finally { setBusy(false); }
+      setProblem(null);
+      await store.requestStatement({ type, from, to, purpose: purpose.trim(), fees });
+      sent.show(REQUEST_SENT_TEXT);
+      setFrom(''); setTo('');
+    } catch (e) { if (e && e.code === 'DUPLICATE_REQUEST') setProblem(say(e)); else Alert.alert('Request', say(e)); } finally { setBusy(false); }
   };
 
   return (
@@ -59,15 +66,17 @@ export function StatementSetupScreen({ navigation, route }) {
       {older ? (
         <>
           <Banner tone="amber" text="Older statements are provided by Smart Bizna Admin. Your phone keeps this month and the 3 months before it." />
-          <Field label="From (YYYY-MM-DD)" value={from} onChangeText={setFrom} placeholder="2026-01-01" autoCapitalize="none" />
-          <Field label="To (YYYY-MM-DD)" value={to} onChangeText={setTo} placeholder="2026-01-31" autoCapitalize="none" hint={`Up to ${todayEat()}`} />
+          <BizDateField label="From" value={from} onChange={(v) => { setFrom(v); setProblem(null); if (to && to < v) setTo(''); }} min={bounds.min} max={bounds.max} testID="older-from" hint={`From ${bounds.min} (one year ago) to ${bounds.max}. The last 3 months are made on your phone.`} />
+          <BizDateField label="To" value={to} onChange={(v) => { setTo(v); setProblem(null); }} min={from && from > bounds.min ? from : bounds.min} max={bounds.max} testID="older-to" hint={`Up to ${bounds.max}.`} />
           {fee ? (fee.available
             ? <Banner tone={fee.onPhone ? 'green' : 'amber'} text={fee.onPhone ? 'This period is on your phone: choose it from the periods above. It is free.' : `Fee for this statement: KSh ${fee.fee.toLocaleString()} (the oldest month is ${fee.monthsBack} months back).`} />
             : <Banner tone="red" text="Statements are kept for one year. This period is older than that." />) : <Hint>The fee depends on how old the statement is: {fees.map((t) => `${t.from} to ${t.to} months back KSh ${Number(t.fee).toLocaleString()}`).join(' · ')}.</Hint>}
         </>
       ) : <Hint style={{ marginBottom: 8 }}>{rangeLabel(range)}</Hint>}
       <DropdownField label="Purpose" value={purpose} onValueChange={setPurpose} placeholder="Select purpose (optional)..." options={STATEMENT_PURPOSES.map((p) => ({ label: p, value: p }))} />
-      {older ? <Btn label="Request from Smart Bizna Admin" onPress={request} disabled={busy} /> : <Btn label="Preview Statement →" onPress={generate} disabled={busy} />}
+      {older && sent.message ? <View testID="request-sent" accessibilityRole="alert" accessibilityLiveRegion="polite"><Banner tone="green" text={sent.message} /></View> : null}
+      {older && problem ? <Banner tone="amber" text={problem} /> : null}
+      {older ? <Btn label="Request from Smart Bizna Admin" onPress={request} disabled={busy || !from || !to} /> : <Btn label="Preview Statement →" onPress={generate} disabled={busy} />}
     </Screen>
   );
 }

@@ -23,6 +23,7 @@ from app.models.business_lipa_later import (BusinessLipaLaterRecord, BusinessLip
                                             BusinessSupplierLipaPayment)
 from app.routers.business_ops import get_ctx, _clock, _need, business_header, same_business
 from app.services import business_net_profit_service as npf
+from app.services import business_daily_service as daily_svc
 from app.services import business_lipa_later_service as lipa
 
 router = APIRouter(prefix="/business/lipa-later", tags=["business-lipa-later"])
@@ -42,6 +43,8 @@ class PaymentIn(BaseModel):
 def record_payment(body: PaymentIn, rider=Depends(get_current_rider), bid: Optional[str] = Depends(business_header), db: Session = Depends(get_db)):
     c = get_ctx(db, rider, bid)
     same_business(c, body)
+    if daily_svc.was_consolidated(db, c.biz.id, body.client_id):                       # counted in its day's summary and deleted: a re-send is not counted twice
+        return {"status": "duplicate", "client_id": body.client_id}
     dup = db.query(BusinessLipaLaterPayment).filter_by(business_id=c.biz.id, client_id=body.client_id).first()
     if dup:
         rec = db.query(BusinessLipaLaterRecord).filter_by(id=dup.lipa_later_id).first()
@@ -137,6 +140,8 @@ def record_supplier_payment(body: SupplierPaymentIn, rider=Depends(get_current_r
     c = get_ctx(db, rider, bid)
     same_business(c, body)
     _need(c, PURCHASE)
+    if daily_svc.was_consolidated(db, c.biz.id, body.client_id):
+        return {"status": "duplicate", "client_id": body.client_id}
     dup = db.query(BusinessSupplierLipaPayment).filter_by(business_id=c.biz.id, client_id=body.client_id).first()
     if dup:
         rec = db.query(BusinessSupplierLipaRecord).filter_by(id=dup.lipa_later_id).first()

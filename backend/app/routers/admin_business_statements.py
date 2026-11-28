@@ -21,7 +21,7 @@ router = APIRouter(prefix="/admin/business-statements", tags=["admin-business-st
 def build_statement(db: Session, b: Business, date_from: date, date_to: date, detailed: bool):
     """A statement for ANY period inside the year the server keeps, from the DAILY SUMMARIES: the same totals, tables and verification code as the phone builds."""
     from app.services import business_daily_service as svc
-    rows = svc.summary_dicts(svc.rows_in(db, b.id, date_from, date_to))
+    rows = svc.items_for(db, b.id, date_from, date_to)               # consolidates first; every user's figures of each day in ONE row
     users = [{"id": u.id, "full_name": u.full_name, "role": u.role} for u in db.query(BusinessUser).filter_by(business_id=b.id).all()]
     totals = svc.merge_summaries(rows, users)
     kind = "detailed" if detailed else "summary"

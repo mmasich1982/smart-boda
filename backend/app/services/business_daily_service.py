@@ -1,6 +1,10 @@
 # backend/app/services/business_daily_service.py
-# SMART BIZNA DAILY SUMMARIES on the server: save a person's day, add days and people into any period (the SAME shape as businessReportUtils.compute / the phone's
-# businessDaily.mergeSummaries, so a report here equals the phone's), build the statement tables, keep the statement fees, and purge what is older than a year.
+# SMART BIZNA DAILY SUMMARIES on the server: ONE row per business per day.
+#   During the day every phone sends its lines (business_sale / purchase / expense and the Lipa Later tables). consolidate_business() runs for a business whenever it is read
+#   (and nightly for all): it counts every line of every PAST day in that day's single summary row, marks the lines counted, and deletes them (open Lipa Later records and their
+#   payments stay until settled; a record settled today stays until tomorrow). A line arriving late for an already-closed day is added to that day's row and deleted too; the
+#   tombstone table stops a re-sent line being counted twice. Reports, statements, performance and restore read the daily rows plus today's lines.
+# The money is worked out by the SAME function as everywhere (business_net_profit_service.compute), person by person, then added.
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -8,16 +12,21 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.business import BusinessUser
-from app.models.business_daily import BusinessDailySummary, AppSetting
+from app.models.business_daily import BusinessDailySummary, BusinessRecordTombstone, AppSetting
+from app.models.business_lipa_later import (BusinessLipaLaterRecord, BusinessLipaLaterPayment, BusinessSupplierLipaRecord, BusinessSupplierLipaPayment)
+from app.models.business_ops import BusinessSale, BusinessPurchase, BusinessExpense, SALE, PURCHASE, EXPENSE
 from app.services import business_net_profit_service as npf
 
 EAT = npf.EAT
 METHODS = ("CASH", "MPESA", "CARD", "LIPA_LATER")
 METHOD_LABEL = {"CASH": "Cash", "MPESA": "M-Pesa", "CARD": "Card", "LIPA_LATER": "Lipa Later"}
-KEEP_DAYS = 366                      # the server keeps summaries for one year
-DEFAULT_FEES = [{"from": 4, "to": 6, "fee": 250}, {"from": 7, "to": 9, "fee": 500}, {"from": 10, "to": 12, "fee": 1000}]
+KEEP_DAYS = 366                      # summaries are kept for one year
+TOMBSTONE_DAYS = 7                   # a consolidated line's client id is remembered this long (re-sends after a lost reply)
+EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+DEFAULT_FEES = [{"from": 4, "to": 6, "fee": 500}, {"from": 7, "to": 9, "fee": 800}, {"from": 10, "to": 12, "fee": 1000}]
 FEES_KEY = "statement_fee_tiers"
-MAX_MONEY = 10_000_000_000
+PHONE_KEY = "support_phone"
+DEFAULT_SUPPORT_PHONE = "+254101605262"
 
 
 def _c(v) -> int:
@@ -28,72 +37,28 @@ def eat_today(now: datetime = None) -> date:
     return (now or datetime.now(timezone.utc)).astimezone(EAT).date()
 
 
-# ------------------------------------------------------------------------------------------------ saving a day
-def upsert_summary(db: Session, business_id, bu: BusinessUser, day: date, final: bool, s: dict, now: datetime = None) -> str:
-    """Save one person's summary of one day. Returns 'saved', 'kept' (a final summary is never replaced by a running one) or 'unchanged'."""
-    today = eat_today(now)
-    if day > today + timedelta(days=1):
-        raise HTTPException(422, "A summary cannot be for a future day.")
-    if day < today - timedelta(days=KEEP_DAYS):
-        raise HTTPException(422, "That day is older than the one year Smart Bizna keeps.")
-    income, purchases, expenses = (_c(s.get(k)) for k in ("income", "purchases", "expenses"))
-    if min(income, purchases, expenses) < 0 or max(income, purchases, expenses) > MAX_MONEY * 100:
-        raise HTTPException(422, "The summary amounts are not valid.")
-    by_pm = [{"method": m["method"], "count": int(m.get("count") or 0), "amount": npf.money(_c(m.get("amount")))} for m in (s.get("by_payment_method") or []) if m.get("method") in METHODS]
-    if sum(_c(m["amount"]) for m in by_pm) != income:
-        raise HTTPException(422, "The payment methods do not add up to the sales total.")
-    detail = {"by_payment_method": by_pm,
-              "cost_breakdown": [{"label": str(c.get("label") or "Other")[:60], "amount": npf.money(_c(c.get("amount")))} for c in (s.get("cost_breakdown") or [])][:60],
-              "by_person": [{"user_id": str(p.get("user_id")), "full_name": p.get("full_name"), "role": p.get("role"), "income": npf.money(_c(p.get("income"))),
-                             "sales_count": int(p.get("sales_count") or 0), "costs": npf.money(_c(p.get("costs")))} for p in (s.get("by_person") or [])][:40]}
-    row = db.query(BusinessDailySummary).filter_by(business_id=business_id, business_user_id=bu.id, day=day).first()
-    if row and row.final and not final:
-        return "kept"
-    vals = dict(final=bool(final), income=Decimal(income) / 100, purchases=Decimal(purchases) / 100, expenses=Decimal(expenses) / 100,
-                net_profit=Decimal(income - purchases - expenses) / 100, sales_made=int(s.get("sales_made") or 0),
-                purchases_count=int(s.get("purchases_count") or 0), expenses_count=int(s.get("expenses_count") or 0), detail=detail)
-    if row is None:
-        db.add(BusinessDailySummary(business_id=business_id, business_user_id=bu.id, day=day, **vals))
-    else:
-        if (row.final == vals["final"] and row.income == vals["income"] and row.purchases == vals["purchases"] and row.expenses == vals["expenses"] and row.sales_made == vals["sales_made"]
-                and row.detail == detail):
-            return "unchanged"
-        for k, v in vals.items():
-            setattr(row, k, v)
-    db.commit()
-    return "saved"
+def _day(t) -> date:
+    return npf.to_dt(t).astimezone(EAT).date()
 
 
-# ------------------------------------------------------------------------------------------------ reading
-def summary_dicts(rows):
-    out = []
-    for r in rows:
-        d = r.detail or {}
-        out.append({"day": r.day.isoformat(), "user_id": str(r.business_user_id), "final": bool(r.final), "income": float(r.income), "purchases": float(r.purchases), "expenses": float(r.expenses),
-                    "net_profit": float(r.net_profit), "sales_made": r.sales_made, "purchases_count": r.purchases_count, "expenses_count": r.expenses_count,
-                    "by_payment_method": d.get("by_payment_method", []), "cost_breakdown": d.get("cost_breakdown", []), "by_person": d.get("by_person", []),
-                    "updated_at": r.updated_at.isoformat() if r.updated_at else None, "provisional": not r.final})
-    return out
-
-
-def rows_in(db: Session, business_id, from_day: date, to_day: date, user_id=None):
-    """Summaries with from_day <= day <= to_day (inclusive)."""
-    q = db.query(BusinessDailySummary).filter(BusinessDailySummary.business_id == business_id, BusinessDailySummary.day >= from_day, BusinessDailySummary.day <= to_day)
-    if user_id is not None:
-        q = q.filter(BusinessDailySummary.business_user_id == user_id)
-    return q.order_by(BusinessDailySummary.day).all()
+# ------------------------------------------------------------------------------------------------ adding summaries up
+def _person_row(p) -> dict:
+    return {"user_id": str(p["user_id"]), "full_name": p.get("full_name"), "role": p.get("role"), "income": 0, "sales_count": 0, "purchases": 0, "expenses": 0, "purchases_count": 0, "expenses_count": 0}
 
 
 def merge_summaries(items, users=()) -> dict:
-    """Add summaries (dicts from summary_dicts) into the totals shape of npf.compute. Money in whole cents."""
+    """Add summary rows (dicts: a business-day row, a person's row, or an own-view row) into the totals shape of npf.compute, plus by_person with every figure and days_with_sales.
+    Income is the sum of the rows' income; money is added in whole cents."""
     by = {m: {"count": 0, "c": 0} for m in METHODS}
-    purchases = expenses = sales_made = pcount = ecount = 0
-    groups, person = {}, {}
+    income = purchases = expenses = sales_made = pcount = ecount = 0
+    groups, person, sale_days = {}, {}, set()
     for u in users:
-        person[str(u["id"])] = {"user_id": str(u["id"]), "full_name": u.get("full_name"), "role": u.get("role"), "income": 0, "sales_count": 0, "costs": 0}
+        person[str(u["id"])] = _person_row({"user_id": u["id"], "full_name": u.get("full_name"), "role": u.get("role")})
     for s in items:
-        purchases += _c(s["purchases"]); expenses += _c(s["expenses"]); sales_made += int(s.get("sales_made") or 0)
+        income += _c(s.get("income")); purchases += _c(s.get("purchases")); expenses += _c(s.get("expenses")); sales_made += int(s.get("sales_made") or 0)
         pcount += int(s.get("purchases_count") or 0); ecount += int(s.get("expenses_count") or 0)
+        if int(s.get("sales_made") or 0) > 0 and s.get("day"):
+            sale_days.add(str(s["day"]))
         for m in s.get("by_payment_method", []):
             if m["method"] in by:
                 by[m["method"]]["count"] += int(m.get("count") or 0); by[m["method"]]["c"] += _c(m.get("amount"))
@@ -103,30 +68,221 @@ def merge_summaries(items, users=()) -> dict:
             key = " ".join(str(c["label"]).split()).lower() or "other"
             g = groups.setdefault(key, {"label": " ".join(str(c["label"]).split()) or "Other", "c": 0}); g["c"] += _c(c["amount"])
         for p in s.get("by_person", []):
-            row = person.setdefault(str(p["user_id"]), {"user_id": str(p["user_id"]), "full_name": p.get("full_name"), "role": p.get("role"), "income": 0, "sales_count": 0, "costs": 0})
+            row = person.setdefault(str(p["user_id"]), _person_row(p))
             if not row["full_name"] and p.get("full_name"):
                 row["full_name"], row["role"] = p["full_name"], p.get("role")
-            row["income"] += _c(p.get("income")); row["sales_count"] += int(p.get("sales_count") or 0); row["costs"] += _c(p.get("costs"))
-    income = sum(by[m]["c"] for m in METHODS)
+            row["income"] += _c(p.get("income")); row["sales_count"] += int(p.get("sales_count") or 0)
+            row["purchases"] += _c(p.get("purchases")); row["expenses"] += _c(p.get("expenses"))
+            row["purchases_count"] += int(p.get("purchases_count") or 0); row["expenses_count"] += int(p.get("expenses_count") or 0)
+    methods_total = sum(by[m]["c"] for m in METHODS)
     net = income - (purchases + expenses)
-    pcts = npf._largest_remainder([by[m]["c"] for m in METHODS], income)
+    pcts = npf._largest_remainder([by[m]["c"] for m in METHODS], methods_total)
     lines = ([{"label": "Purchases", "c": purchases}] if purchases else []) + sorted(groups.values(), key=lambda g: (-g["c"], g["label"]))
     cp = npf._largest_remainder([l["c"] for l in lines], purchases + expenses)
     return {"income": npf.money(income), "purchases": npf.money(purchases), "expenses": npf.money(expenses), "net_profit": npf.money(net), "sales_made": sales_made,
-            "purchases_count": pcount, "expenses_count": ecount,
+            "purchases_count": pcount, "expenses_count": ecount, "days_with_sales": len(sale_days),
             "by_payment_method": [{"method": m, "label": METHOD_LABEL[m], "count": by[m]["count"], "amount": npf.money(by[m]["c"]), "percent": pcts[i]} for i, m in enumerate(METHODS)],
             "total_received": npf.money(income),
             "cost_breakdown": [{"label": l["label"], "amount": npf.money(l["c"]), "percent": cp[i]} for i, l in enumerate(lines)],
-            "by_person": [dict(v, income=npf.money(v["income"]), costs=npf.money(v["costs"])) for v in person.values()]}
+            "by_person": [dict(v, income=npf.money(v["income"]), purchases=npf.money(v["purchases"]), expenses=npf.money(v["expenses"]), costs=npf.money(v["purchases"] + v["expenses"])) for v in person.values()]}
 
 
-def totals_for(db: Session, business_id, start: datetime, end: datetime, user_id=None) -> dict:
-    """Totals for the period [start, end) (EAT datetimes, as npf.period_bounds gives): the summaries of the days inside it."""
+def _row_from_merged(day: date, m: dict) -> dict:
+    """A merged result in the shape stored in business_daily_summary and sent to the phones."""
+    return {"day": day.isoformat() if isinstance(day, date) else str(day), "income": m["income"], "purchases": m["purchases"], "expenses": m["expenses"], "net_profit": m["net_profit"],
+            "sales_made": m["sales_made"], "purchases_count": m["purchases_count"], "expenses_count": m["expenses_count"],
+            "by_payment_method": [{"method": x["method"], "count": x["count"], "amount": x["amount"]} for x in m["by_payment_method"]],
+            "cost_breakdown": [{"label": x["label"], "amount": x["amount"]} for x in m["cost_breakdown"]],
+            "by_person": [{k: p[k] for k in ("user_id", "full_name", "role", "income", "sales_count", "purchases", "expenses", "purchases_count", "expenses_count")}
+                          for p in m["by_person"] if p["income"] or p["purchases"] or p["expenses"] or p["sales_count"]]}
+
+
+def own_view(row: dict, user_id) -> dict:
+    """A Sales/Service Person's own figures of a business-day row (what their phone may see: never the rest of the team)."""
+    p = next((x for x in row.get("by_person", []) if str(x["user_id"]) == str(user_id)), None)
+    if p is None:
+        return None
+    inc, pu, ex = _c(p.get("income")), _c(p.get("purchases")), _c(p.get("expenses"))
+    return {"day": row["day"], "own": True, "income": npf.money(inc), "purchases": npf.money(pu), "expenses": npf.money(ex), "net_profit": npf.money(inc - pu - ex),
+            "sales_made": int(p.get("sales_count") or 0), "purchases_count": int(p.get("purchases_count") or 0), "expenses_count": int(p.get("expenses_count") or 0),
+            "by_payment_method": [], "cost_breakdown": [], "by_person": [p], "updated_at": row.get("updated_at")}
+
+
+def summary_dicts(rows):
+    out = []
+    for r in rows:
+        d = r.detail or {}
+        out.append({"day": r.day.isoformat(), "income": float(r.income), "purchases": float(r.purchases), "expenses": float(r.expenses), "net_profit": float(r.net_profit),
+                    "sales_made": r.sales_made, "purchases_count": r.purchases_count, "expenses_count": r.expenses_count, "by_payment_method": d.get("by_payment_method", []),
+                    "cost_breakdown": d.get("cost_breakdown", []), "by_person": d.get("by_person", []), "updated_at": r.updated_at.isoformat() if r.updated_at else None})
+    return out
+
+
+# ------------------------------------------------------------------------------------------------ the lines of a business, and one person's summary of a day from them
+class _Lines:
+    """Every line of a business as the money function wants it, with the database rows kept so they can be marked and deleted."""
+
+    def __init__(self, db: Session, business_id):
+        self.db, self.bid = db, business_id
+        self.users = db.query(BusinessUser).filter_by(business_id=business_id).all()
+        self.recs = []                                                          # (orm, dict)
+        for kind, M in ((SALE, BusinessSale), (PURCHASE, BusinessPurchase), (EXPENSE, BusinessExpense)):
+            for r in db.query(M).filter(M.business_id == business_id).all():
+                self.recs.append((r, {"id": r.id, "kind": kind, "user_id": r.user_id, "total": r.total, "payment_method": getattr(r, "payment_method", None), "status": r.status,
+                                      "trading_at": r.trading_at, "details": getattr(r, "details", None)}))
+        sale_of = {l.id: l.sale_id for l in db.query(BusinessLipaLaterRecord).filter(BusinessLipaLaterRecord.business_id == business_id).all()}
+        purchase_of = {l.id: l.purchase_id for l in db.query(BusinessSupplierLipaRecord).filter(BusinessSupplierLipaRecord.business_id == business_id).all()}
+        self.pays = [(p, {"record_id": sale_of.get(p.lipa_later_id), "amount": p.amount_ksh, "received_by": p.business_user_id, "trading_at": p.paid_at or p.created_at})
+                     for p in db.query(BusinessLipaLaterPayment).filter(BusinessLipaLaterPayment.business_id == business_id).all()]
+        self.spays = [(p, {"record_id": purchase_of.get(p.lipa_later_id), "amount": p.amount_ksh, "received_by": p.business_user_id, "trading_at": p.paid_at or p.created_at})
+                      for p in db.query(BusinessSupplierLipaPayment).filter(BusinessSupplierLipaPayment.business_id == business_id).all()]
+        self.lipa_open = {l.sale_id for l in db.query(BusinessLipaLaterRecord).filter(BusinessLipaLaterRecord.business_id == business_id, BusinessLipaLaterRecord.status == "pending").all()}
+        self.supplier_open = {l.purchase_id for l in db.query(BusinessSupplierLipaRecord).filter(BusinessSupplierLipaRecord.business_id == business_id, BusinessSupplierLipaRecord.status == "pending").all()}
+
+    def person_items(self, day: date, only_uncounted=True):
+        """One summary row per person who has uncounted lines on `day`. Other people's and already-counted lines are only 'ghosts' (outside the day) so a payment finds its sale."""
+        a, z = npf.range_bounds(day, day)
+        items = []
+        for u in self.users:
+            def mine(orm):
+                return (getattr(orm, "user_id", None) == u.id or getattr(orm, "business_user_id", None) == u.id) and (orm.summarized_at is None or not only_uncounted)
+            recs = [dict(d, trading_at=d["trading_at"] if (orm.user_id == u.id and (orm.summarized_at is None or not only_uncounted)) else EPOCH) for orm, d in self.recs]
+            pays = [d for orm, d in self.pays if orm.business_user_id == u.id and (orm.summarized_at is None or not only_uncounted)]
+            spays = [d for orm, d in self.spays if orm.business_user_id == u.id and (orm.summarized_at is None or not only_uncounted)]
+            real = [d for d in recs if d["user_id"] == u.id and a <= npf.to_dt(d["trading_at"]) < z and d["status"] != "voided"]
+            if not real and not any(a <= npf.to_dt(p["trading_at"]) < z for p in pays + spays):
+                continue
+            t = npf.compute(recs, pays, a, z, [{"id": u.id, "full_name": u.full_name, "role": u.role}], spays)
+            n = lambda k: sum(1 for d in real if d["kind"] == k)  # noqa: E731
+            person = {"user_id": str(u.id), "full_name": u.full_name, "role": u.role, "income": t["income"], "sales_count": t["sales_made"], "purchases": t["purchases"], "expenses": t["expenses"],
+                      "purchases_count": n(PURCHASE), "expenses_count": n(EXPENSE)}
+            items.append({"day": day.isoformat(), "income": t["income"], "purchases": t["purchases"], "expenses": t["expenses"], "sales_made": t["sales_made"],
+                          "purchases_count": n(PURCHASE), "expenses_count": n(EXPENSE), "by_payment_method": [{"method": m["method"], "count": m["count"], "amount": m["amount"]} for m in t["by_payment_method"]],
+                          "cost_breakdown": [{"label": c["label"], "amount": c["amount"]} for c in t["cost_breakdown"]], "by_person": [person]})
+        return items
+
+
+def _store(db: Session, business_id, day: date, merged: dict):
+    row = db.query(BusinessDailySummary).filter_by(business_id=business_id, day=day).first()
+    r = _row_from_merged(day, merged)
+    vals = dict(income=Decimal(_c(r["income"])) / 100, purchases=Decimal(_c(r["purchases"])) / 100, expenses=Decimal(_c(r["expenses"])) / 100,
+                net_profit=Decimal(_c(r["income"]) - _c(r["purchases"]) - _c(r["expenses"])) / 100, sales_made=r["sales_made"], purchases_count=r["purchases_count"],
+                expenses_count=r["expenses_count"], detail={"by_payment_method": r["by_payment_method"], "cost_breakdown": r["cost_breakdown"], "by_person": r["by_person"]})
+    if row is None:
+        db.add(BusinessDailySummary(business_id=business_id, day=day, **vals))
+    else:
+        for k, v in vals.items():
+            setattr(row, k, v)
+
+
+# ------------------------------------------------------------------------------------------------ the end-of-day consolidation
+def consolidate_business(db: Session, business_id, now: datetime = None) -> dict:
+    """Count every uncounted line of every PAST day into that day's single summary row, then delete the counted lines (except open Lipa Later records and what belongs to them).
+    Returns {'days': [...], 'deleted': n}. Safe to call at any time and as often as wanted."""
+    now = now or datetime.now(timezone.utc)
+    today = eat_today(now)
+    first = today - timedelta(days=KEEP_DAYS)
+    L = _Lines(db, business_id)
+    todo_recs = [(o, d) for o, d in L.recs if o.summarized_at is None and first <= _day(d["trading_at"]) < today]
+    todo_pays = [(o, d) for o, d in L.pays + L.spays if o.summarized_at is None and first <= _day(d["trading_at"]) < today]
+    days = sorted({_day(d["trading_at"]) for _, d in todo_recs} | {_day(d["trading_at"]) for _, d in todo_pays})
+    for day in days:
+        items = L.person_items(day)
+        if not items:
+            continue
+        existing = db.query(BusinessDailySummary).filter_by(business_id=business_id, day=day).first()
+        merged = merge_summaries(summary_dicts([existing]) + items if existing else items)
+        _store(db, business_id, day, merged)
+    for o, _ in todo_recs + todo_pays:
+        o.summarized_at = now
+    db.flush()
+    deleted = _purge_counted(db, L, today, now)
+    db.commit()
+    return {"days": [d.isoformat() for d in days], "deleted": deleted}
+
+
+def _purge_counted(db: Session, L: _Lines, today: date, now: datetime) -> int:
+    """Delete counted lines of past days. Kept: an open (unsettled) Lipa Later sale / purchase, and one settled TODAY (today's payment belongs to today). Payments go with their record."""
+    pay_today_sale = {p.lipa_later_id for p, d in L.pays if _day(d["trading_at"]) >= today}
+    pay_today_purchase = {p.lipa_later_id for p, d in L.spays if _day(d["trading_at"]) >= today}
+    lipa_of_sale = {l.sale_id: l.id for l in db.query(BusinessLipaLaterRecord).filter(BusinessLipaLaterRecord.business_id == L.bid).all()}
+    lipa_of_purchase = {l.purchase_id: l.id for l in db.query(BusinessSupplierLipaRecord).filter(BusinessSupplierLipaRecord.business_id == L.bid).all()}
+    n = 0
+    for orm, d in L.recs:
+        if orm.summarized_at is None or _day(d["trading_at"]) >= today:
+            continue
+        if d["kind"] == SALE and d["payment_method"] == "LIPA_LATER" and orm.status != "voided":
+            if orm.id in L.lipa_open or lipa_of_sale.get(orm.id) in pay_today_sale:
+                continue
+        if d["kind"] == PURCHASE and d["payment_method"] == "LIPA_LATER" and orm.status != "voided":
+            if orm.id in L.supplier_open or lipa_of_purchase.get(orm.id) in pay_today_purchase:
+                continue
+        db.merge(BusinessRecordTombstone(business_id=L.bid, client_id=orm.client_id, purged_at=now))
+        lid = lipa_of_sale.get(orm.id) if d["kind"] == SALE else lipa_of_purchase.get(orm.id)
+        for pay, _ in (L.pays if d["kind"] == SALE else L.spays):
+            if pay.lipa_later_id == lid:
+                db.merge(BusinessRecordTombstone(business_id=L.bid, client_id=pay.client_id, purged_at=now))
+        db.delete(orm)                                                        # the Lipa Later record and its payments go with it (ON DELETE CASCADE)
+        n += 1
+    db.flush()
+    return n
+
+
+def ensure_consolidated(db: Session, business_id, now: datetime = None):
+    consolidate_business(db, business_id, now)
+
+
+def was_consolidated(db: Session, business_id, client_id) -> bool:
+    """True when a line with this client id was already counted and deleted (a re-send after a lost reply)."""
+    return db.query(BusinessRecordTombstone).filter_by(business_id=business_id, client_id=client_id).first() is not None
+
+
+# ------------------------------------------------------------------------------------------------ reading
+def live_items(db: Session, business_id, day: date, user_id=None, lines: _Lines = None):
+    """Today's own lines as person rows (not stored; read straight from the detailed tables)."""
+    L = lines or _Lines(db, business_id)
+    items = L.person_items(day)
+    return [i for i in items if user_id is None or i["by_person"][0]["user_id"] == str(user_id)]
+
+
+def rows_in(db: Session, business_id, from_day: date, to_day: date):
+    return (db.query(BusinessDailySummary).filter(BusinessDailySummary.business_id == business_id, BusinessDailySummary.day >= from_day, BusinessDailySummary.day <= to_day)
+            .order_by(BusinessDailySummary.day).all())
+
+
+def items_for(db: Session, business_id, from_day: date, to_day: date, user_id=None, now: datetime = None):
+    """The daily rows of a period: the consolidated days, plus today's lines. user_id limits it to that person's own figures."""
+    ensure_consolidated(db, business_id, now)
+    today = eat_today(now)
+    items = summary_dicts(rows_in(db, business_id, from_day, min(to_day, today - timedelta(days=1))))
+    if user_id is not None:
+        items = [v for v in (own_view(i, user_id) for i in items) if v]
+    if from_day <= today <= to_day:
+        items += live_items(db, business_id, today, user_id)
+    return items
+
+
+def totals_for(db: Session, business_id, start: datetime, end: datetime, user_id=None, now: datetime = None) -> dict:
+    """Totals for [start, end) (EAT datetimes, as npf.period_bounds gives): consolidated days plus today's lines."""
     from_day = start.astimezone(EAT).date()
     to_day = (end.astimezone(EAT) - timedelta(microseconds=1)).date()
     users = [{"id": u.id, "full_name": u.full_name, "role": u.role} for u in db.query(BusinessUser).filter_by(business_id=business_id).all()]
-    items = summary_dicts(rows_in(db, business_id, from_day, to_day, user_id))
-    return merge_summaries(items, users)
+    return merge_summaries(items_for(db, business_id, from_day, to_day, user_id, now), users)
+
+
+class SummaryView:
+    """All of a business's daily rows (and today's lines) loaded once, for the performance series."""
+
+    def __init__(self, db: Session, business_id, now: datetime = None):
+        ensure_consolidated(db, business_id, now)
+        today = eat_today(now)
+        self.users = [{"id": u.id, "full_name": u.full_name, "role": u.role} for u in db.query(BusinessUser).filter_by(business_id=business_id).all()]
+        self.items = summary_dicts(db.query(BusinessDailySummary).filter_by(business_id=business_id).order_by(BusinessDailySummary.day).all()) + live_items(db, business_id, today)
+        self.activity_records = [{"kind": "SALE", "status": "active", "trading_at": datetime.fromisoformat(i["day"] + "T12:00:00+03:00")} for i in self.items if i["sales_made"]]
+
+    def totals(self, start: datetime, end: datetime) -> dict:
+        a, z = start.astimezone(EAT).date(), (end.astimezone(EAT) - timedelta(microseconds=1)).date()
+        return merge_summaries([i for i in self.items if a <= date.fromisoformat(i["day"]) <= z], self.users)
 
 
 # ------------------------------------------------------------------------------------------------ statement tables (the same as the phone's buildStatementTables)
@@ -162,7 +318,7 @@ def build_tables(kind: str, from_day: date, to_day: date, items, last_day: date 
     return {"type": kind, "months": months, "grand": add([{"sales": mo["totals"]["sales"], "purchases": mo["totals"]["purchases"], "expenses": mo["totals"]["expenses"]} for mo in months]), "multiMonth": len(months) > 1}
 
 
-# ------------------------------------------------------------------------------------------------ statement fees (configurable)
+# ------------------------------------------------------------------------------------------------ statement fees (configurable) and settings
 def months_back(day: date, today: date) -> int:
     return (today.year - day.year) * 12 + today.month - day.month
 
@@ -194,35 +350,35 @@ def validate_tiers(tiers):
     return out
 
 
+def one_year_ago(today: date) -> date:
+    try:
+        return today.replace(year=today.year - 1)
+    except ValueError:                                   # 29 February
+        return today.replace(year=today.year - 1, day=28)
+
+
 def fee_for(db: Session, period_from: date, today: date):
-    """{available, fee, months_back}. The oldest month decides the band; over 12 months back is not available; 0-3 months back is on the phone (free)."""
+    """{available, fee, months_back, on_phone}. The oldest month decides the band; 0-3 months back is on the phone (free); older than one year is not available."""
     mb = months_back(period_from, today)
     if mb <= 3:
         return {"available": True, "fee": 0, "months_back": mb, "on_phone": True}
-    if mb > 12:
+    if mb > 12 or period_from < one_year_ago(today):
         return {"available": False, "fee": None, "months_back": mb, "on_phone": False}
     t = next((x for x in get_fee_tiers(db) if x["from"] <= mb <= x["to"]), None)
     return {"available": bool(t), "fee": t["fee"] if t else None, "months_back": mb, "on_phone": False}
 
 
-# ------------------------------------------------------------------------------------------------ one year retention
+def get_support_phone(db: Session) -> str:
+    row = db.query(AppSetting).filter_by(key=PHONE_KEY).first()
+    return row.value if row and isinstance(row.value, str) and row.value.strip() else DEFAULT_SUPPORT_PHONE
+
+
+# ------------------------------------------------------------------------------------------------ retention
 def purge_old(db: Session, now: datetime = None) -> int:
-    """Delete summaries older than one year. Run daily (python -m app.jobs.purge_business_summaries). Returns how many were deleted."""
+    """Delete summaries older than one year and tombstones older than 7 days. Returns how many summaries were deleted."""
+    now = now or datetime.now(timezone.utc)
     cutoff = eat_today(now) - timedelta(days=KEEP_DAYS)
     n = db.query(BusinessDailySummary).filter(BusinessDailySummary.day < cutoff).delete(synchronize_session=False)
+    db.query(BusinessRecordTombstone).filter(BusinessRecordTombstone.purged_at < now - timedelta(days=TOMBSTONE_DAYS)).delete(synchronize_session=False)
     db.commit()
     return n
-
-
-# ------------------------------------------------------------------------------------------------ a business's summaries loaded once (for the performance tab)
-class SummaryView:
-    """All of a business's daily summaries, loaded once, so the performance series (many periods) does not query again for each period."""
-
-    def __init__(self, db: Session, business_id):
-        self.users = [{"id": u.id, "full_name": u.full_name, "role": u.role} for u in db.query(BusinessUser).filter_by(business_id=business_id).all()]
-        self.items = summary_dicts(db.query(BusinessDailySummary).filter_by(business_id=business_id).order_by(BusinessDailySummary.day).all())
-        self.activity_records = [{"kind": "SALE", "status": "active", "user_id": i["user_id"], "trading_at": datetime.fromisoformat(i["day"] + "T12:00:00+03:00")} for i in self.items if i["sales_made"] or i["income"]]
-
-    def totals(self, start: datetime, end: datetime) -> dict:
-        a, z = start.astimezone(EAT).date(), (end.astimezone(EAT) - timedelta(microseconds=1)).date()
-        return merge_summaries([i for i in self.items if a <= date.fromisoformat(i["day"]) <= z], self.users)

@@ -115,7 +115,7 @@ export function BusinessFinancialPerformanceScreen({ navigation }) {
       <Title>My Business Financial Performance</Title>
       <Sub>Your whole business: every Sales/Service Person and you.</Sub>
       <Tabs tabs={PERF_TABS} value={period} onChange={setPeriod} />
-      {data ? (<><StaleNotice meta={data.meta} /><ProfitHero title="Net Profit" totals={data.t} kes={kes} /><CostBreakdown rows={data.t.cost_breakdown} />
+      {data ? (<><StaleNotice meta={data.meta} /><ProfitHero title="Net Profit" totals={data.t} kes={kes} /><Card><Row k="Sales/Services made" v={String(data.t.sales_made)} /><Row k="Days with sales" v={String(data.t.days_with_sales || 0)} /></Card><CostBreakdown rows={data.t.cost_breakdown} />
         <Btn label="＋ Add Expense →" onPress={() => navigation.navigate('RecordExpense')} /></>) : <Hint>Loading…</Hint>}
     </Screen>
   );

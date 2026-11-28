@@ -5,9 +5,10 @@
 // This file is deliberately free of React Native imports: its four outside needs are injected (see createBusinessStore), so the whole
 // store is tested in plain Jest with an in-memory key-value map. businessRepository.js wires it to IndexedDB, the sync queue and the clock.
 //
-// END-OF-DAY CLOSE (architecture): lines (sales, purchases, expenses and their payments) stay on the phone only until the end of THEIR day. Then one daily summary is
-// made (offline/businessDaily.js), the lines are deleted, and only the summary is kept (3 months here, 1 year on the server). Open Lipa Later records and their payments
-// are the exception: they are money still owed, so they stay in full until settled. Only credit records and the daily summaries are sent to the server, never the lines.
+// END-OF-DAY (architecture): every line (sale, purchase, expense, payment) is saved here and SENT to the server as it is recorded. At the end of the day the SERVER counts all
+// users' lines of that day into ONE summary row for the business and deletes them. This phone then receives that row (snapshot / mine) and, once the row is here and its own lines
+// have been sent, deletes its lines of that day (businessStore.closeDays). Open Lipa Later records and their payments are kept until settled. Reports read the daily rows plus the
+// lines of days not yet consolidated (always today). A Sales/Service Person's phone receives only their own figures of each day.
 //
 // Local record shapes use the SERVER's snake_case names, so a record that comes back from the server merges in without translation:
 //   sale     {client_id, kind:'SALE', items, total, payment_method, trading_at, status, version, recorded_by, customer_name,
@@ -40,22 +41,23 @@ export class BusinessRuleError extends Error {
 }
 const rule = (code, message) => { throw new BusinessRuleError(code, message); };
 
-// daily: the DAILY SUMMARIES, keyed `${user_id}|${YYYY-MM-DD}`: this person's own closed days and (for the Owner) the other people's, pulled from the server.
+// daily: the DAILY SUMMARIES pulled from the server, keyed by day (YYYY-MM-DD): ONE row per business per day for an Owner, the person's own figures for anyone else.
 const emptyData = () => ({ sales: [], purchases: [], expenses: [], payments: [], supplierPayments: [], users: [], daily: {}, meta: { snapshotSince: null, mineSince: null } });
 const rid = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 const clone = (o) => JSON.parse(JSON.stringify(o));
 
 /**
  * @param {{kv:{get:Function,set:Function}, enqueue:(item:object)=>Promise<any>, now?:()=>number,
- *          identity:()=>Promise<{rider_id:string}>, businessId:string}} deps   businessId is REQUIRED: there is no default business.
+ *          identity:()=>Promise<{rider_id:string}>, businessId:string, pendingClientIds?:()=>Promise<Set<string>>}} deps   businessId is REQUIRED: there is no default business.
+ *          pendingClientIds: the client ids of lines still waiting in the sync queue (a day's lines are deleted here only after they have been sent).
  */
-export function createBusinessStore({ kv, enqueue, now = () => Date.now(), identity, businessId }) {
+export function createBusinessStore({ kv, enqueue, now = () => Date.now(), identity, businessId, pendingClientIds = async () => new Set() }) {
   if (typeof businessId !== 'string' || !businessId.trim()) rule('NO_BUSINESS', 'No business was chosen, so nothing was opened.');   // fail closed
   const BID = businessId.trim().toLowerCase();
   const K = (base) => scopedKey(base, BID);
   const read = async (key, fallback) => { const v = await kv.get(key); if (v == null) return fallback; return typeof v === 'string' ? JSON.parse(v) : v; };
   const write = (key, value) => kv.set(key, JSON.stringify(value));
-  const getData = async () => { const d = { ...emptyData(), ...(await read(K(DATA_KEY), emptyData())) }; if (!d.daily) d.daily = {}; return d; };
+  const getData = async () => { const d = { ...emptyData(), ...(await read(K(DATA_KEY), emptyData())) }; if (!d.daily) d.daily = {}; Object.keys(d.daily).forEach((k) => { if (k.includes('|')) delete d.daily[k]; }); delete d.restored; return d; };      // Release 4 kept per-person summaries (key user|day) and a restore baseline: both are gone, the server's single row per day replaces them
   const saveData = (d) => write(K(DATA_KEY), d);
 
   // ---------------------------------------------------------------------------------------------- profile (who am I, what may I see)
@@ -84,60 +86,48 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
     return { p, riderId: id.rider_id, me: { user_id: p.business_user_id, name: p.full_name, role: p.role } };
   }
 
-  async function queue(type, endpoint, data, priority) {
+  async function queue(type, endpoint, data, priority, idSuffix = '') {
     const { p, riderId } = await ctx();
-    const id = `${type}_${data.client_id}`;
+    const id = `${type}_${data.client_id}${idSuffix}`;
     try {
       await enqueue({ id, type, endpoint, data: { rider_id: riderId, business_id: p.business_id, ...data }, riderId, priority, timestamp: new Date(now()).toISOString() });
       return true;
     } catch { return false; /* offline first: the record is already saved; the orchestrator re-checks the queue */ }
   }
 
-  // ---------------------------------------------------------------------------------------------- daily summaries (what is sent to the server instead of the lines)
+  // ---------------------------------------------------------------------------------------------- daily rows (consolidated by the server) and today's lines
   const todayStr = () => R.eatDateString(now());
-  const isCredit = (r) => !!r && (r.kind === 'SALE' || r.kind === 'PURCHASE') && r.payment_method === 'LIPA_LATER';   // owed money: still sent line by line, until settled
-  const queueSummary = (s) => queue('business_daily_summary', '/business/daily-summaries', { client_id: `${BID}:${s.user_id}:${s.day}`, day: s.day, final: !!s.final, summary: s }, 'normal');
 
-  /** This person's own lines as inputs for a summary. Other people's records are kept only as "ghosts" (outside every range) so a payment the Owner takes on a
-   *  staff sale still finds its sale; they are never counted here: each person's own phone summarises their own lines. */
-  function ownInputsFrom(d, p) {
-    const me = p && p.business_user_id;
-    const sale = (r) => ({ id: r.client_id, kind: r.kind, user_id: r.recorded_by && r.recorded_by.user_id, total: r.total, payment_method: r.payment_method || null, status: r.status, trading_at: r.trading_at, details: r.details || null });
-    const all = [];
-    ['sales', 'purchases', 'expenses'].forEach((k) => d[k].forEach((r) => all.push(sale(r))));
-    const mineRec = all.filter((r) => r.user_id === me);
-    const records = all.map((r) => (r.user_id === me ? r : { ...r, trading_at: 0 }));
-    const mine = (x) => (x.received_by && x.received_by.user_id) === me;
-    const payments = d.payments.filter(mine).map((x) => ({ record_id: x.sale_client_id, amount: x.amount, received_by: me, trading_at: x.trading_at }));
-    const supplierPayments = (d.supplierPayments || []).filter(mine).map((x) => ({ record_id: x.purchase_client_id, amount: x.amount, received_by: me, trading_at: x.trading_at }));
-    return { me, records, ownRecords: mineRec, payments, supplierPayments, users: p ? [{ id: me, full_name: p.full_name, role: p.role }] : [] };
+  /** The lines held on this phone as inputs for the money function (an Owner's phone also holds the team's lines of days not yet consolidated). */
+  function inputsFrom(d, p) {
+    const users = (d.users || []).map((u) => ({ id: u.id, full_name: u.full_name, role: u.role }));
+    if (p && !users.some((u) => String(u.id) === String(p.business_user_id))) users.push({ id: p.business_user_id, full_name: p.full_name, role: p.role });
+    const rec = (r) => ({ id: r.client_id, kind: r.kind, user_id: r.recorded_by && r.recorded_by.user_id, total: r.total, payment_method: r.payment_method || null, status: r.status, trading_at: r.trading_at, details: r.details || null });
+    const records = [...d.sales, ...d.purchases, ...d.expenses].map(rec);
+    const pay = (x, key) => ({ record_id: x[key], amount: x.amount, received_by: x.received_by && x.received_by.user_id, trading_at: x.trading_at });
+    return { records, payments: d.payments.map((x) => pay(x, 'sale_client_id')), supplierPayments: (d.supplierPayments || []).map((x) => pay(x, 'purchase_client_id')), users };
   }
-  const ownSummary = (day, o, final) => D.summarizeDay(day, o, { user_id: o.me, business_id: BID, final });
+  const onlyMineInputs = (o, me) => ({ ...o, records: o.records.filter((r) => String(r.user_id) === String(me)), payments: o.payments.filter((x) => String(x.received_by) === String(me)),
+    supplierPayments: o.supplierPayments.filter((x) => String(x.received_by) === String(me)) });
 
-  /** Today's running summary, sent to the server in place of the lines (a newer one replaces the older one still waiting in the queue). */
-  async function pushToday() {
-    const p = await getProfile(); if (!p || !p.business_user_id) return;
-    const o = ownInputsFrom(await getData(), p);
-    await queueSummary(ownSummary(todayStr(), o, false));
-  }
-
-  /** Every summary inside [startMs, endMs): other people's (pulled) and this person's own: the stored one for a closed day, live from today's lines for today
-   *  and for any past day not yet closed. */
+  /** Every summary row inside [startMs, endMs): the server's row for each consolidated day, and rows worked out from the lines held here for the days it has not
+   *  consolidated yet (today, and any past day whose row has not reached this phone). onlyMine = this person's own figures only. */
   async function summariesInRange(startMs, endMs, { onlyMine = false } = {}) {
     const [p, d] = [await getProfile(), await getData()];
     if (!p) return [];
-    const o = ownInputsFrom(d, p); const today = todayStr();
+    const me = p.business_user_id; const today = todayStr();
+    let o = inputsFrom(d, p); if (onlyMine || !isOwner(p)) o = onlyMineInputs(o, me);
     const inRange = (day) => { const a = D.dayBounds(day)[0]; return a >= startMs && a < endMs; };
-    const out = [];
-    Object.values(d.daily).forEach((s) => { if (s.user_id !== o.me && !onlyMine && inRange(s.day)) out.push(s); });
-    const days = new Set(Object.values(d.daily).filter((s) => s.user_id === o.me).map((s) => s.day));
-    o.ownRecords.forEach((r) => days.add(D.dayOf(r.trading_at)));
+    const days = new Set(Object.keys(d.daily));
+    o.records.forEach((r) => days.add(D.dayOf(r.trading_at)));
     o.payments.concat(o.supplierPayments).forEach((x) => days.add(D.dayOf(x.trading_at)));
     days.add(today);
+    const out = [];
     [...days].sort().forEach((day) => {
       if (!inRange(day)) return;
-      const stored = d.daily[`${o.me}|${day}`];
-      if (day !== today && stored) out.push(stored); else out.push(ownSummary(day, o, false));
+      const row = d.daily[day];
+      if (row && day !== today) { const v = onlyMine && !row.own ? D.ownView(row, me) : row; if (v) out.push(v); return; }
+      out.push(...D.summarizeLines(day, o));
     });
     return out;
   }
@@ -163,9 +153,8 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
       Object.assign(rec, { customer_name: name, customer_phone: phone, due_date: dueDate });
     }
     const d = await getData(); d.sales.push(rec); await saveData(d);
-    if (isCredit(rec)) await queue('sale_service_entry', '/business/sales', { client_id: rec.client_id, items: rec.items, total, payment_method: pm, trading_at: rec.trading_at,
-      customer_name: rec.customer_name, customer_phone: rec.customer_phone, due_date: rec.due_date }, 'high');      // owed money is sent as a record; every other sale goes to the server only inside the daily summary
-    await pushToday();
+    await queue('sale_service_entry', '/business/sales', { client_id: rec.client_id, items: rec.items, total, payment_method: pm, trading_at: rec.trading_at,
+      customer_name: rec.customer_name, customer_phone: rec.customer_phone, due_date: rec.due_date }, 'high');
     return rec;
   }
 
@@ -188,9 +177,8 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
       Object.assign(rec, { supplier_name: name, supplier_phone: phone, due_date: dueDate });
     }
     const d = await getData(); d.purchases.push(rec); await saveData(d);
-    if (isCredit(rec)) await queue('purchase_entry', '/business/purchases', { client_id: rec.client_id, items: its, total, payment_method: pm, trading_at: rec.trading_at,
+    await queue('purchase_entry', '/business/purchases', { client_id: rec.client_id, items: its, total, payment_method: pm, trading_at: rec.trading_at,
       supplier_name: rec.supplier_name, supplier_phone: rec.supplier_phone, due_date: rec.due_date }, 'high');
-    await pushToday();
     return rec;
   }
 
@@ -203,7 +191,7 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
     const rec = { client_id: clientId || rid('exp'), kind: 'EXPENSE', details: det, total: amt, items: [{ label: det, amount: amt }], trading_at: new Date(now()).toISOString(),
       status: 'active', version: 1, recorded_by: me, local: true };
     const d = await getData(); d.expenses.push(rec); await saveData(d);
-    await pushToday();                                           // expenses are sent only inside the daily summary
+    await queue('expense_entry', '/business/expenses', { client_id: rec.client_id, details: det, amount: amt, trading_at: rec.trading_at }, 'normal');
     return rec;
   }
 
@@ -284,7 +272,6 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
     // server first: if the payment arrives before its sale, the server answers "not found" and the queue simply tries again.
     await queue('business_lipa_payment', '/business/lipa-later/payments',
       { client_id: pay.client_id, sale_client_id: saleClientId, pay_type: type, amount: pay.amount, notes: pay.notes, paid_at: pay.trading_at }, 'high');
-    await pushToday();
     return { payment: pay, balance: R.lipaBalance(sale.total, paymentsOf(await getData(), saleClientId)) };
   }
 
@@ -319,7 +306,6 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
     d.supplierPayments = (d.supplierPayments || []).concat([pay]); await saveData(d);
     await queue('supplier_lipa_payment', '/business/lipa-later/supplier-payments',
       { client_id: pay.client_id, purchase_client_id: purchaseClientId, pay_type: type, amount: pay.amount, notes: pay.notes, paid_at: pay.trading_at }, 'high');
-    await pushToday();
     return { payment: pay, balance: R.lipaBalance(purchase.total, supplierPaymentsOf(await getData(), purchaseClientId)) };
   }
 
@@ -388,9 +374,8 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
       rec.status = 'corrected'; rec.corrected_at = new Date(now()).toISOString();
       return q;
     });
-    if (isCredit(out.rec)) await queue('record_correction', `/business/records/${encodeURIComponent(clientId)}/correct`,
-      { client_id: out.changeId, record_client_id: clientId, acted_at: out.actedAt, ...out.queued }, 'high');      // only owed-money records exist on the server as records
-    await pushToday();                                                                                        // every record's change reaches the server inside today's summary
+    await queue('record_correction', `/business/records/${encodeURIComponent(clientId)}/correct`,
+      { client_id: out.changeId, record_client_id: clientId, acted_at: out.actedAt, ...out.queued }, 'high');
     return out.rec;
   }
 
@@ -401,8 +386,7 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
       if (sale && paid > 0) rule('HAS_PAYMENTS', 'A Lipa Later record that already has a payment cannot be voided.');
       rec.status = 'voided'; rec.void_reason = why; rec.voided_at = new Date(now()).toISOString(); return {};
     });
-    if (isCredit(out.rec)) await queue('record_void', `/business/records/${encodeURIComponent(clientId)}/void`, { client_id: out.changeId, record_client_id: clientId, reason: why, acted_at: out.actedAt }, 'high');
-    await pushToday();
+    await queue('record_void', `/business/records/${encodeURIComponent(clientId)}/void`, { client_id: out.changeId, record_client_id: clientId, reason: why, acted_at: out.actedAt }, 'high');
     return out.rec;
   }
 
@@ -460,9 +444,12 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
     if (!from || !to || to < from) rule('BAD_RANGE', 'Choose a valid From and To date.');
     if (to > R.eatDateString(now())) rule('FUTURE', 'The period cannot be in the future.');
     const cutoff = R.eatDateString(R.retentionCutoffMs(now()));
-    if (from >= cutoff) rule('WITHIN_WINDOW', 'This period is on your phone. Choose This Month, Last Month, Last 2 Months or Last 3 Months and generate it yourself.');
+    if (from >= cutoff || to >= cutoff) rule('WITHIN_WINDOW', 'This period includes the last 3 months, which are on your phone. Choose This Month, Last Month, Last 2 Months or Last 3 Months and generate it yourself.');
+    if (from < D.olderDateBounds(now()).min) rule('NOT_AVAILABLE', 'Statements are kept for one year. The From date cannot be more than one year ago.');
     const fee = D.statementFee(from, now(), fees);
     if (!fee.available) rule('NOT_AVAILABLE', 'Statements are kept for one year only. This period is older than that.');
+    const dup = (await read(K(REQ_KEY), [])).find((q) => q.statement_type === type && q.period_from === from && q.period_to === to && now() - (q.requested_at || 0) < 48 * 3600000);
+    if (dup) rule('DUPLICATE_REQUEST', 'Your previous request for this statement is already being processed. Please connect to the internet from time to time so it can finish syncing in both directions. The same request can be submitted again after 48 hours.');
     const req = { client_id: rid('stmtreq'), statement_type: type, period_from: from, period_to: to, purpose: purpose || null, status: 'queued', requested_at: now(), statement: null, fee: fee.fee };
     const all = await read(K(REQ_KEY), []); all.push(req); await write(K(REQ_KEY), all);
     await queue('business_statement_request', '/business/statement-requests', { client_id: req.client_id, statement_type: type, period_from: from, period_to: to, purpose: purpose || null, fee_ksh: req.fee }, 'normal');
@@ -495,11 +482,7 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
       const mine = list.findIndex((y) => y.client_id === x.client_id);
       if (mine < 0) list.push({ ...x, local: false }); else if (!keepLocal.has(x.client_id)) list[mine] = { ...x, local: false };
     });
-    (bundle.daily_summaries || []).forEach((s) => {                          // the daily summaries of the business (the Owner gets everyone's, others only their own)
-      const key = `${s.user_id}|${s.day}`; const mineLocal = d.daily[key];
-      if (mineLocal && mineLocal.queued === false) return;                  // my own closed day still waiting to be sent: mine wins
-      if (!mineLocal || !mineLocal.final || !s.provisional) d.daily[key] = { ...s, queued: true };
-    });
+    (bundle.daily_summaries || []).forEach((r) => { d.daily[r.day] = r; });      // the server's single row for each consolidated day (an Owner: the whole business; anyone else: their own figures)
     if (bundle.users) d.users = bundle.users;
     if (bundle.server_time) {                                              // 60 seconds of overlap: merging is idempotent, so nothing is ever missed
       const since = new Date(Date.parse(bundle.server_time) - 60000).toISOString();
@@ -538,7 +521,7 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
     if (!p) return { today: [], days: [] };
     const [a, z] = range || [0, Infinity]; const today = todayStr(); const [ts, te] = D.dayBounds(today);
     const me = p.business_user_id;
-    const lines = (a < te && z > ts) ? (await transactions(Math.max(a, ts), Math.min(z, te), filter)).filter((r) => { const rec = r.record || r; return !rec.recorded_by || rec.recorded_by.user_id === me; }) : [];
+    const lines = (a < te && z > ts) ? await transactions(Math.max(a, ts), Math.min(z, te), filter) : [];     // today's lines: everyone's for an Owner (the team's lines arrive by sync), own for anyone else
     const sums = (await summariesInRange(a, z, { onlyMine: !isOwner(p) })).filter((s) => s.day < today);
     const byDay = new Map(); sums.forEach((s) => { if (!byDay.has(s.day)) byDay.set(s.day, []); byDay.get(s.day).push(s); });
     const days = [...byDay.keys()].sort().reverse().map((day) => {
@@ -548,53 +531,40 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
     return { today: lines, days };
   }
 
-  // ---------------------------------------------------------------------------------------------- THE END-OF-DAY CLOSE
+  // ---------------------------------------------------------------------------------------------- THE END-OF-DAY CLEAN-UP OF LINES ON THIS PHONE
   /**
-   * For every PAST day this person has lines for: make the daily summary (final), then delete the day's lines. Run when the app opens and at midnight (EAT), so a phone that
-   * was off at midnight, or offline for days, still closes every missed day; the summaries are queued and reach the server as soon as there is a connection.
-   * The summaries and the deletions are saved in ONE write, so a line is never deleted without its summary. Kept in full: owed-money (Lipa Later) records and their
-   * payments until settled (and a record settled today until tomorrow, because today's payment belongs to today's figures).
+   * For every PAST day: when the server's single summary row for that day has reached this phone, AND this phone's lines of that day have been sent, delete those lines (the row
+   * now carries them). A day whose row has not arrived yet, or with a line still waiting to be sent, keeps its lines, so nothing is ever lost and reports stay right. Run when the
+   * app opens, at every sync and at midnight (EAT). Kept in full: open Lipa Later records and their payments (until settled), and a record settled today (until tomorrow).
    */
   async function closeDays({ nowMs = now() } = {}) {
     const p = await getProfile();
     if (!p || !p.business_user_id) return { closed: [], deleted: 0 };
-    const d = await getData(); const today = R.eatDateString(nowMs); const me = p.business_user_id;
-    const o = ownInputsFrom(d, p);
+    const d = await getData(); const today = R.eatDateString(nowMs);
+    const pending = await pendingClientIds();
+    if (pending.has('__unknown__')) return { closed: [], deleted: 0 };                  // the queue could not be read: delete nothing
+    const sent = (id) => !pending.has(id);
     const before = d.sales.length + d.purchases.length + d.expenses.length + d.payments.length + (d.supplierPayments || []).length;
-    const days = new Set();
-    o.ownRecords.forEach((r) => days.add(D.dayOf(r.trading_at)));
-    o.payments.concat(o.supplierPayments).forEach((x) => days.add(D.dayOf(x.trading_at)));
-    const closed = [];
-    [...days].sort().forEach((day) => {
-      if (day >= today || d.daily[`${me}|${day}`]) return;                          // today stays open; an already-closed day is never re-made
-      d.daily[`${me}|${day}`] = { ...ownSummary(day, o, true), queued: false };
-      closed.push(day);
-    });
+    const closed = new Set();
+    const ready = (t) => { const day = D.dayOf(t); return day < today && !!d.daily[day]; };            // a past day whose single row is here
     const past = (t) => D.dayOf(t) < today;
     const openSale = new Set(d.sales.filter((s) => s.payment_method === 'LIPA_LATER' && s.status !== 'voided' && R.lipaBalance(s.total, paymentsOf(d, s.client_id)) > 0).map((s) => s.client_id));
     const openPur = new Set(d.purchases.filter((r) => r.payment_method === 'LIPA_LATER' && r.status !== 'voided' && R.lipaBalance(r.total, supplierPaymentsOf(d, r.client_id)) > 0).map((r) => r.client_id));
     const payToday = (list, key, id) => list.some((x) => x[key] === id && !past(x.trading_at));
-    d.sales = d.sales.filter((s) => !past(s.trading_at) || openSale.has(s.client_id) || (s.payment_method === 'LIPA_LATER' && payToday(d.payments, 'sale_client_id', s.client_id)));
-    d.purchases = d.purchases.filter((r) => !past(r.trading_at) || openPur.has(r.client_id) || (r.payment_method === 'LIPA_LATER' && payToday(d.supplierPayments || [], 'purchase_client_id', r.client_id)));
-    d.expenses = d.expenses.filter((e) => !past(e.trading_at));
+    const keepRec = (r, open, list, key) => {
+      if (!ready(r.trading_at) || !sent(r.client_id)) return true;
+      if (r.payment_method === 'LIPA_LATER' && r.status !== 'voided' && (open.has(r.client_id) || payToday(list, key, r.client_id))) return true;
+      closed.add(D.dayOf(r.trading_at)); return false;
+    };
+    d.sales = d.sales.filter((r) => keepRec(r, openSale, d.payments, 'sale_client_id'));
+    d.purchases = d.purchases.filter((r) => keepRec(r, openPur, d.supplierPayments || [], 'purchase_client_id'));
+    d.expenses = d.expenses.filter((e) => keepRec(e, new Set(), [], ''));
     const saleIds = new Set(d.sales.map((s) => s.client_id)); const purIds = new Set(d.purchases.map((r) => r.client_id));
-    d.payments = d.payments.filter((x) => !past(x.trading_at) || saleIds.has(x.sale_client_id));
-    d.supplierPayments = (d.supplierPayments || []).filter((x) => !past(x.trading_at) || purIds.has(x.purchase_client_id));
+    d.payments = d.payments.filter((x) => !(ready(x.trading_at) && sent(x.client_id)) || saleIds.has(x.sale_client_id));
+    d.supplierPayments = (d.supplierPayments || []).filter((x) => !(ready(x.trading_at) && sent(x.client_id)) || purIds.has(x.purchase_client_id));
     const deleted = before - (d.sales.length + d.purchases.length + d.expenses.length + d.payments.length + d.supplierPayments.length);
-    if (closed.length || deleted) await saveData(d);                                // summaries and deletions together
-    return { closed, deleted, queued: await flushSummaries() };
-  }
-
-  /** Queue every closed summary of this person that has not been queued yet (also after a failed attempt). Returns how many were queued. */
-  async function flushSummaries() {
-    const p = await getProfile(); if (!p || !p.business_user_id) return 0;
-    const d = await getData(); let n = 0;
-    for (const s of Object.values(d.daily)) {
-      if (s.user_id !== p.business_user_id || !s.final || s.queued) continue;
-      if (await queueSummary(s)) { s.queued = true; n += 1; }              // marked queued ONLY when the queue really took it; otherwise the next open tries again
-    }
-    if (n) await saveData(d);
-    return n;
+    if (deleted) await saveData(d);
+    return { closed: [...closed].sort(), deleted };
   }
 
   /**
@@ -617,17 +587,13 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
   }
 
   // ---------------------------------------------------------------------------------------------- 3-month clean-up
-  /** Closes any past days first (so nothing is lost), then removes daily summaries older than the 3 months kept on the phone (1 Aug on 22 Nov), plus old saved statements
-   *  and requests. Summaries still waiting to be sent are kept. Owed-money records stay until settled. */
-  async function runRetention({ unsyncedIds = new Set(), nowMs = now() } = {}) {
+  /** Removes daily rows older than the 3 months kept on the phone (1 Aug on 22 Nov), and old saved statements and requests. Lines are cleared by closeDays. */
+  async function runRetention({ nowMs = now() } = {}) {
     await closeDays({ nowMs });
     const cutoff = R.retentionCutoffMs(nowMs); const cutDay = R.eatDateString(cutoff);
-    const [p, d] = [await getProfile(), await getData()];
+    const d = await getData();
     const removed = { summaries: 0, statements: 0, requests: 0 };
-    Object.keys(d.daily).forEach((k) => {
-      const s = d.daily[k]; const mineWaiting = p && s.user_id === p.business_user_id && s.final && !s.queued;       // my own closed day not yet queued: keep it
-      if (s.day < cutDay && !mineWaiting && !unsyncedIds.has(`business_daily_summary_${BID}:${s.user_id}:${s.day}`)) { delete d.daily[k]; removed.summaries += 1; }
-    });
+    Object.keys(d.daily).forEach((day) => { if (day < cutDay) { delete d.daily[day]; removed.summaries += 1; } });
     if (removed.summaries) await saveData(d);
     const stm = await read(K(STMT_KEY), []); const keepStm = stm.filter((s) => s.saved_at >= cutoff);
     removed.statements = stm.length - keepStm.length; if (removed.statements) await write(K(STMT_KEY), keepStm);
@@ -645,6 +611,6 @@ export function createBusinessStore({ kv, enqueue, now = () => Date.now(), ident
   const clearDraft = (name) => kv.set(draftKey(name), null);
 
   return { businessId: BID, getDraft, saveDraft, clearDraft, getData, getProfile, saveProfile, isOwner, canSee, recordSale, recordPurchase, recordExpense, listRecords,
-    reportInputs, report, myTotals, homeToday, lipaCustomers, recordLipaPayment, supplierLipaList, recordSupplierPayment, purchaseSpent, canChange, correctRecord, voidRecord, transactions, buildStatement, closeDays, flushSummaries, historyView, periodTotals, transactionsView, summariesInRange,
+    reportInputs, report, myTotals, homeToday, lipaCustomers, recordLipaPayment, supplierLipaList, recordSupplierPayment, purchaseSpent, canChange, correctRecord, voidRecord, transactions, buildStatement, closeDays, historyView, periodTotals, transactionsView, summariesInRange,
     listStatements, saveStatement, listRequests, requestStatement, mergeBundle, applyRequests, runRetention, clearAll };
 }

@@ -31,6 +31,7 @@ class _Lifecycle:
     voided_at = Column(DateTime(timezone=True))
     last_change_client_id = Column(String(64))                          # the last correction / void applied: a retry of it is answered as a duplicate
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    summarized_at = Column(DateTime(timezone=True))                     # set when the end-of-day consolidation has counted this line in the business's daily summary
 
     @declared_attr
     def business_id(cls):

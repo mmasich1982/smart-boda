@@ -13,7 +13,8 @@ import BizCalculator from './BizCalculator';
 import store, { BusinessRuleError } from '../../offline/businessRepository';
 import { useBizDraft } from '../../hooks/useBusiness';
 import useShortcuts from '../../hooks/useShortcuts';
-import { kes } from '../../utils/businessFormat';
+import { kes, defaultDueDate } from '../../utils/businessFormat';
+import BizDateField from './BizDateField';
 
 const say = (e) => (e instanceof BusinessRuleError ? e.message : 'We could not save this. Please try again.');
 
@@ -35,32 +36,45 @@ export const BusinessPurchasesScreen = ({ navigation }) => <Hub navigation={navi
 export const BusinessExpensesScreen = ({ navigation }) => <Hub navigation={navigation} current="expense" title="Business Expenses" sub="Rent, electricity, transport and other running costs." record="RecordExpense" recordLabel="Record Expense →" historyLabel="📜 Expense History" historyRoute="ExpenseHistory" />;
 
 // -------------------------------------------------------------------------------------------------- Record Purchase (v48)
-// The New Sale/Service calculator with identical behaviour. The purchase amount is the calculator total. Payment: Cash, M-Pesa, Card or Lipa Later;
-// Lipa Later opens Lipa Later Details (what the business owes and when it is due). There is no supplier search and no item list any more.
+// The New Sale/Service calculator with identical behaviour. The purchase amount is the calculator total. Payment: Cash, M-Pesa, Card or Lipa Later.
+// LIPA LATER works exactly like Sales/Services: choosing it shows Supplier Name, Supplier Mobile Number and Payment Due Date RIGHT HERE under the Payment Method
+// (no other screen opens). Save writes to the phone first, clears the calculator and the supplier boxes, and opens the Purchase History (an owed purchase opens the
+// Lipa Later Suppliers Report, where it appears). A refused save keeps everything keyed and says why.
 export function RecordPurchaseScreen({ navigation }) {
   const [total, setTotal] = useState(0), [expr, setExpr] = useState(''), [busy, setBusy] = useState(false);
-  const draft = useBizDraft('purchase', { keys: [], pm: 'CASH' });           // MULTIPLE BUSINESSES: kept with its own business
-  const { keys, pm } = draft.value;
-  const setPm = (v) => draft.setValue((d) => ({ ...d, pm: v }));
+  const [calcKey, setCalcKey] = useState(0);                                  // a new key starts a fresh calculator
+  const draft = useBizDraft('purchase', { keys: [], pm: 'CASH', name: '', phone: '', due: defaultDueDate() });   // MULTIPLE BUSINESSES: kept with its own business
+  const { keys, pm, name, phone, due } = draft.value;
+  const upd = (patch) => draft.setValue((d) => ({ ...d, ...patch }));
+  const lipa = pm === 'LIPA_LATER';
   const shortcuts = useShortcuts('purchase');
   const save = async () => {
-    if (pm === 'LIPA_LATER') { navigation.navigate('SupplierLipaDetails', { amount: total, expr }); return; }       // owed, not a cost, until paid
+    if (busy) return;
     setBusy(true);
     try {
-      await store.recordPurchase({ items: [{ label: (expr || '').replace(/ =$/, '').slice(0, 60) || 'Purchase', amount: total }], paymentMethod: pm });
-      draft.clear();
-      navigation.navigate('PurchaseHistory');                              // straight to the history (the Fuel Hub pattern)
+      await store.recordPurchase({ items: [{ label: (expr || '').replace(/ =$/, '').slice(0, 60) || 'Purchase', amount: total }], paymentMethod: pm,
+        supplierName: name, supplierPhone: phone, dueDate: due });
+      draft.clear(); setCalcKey((k) => k + 1); setTotal(0); setExpr('');       // calculator, method and supplier boxes cleared
+      if (lipa) navigation.navigate('SupplierLipaReport', { back: 'BusinessPurchases' });      // an owed purchase opens the Lipa Later Suppliers Report
+      else navigation.navigate('PurchaseHistory');                             // straight to the history (the Fuel Hub pattern)
     } catch (e) { Alert.alert('Record Purchase', say(e)); } finally { setBusy(false); }
   };
   return (
     <Screen>
       <BackLink label="← Purchases" onPress={() => navigation.navigate('BusinessPurchases')} />
       <Title>Record Purchase</Title>
-      {draft.ready ? <BizCalculator onTotal={setTotal} onExpression={setExpr} initialKeys={keys} onKeys={(k) => draft.setValue((d) => ({ ...d, keys: k }))} /> : null}
+      {draft.ready ? <BizCalculator key={calcKey} onTotal={setTotal} onExpression={setExpr} initialKeys={keys} onKeys={(k) => upd({ keys: k })} /> : null}
       <Card><Row k="PURCHASE AMOUNT" v={kes(total)} bold color={total > 0 ? C.red : C.soft} /></Card>
       <Text style={s.label}>Payment method</Text>
-      <Tabs tabs={[{ key: 'CASH', label: 'Cash' }, { key: 'MPESA', label: 'M-Pesa' }, { key: 'CARD', label: 'Card' }, { key: 'LIPA_LATER', label: 'Lipa Later' }]} value={pm} onChange={setPm} />
-      {pm === 'LIPA_LATER' ? <Hint style={{ marginBottom: 8 }}>You will be asked who you owe and when it is due. It is not a cost until you pay the supplier.</Hint> : null}
+      <Tabs tabs={[{ key: 'CASH', label: 'Cash' }, { key: 'MPESA', label: 'M-Pesa' }, { key: 'CARD', label: 'Card' }, { key: 'LIPA_LATER', label: 'Lipa Later' }]} value={pm} onChange={(v) => upd({ pm: v })} />
+      {lipa ? (
+        <Card>
+          <Text style={s.label}>Lipa Later supplier</Text>
+          <Field label="Supplier Name" value={name} onChangeText={(v) => upd({ name: v })} maxLength={80} placeholder="e.g. Wholesale Distributors" />
+          <Field label="Supplier Mobile Number" value={phone} onChangeText={(v) => upd({ phone: v })} keyboardType="phone-pad" placeholder="0712 345 678" />
+          <BizDateField label="Payment Due Date" value={due} onChange={(v) => upd({ due: v })} hint="Must be after today. It is not a cost until you pay the supplier." />
+        </Card>
+      ) : null}
       <Btn label="Save Purchase →" onPress={save} disabled={busy || !(total > 0)} />
       {!(total > 0) ? <Hint>Enter the purchase amount on the calculator first.</Hint> : null}
       <ShortcutBar items={shortcuts} onGo={(route) => navigation.navigate(route)} />

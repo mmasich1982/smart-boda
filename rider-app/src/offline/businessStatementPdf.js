@@ -7,7 +7,8 @@
 //   Detailed : for each month one row per DAY (that day's total sales, purchases and expenses), then the month's Total, and a Grand Total over a longer period.
 // followed by Sales by Payment Method, Where the Money Went (cost breakdown), the Team, and a verification code. Every figure is a daily total, never a single transaction.
 // Net Income = Sales - (Purchases + Expenses).
-import { PROVIDER_NAME, esc, brandCss, brandHeaderHtml, brandFooterHtml } from './statementBrand';
+import { esc, brandCss, brandHeaderHtml, brandFooterHtml } from './statementBrand';
+import { printHtmlDocument } from './printHtml';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -77,8 +78,5 @@ ${brandFooterHtml({ left: `<div class="muted">Verification code</div><div class=
 }
 
 export async function downloadBusinessStatement(st) {
-  const Print = require('expo-print'), Sharing = require('expo-sharing');
-  const { uri } = await Print.printToFileAsync({ html: renderBusinessStatementHtml(st) });
-  if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: `${PROVIDER_NAME} · Statement${st.business_name ? ' - ' + st.business_name : ''} ${st.date_from} to ${st.date_to}` });
-  return { uri };
+  return printHtmlDocument(renderBusinessStatementHtml(st), { title: `Statement${st.business_name ? ' - ' + st.business_name : ''} ${st.date_from} to ${st.date_to}` });
 }

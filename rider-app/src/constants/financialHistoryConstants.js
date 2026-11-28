@@ -1,8 +1,9 @@
+// rider-app/src/constants/financialHistoryConstants.js
 /**
  * financialHistoryConstants.js
  * Configuration constants for financial history and statement features
  */
-// rider-app/src/constants/financialHistoryConstants.js
+
 // Statement purposes - predefined options for statement generation
 export const STATEMENT_PURPOSES = [
   'Loan Application',

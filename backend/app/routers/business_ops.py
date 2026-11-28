@@ -29,6 +29,7 @@ from app.models.business_lipa_later import (BusinessLipaLaterRecord, BusinessLip
 from app.services import business_lipa_later_service as lipa_svc
 from app.routers.mobile_number import validate_mobile_number
 from app.services import business_net_profit_service as npf
+from app.services import business_daily_service as daily_svc
 
 router = APIRouter(prefix="/business", tags=["business"])
 RETENTION_MONTHS = 3          # the phone keeps this month and the 3 before it; anything older is requested from the Administrator (with a fee)
@@ -359,6 +360,8 @@ def create_sale(body: SaleIn, rider=Depends(get_current_rider), bid: Optional[st
     same_business(c, body)
     if (e := _existing(db, c, SALE, body.client_id)):
         return {"status": "duplicate", "id": str(e.id), "client_id": e.client_id}
+    if daily_svc.was_consolidated(db, c.biz.id, body.client_id):                 # already counted in its day's summary and deleted: a re-send is not counted twice
+        return {"status": "duplicate", "client_id": body.client_id}
     pm = (body.payment_method or "").upper()
     if pm not in npf.METHODS:
         raise HTTPException(422, "Choose Cash, M-Pesa, Card or Lipa Later.")
@@ -401,6 +404,8 @@ def create_purchase(body: PurchaseIn, rider=Depends(get_current_rider), bid: Opt
         _need(c, PURCHASE)
     if (e := _existing(db, c, PURCHASE, body.client_id)):
         return {"status": "duplicate", "id": str(e.id), "client_id": e.client_id}
+    if daily_svc.was_consolidated(db, c.biz.id, body.client_id):
+        return {"status": "duplicate", "client_id": body.client_id}
     pm = (body.payment_method or "").upper()
     if pm not in npf.METHODS:                                      # the same four as a sale: Cash, M-Pesa, Card, Lipa Later
         raise HTTPException(422, "Choose Cash, M-Pesa, Card or Lipa Later.")
@@ -442,6 +447,8 @@ def create_expense(body: ExpenseIn, rider=Depends(get_current_rider), bid: Optio
         _need(c, EXPENSE)
     if (e := _existing(db, c, EXPENSE, body.client_id)):
         return {"status": "duplicate", "id": str(e.id), "client_id": e.client_id}
+    if daily_svc.was_consolidated(db, c.biz.id, body.client_id):
+        return {"status": "duplicate", "client_id": body.client_id}
     details = " ".join(body.details.split())
     if not details:
         raise HTTPException(422, "Enter the expense details.")
@@ -465,8 +472,8 @@ def _editable(db, c, client_id, acted_at):
         raise HTTPException(403, {"code": "NOT_YOURS", "message": "You can only change records you recorded yourself."})
     if not c.can(r.kind):
         raise HTTPException(403, {"code": "TILE_NOT_ALLOWED", "message": "The Administrator has not allowed this for you."})
-    if not npf.within_correction_window(r.trading_at, acted_at):
-        raise HTTPException(409, {"code": "WINDOW_CLOSED", "message": "The 24-hour correction window for this record has closed."})
+    if npf.to_dt(r.trading_at).astimezone(npf.EAT).date() != npf.to_dt(acted_at).astimezone(npf.EAT).date():       # a record can be changed only on the day it was recorded
+        raise HTTPException(409, {"code": "WINDOW_CLOSED", "message": "A record can only be changed on the day it was recorded."})
     return r
 
 
@@ -543,7 +550,9 @@ def _since(since):
 
 
 def _bundle(db, c, kinds, own_only, since):
-    """Records (all three tables), Lipa Later details and payments, changed after `since`."""
+    """Records (all three tables), Lipa Later details and payments, changed after `since`, and the business's DAILY SUMMARIES (one row per day, consolidated from every user)."""
+    from app.services import business_daily_service as daily
+    daily.ensure_consolidated(db, c.biz.id)                 # first count and clear every past day, so what follows is what a restored phone should hold
     t = _since(since)
     users = _names(db, c.biz.id)
     recs = []
@@ -587,15 +596,15 @@ def _bundle(db, c, kinds, own_only, since):
         if t:
             sq = sq.filter(BusinessSupplierLipaPayment.created_at > t)
         spays = [_pay_row(p, users, purchases[sl_ids[p.lipa_later_id]].client_id, "purchase_client_id") for p in sq.all() if p.lipa_later_id in sl_ids]
-    from app.services import business_daily_service as daily
     today = daily.eat_today()
     first = date(today.year + (today.month - 1 - RETENTION_MONTHS) // 12, (today.month - 1 - RETENTION_MONTHS) % 12 + 1, 1)      # the 3 months the phone keeps
     sq = db.query(daily.BusinessDailySummary).filter(daily.BusinessDailySummary.business_id == c.biz.id, daily.BusinessDailySummary.day >= first)
-    if own_only:
-        sq = sq.filter(daily.BusinessDailySummary.business_user_id == c.bu.id)
     if t:
         sq = sq.filter(daily.BusinessDailySummary.updated_at > t)
-    return {"business_id": str(c.biz.id), "records": out_recs, "payments": pays, "supplier_payments": spays, "daily_summaries": daily.summary_dicts(sq.all()),
+    rows = daily.summary_dicts(sq.order_by(daily.BusinessDailySummary.day).all())
+    if own_only:                                             # a Sales/Service Person's phone gets only their OWN figures of each day, never the rest of the team's
+        rows = [v for v in (daily.own_view(r, c.bu.id) for r in rows) if v]
+    return {"business_id": str(c.biz.id), "records": out_recs, "payments": pays, "supplier_payments": spays, "daily_summaries": rows,
             "server_time": _iso(_now())}   # business_id: the phone refuses a bundle meant for another business
 
 
@@ -722,23 +731,21 @@ def transactions(date_from: date, date_to: date, kind: Optional[str] = None, lim
     return {"total": len(rows), "items": rows[offset: offset + limit]}
 
 
-# ----------------------------------------------------------------------------------------------- daily summaries (replace the lines)
+# ----------------------------------------------------------------------------------------------- daily summaries
 class DailySummaryIn(BaseModel):
     business_id: Optional[str] = None
-    client_id: str = Field(min_length=6, max_length=140)       # "<business id>:<person id>:<day>" is 84 characters
-    day: date
+    client_id: Optional[str] = None
+    day: Optional[date] = None
     final: bool = False
-    summary: dict
+    summary: Optional[dict] = None
 
 
 @router.post("/daily-summaries")
-def save_daily_summary(body: DailySummaryIn, rider=Depends(get_current_rider), bid: Optional[str] = Depends(business_header), db: Session = Depends(get_db)):
-    """A person's summary of one day (a running one while the day is open, the final one at the end-of-day close). Idempotent: the same day replaces itself; a final
-    summary is never replaced by a running one. Always saved under the signed-in person, whatever the summary says."""
-    from app.services import business_daily_service as daily
-    c = get_ctx(db, rider, bid)
-    same_business(c, body)
-    return {"status": daily.upsert_summary(db, c.biz.id, c.bu, body.day, body.final, body.summary), "client_id": body.client_id}
+def accept_old_daily_summary(body: DailySummaryIn, rider=Depends(get_current_rider), bid: Optional[str] = Depends(business_header), db: Session = Depends(get_db)):
+    """RETIRED. Phones no longer make or send summaries: the server consolidates every user's lines into ONE row per business per day. Kept only so that summaries an earlier
+    app version still has waiting in its queue are acknowledged (and ignored) instead of failing for ever."""
+    get_ctx(db, rider, bid)
+    return {"status": "ignored", "client_id": body.client_id}
 
 
 @router.get("/statement-fees")
@@ -754,8 +761,7 @@ def window_cutoff(today: date = None) -> date:
     m = t.month - RETENTION_MONTHS
     y = t.year + (m - 1) // 12
     m = (m - 1) % 12 + 1
-    from calendar import monthrange
-    return date(y, m, min(t.day, monthrange(y, m)[1]))
+    return date(y, m, 1)                               # the 1st of the month 3 months back, like the phone (22 Nov: 1 Aug)
 
 
 @router.post("/statement-requests")
@@ -772,11 +778,17 @@ def create_statement_request(body: StatementReqIn, rider=Depends(get_current_rid
     if body.period_to > today:
         raise HTTPException(422, "The period cannot be in the future.")
     from app.services import business_daily_service as daily
+    cutoff = window_cutoff(today)                       # the 1st of the month 3 months back: from here on, statements are made in the app
+    if body.period_from >= cutoff or body.period_to >= cutoff:
+        raise HTTPException(422, {"code": "WITHIN_WINDOW", "message": "This period includes the last 3 months. You can generate it yourself in the app."})
     fee = daily.fee_for(db, body.period_from, today)
-    if fee["on_phone"]:
-        raise HTTPException(422, {"code": "WITHIN_WINDOW", "message": "You can generate this statement yourself in the app."})
     if not fee["available"]:
-        raise HTTPException(422, {"code": "NOT_AVAILABLE", "message": "Statements are kept for one year. This period is older than that."})
+        raise HTTPException(422, {"code": "NOT_AVAILABLE", "message": "Statements are kept for one year. The From date cannot be more than one year ago."})
+    since = _now() - timedelta(hours=48)
+    if db.query(BusinessStatementRequest).filter(BusinessStatementRequest.business_id == c.biz.id, BusinessStatementRequest.statement_type == body.statement_type,
+                                                 BusinessStatementRequest.period_from == body.period_from, BusinessStatementRequest.period_to == body.period_to,
+                                                 BusinessStatementRequest.requested_at > since).first():
+        raise HTTPException(409, {"code": "DUPLICATE_REQUEST", "message": "Your previous request for this statement is already being processed. Please connect to the internet from time to time so it can finish syncing in both directions. The same request can be submitted again after 48 hours."})
     r = BusinessStatementRequest(business_id=c.biz.id, requested_by=c.bu.id, client_id=body.client_id, statement_type=body.statement_type,
                                  period_from=body.period_from, period_to=body.period_to, purpose=body.purpose, fee_ksh=fee["fee"])    # the fee is worked out here, never trusted from the phone
     if not _save(db, r):

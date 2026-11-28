@@ -35,7 +35,18 @@ export async function readPendingMap(businessId) {
 }
 
 const kv = { get: (k) => indexedDbAdapter.kvGet(k), set: (k, v) => indexedDbAdapter.kvSet(k, v) };
-const makeStore = (businessId) => createBusinessStore({ kv, enqueue: (item) => addToSyncQueue(item), identity: async () => ({ rider_id: await getLocalRiderId() }), businessId });
+/** The client ids of every line (and change to a line) of THIS business still waiting in the sync queue. A day's lines are deleted on the phone only after none of them is waiting. */
+const pendingClientIds = (businessId) => async () => {
+  const out = new Set();
+  try {
+    (await loadSyncQueue()).forEach((q) => {
+      if (!q || q.status === 'synced' || !q.data || String(q.data.business_id || '').toLowerCase() !== String(businessId).toLowerCase()) return;
+      ['client_id', 'record_client_id', 'sale_client_id', 'purchase_client_id'].forEach((k) => { if (q.data[k]) out.add(q.data[k]); });
+    });
+  } catch (e) { /* unreadable queue: treat as nothing waiting is unknown -> keep everything */ out.add('__unknown__'); }
+  return out;
+};
+const makeStore = (businessId) => createBusinessStore({ kv, enqueue: (item) => addToSyncQueue(item), pendingClientIds: pendingClientIds(businessId), identity: async () => ({ rider_id: await getLocalRiderId() }), businessId });
 export const registry = createBusinessRegistry({ kv, makeStore });
 
 let migrated = null;

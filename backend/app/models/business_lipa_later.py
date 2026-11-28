@@ -41,6 +41,7 @@ class BusinessLipaLaterPayment(Base):
     pay_type = Column(String(8), nullable=False)                         # full | partial
     reference = Column(String(255), default="")                          # notes, e.g. an M-Pesa code
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    summarized_at = Column(DateTime(timezone=True))                      # counted in the business's daily summary
     __table_args__ = (UniqueConstraint("business_id", "client_id", name="uq_business_lipa_payment_client"),
                       Index("ix_business_lipa_payment_record", "lipa_later_id"),
                       CheckConstraint("amount_ksh > 0", name="ck_business_lipa_payment_amount"),
@@ -81,6 +82,7 @@ class BusinessSupplierLipaPayment(Base):
     pay_type = Column(String(8), nullable=False)                         # full | partial
     reference = Column(String(255), default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    summarized_at = Column(DateTime(timezone=True))
     __table_args__ = (UniqueConstraint("business_id", "client_id", name="uq_business_supplier_lipa_payment_client"),
                       Index("ix_business_supplier_lipa_payment_record", "lipa_later_id"),
                       CheckConstraint("amount_ksh > 0", name="ck_business_supplier_lipa_payment_amount"),

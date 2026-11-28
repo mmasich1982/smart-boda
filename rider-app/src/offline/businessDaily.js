@@ -1,15 +1,15 @@
 // rider-app/src/offline/businessDaily.js
 // SMART BIZNA DAILY SUMMARIES: the pure rules of the end-of-day close. No React Native, no storage: the store (businessStore.js) calls these and is tested with them.
 //
-// THE IDEA. A business can record hundreds of sales a day. Every line stays on the phone ONLY until the end of its day. Then ONE daily summary is made, the line-level
-// rows are deleted, and only the summary is kept (3 months on the phone, 1 year on the server). Every report, dashboard and statement reads summaries; today alone
-// is read from the day's own lines. A summary holds exactly what the reports need, so nothing needs the old lines:
-//   { day:'2026-11-20', user_id, final, income, purchases, expenses, net_profit, sales_made,
-//     by_payment_method:[{method,count,amount}], cost_breakdown:[{label,amount}], by_person:[{user_id,full_name,role,income,sales_count,costs}] }
-// Net Profit = Sales/Service Income - (Purchases + Expenses), worked out by the SAME function as before (businessReportUtils.compute), so the day's figures cannot differ.
-//
-// One summary is made per PHONE (per recording person) per day, because several phones record into one business; the business's figure for a day is the sum of its
-// people's summaries (mergeSummaries). That is still one small row per person per day, instead of one row per sale.
+// THE IDEA. A business can record hundreds of sales a day, from several phones. During the day every phone sends its lines to the server and keeps them. At the END OF
+// THE DAY the SERVER counts all users' lines of that day into ONE summary row per business per day (backend/app/services/business_daily_service.py) and deletes them. The phones
+// receive those rows and, once a day's row is here and its lines have been sent, delete their own lines of that day. Every report, statement and history reads the daily rows,
+// plus the lines of the days not yet consolidated (always today). A row holds exactly what the screens need:
+//   { day, income, purchases, expenses, net_profit, sales_made, purchases_count, expenses_count,
+//     by_payment_method:[{method,count,amount}], cost_breakdown:[{label,amount}],
+//     by_person:[{user_id,full_name,role,income,sales_count,purchases,expenses,purchases_count,expenses_count}] }
+// A Sales/Service Person's phone receives only their OWN figures of each day (own: true). "Days with sales" = the days whose sales_made is above 0.
+// Net Profit = Sales/Service Income - (Purchases + Expenses), worked out by the SAME function as before (businessReportUtils.compute).
 import * as R from './businessReportUtils';
 
 const cents = R.cents;
@@ -20,20 +20,40 @@ export const dayOf = (ms) => R.eatDateString(R.toMs(ms));
 export const dayBounds = (day) => R.rangeBounds(day, day);                       // [start, end) in ms, EAT
 export const monthKeyOfDay = (day) => String(day).slice(0, 7);
 
-/** One person's summary of one EAT day, from that person's own lines. records / payments / supplierPayments are the shapes reportInputs() gives. */
-export function summarizeDay(day, { records = [], payments = [], supplierPayments = [], users = [] }, meta = {}) {
+/**
+ * The summary rows of ONE day from lines held on this phone: one row per person who has lines that day (like the server builds them). Lines of other people are only "ghosts"
+ * (outside the day) so a payment finds its sale. records / payments / supplierPayments are the shapes reportInputs() gives; users: [{id, full_name, role}].
+ */
+export function summarizeLines(day, { records = [], payments = [], supplierPayments = [], users = [] }) {
   const [a, z] = dayBounds(day);
-  const t = R.compute(records, payments, a, z, users, supplierPayments);
-  const live = (r) => r.status !== 'voided' && R.toMs(r.trading_at) >= a && R.toMs(r.trading_at) < z;
-  const count = (kind) => records.filter((r) => r.kind === kind && live(r)).length;
-  return {
-    day, ...meta, final: !!meta.final,
-    income: t.income, purchases: t.purchases, expenses: t.expenses, net_profit: t.net_profit, sales_made: t.sales_made,
-    purchases_count: count('PURCHASE'), expenses_count: count('EXPENSE'),
-    by_payment_method: t.by_payment_method.map((m) => ({ method: m.method, count: m.count, amount: m.amount })),
-    cost_breakdown: t.cost_breakdown.map((c) => ({ label: c.label, amount: c.amount })),
-    by_person: t.by_person.filter((p) => p.income || p.costs || p.sales_count).map((p) => ({ user_id: p.user_id, full_name: p.full_name, role: p.role, income: p.income, sales_count: p.sales_count, costs: p.costs })),
-  };
+  const ids = new Set();
+  records.forEach((r) => { if (r.user_id != null) ids.add(String(r.user_id)); });
+  payments.concat(supplierPayments).forEach((p) => { if (p.received_by != null) ids.add(String(p.received_by)); });
+  const items = [];
+  ids.forEach((uid) => {
+    const recs = records.map((r) => (String(r.user_id) === uid ? r : { ...r, trading_at: 0 }));
+    const pays = payments.filter((p) => String(p.received_by) === uid);
+    const spays = supplierPayments.filter((p) => String(p.received_by) === uid);
+    const real = recs.filter((r) => String(r.user_id) === uid && r.status !== 'voided' && R.toMs(r.trading_at) >= a && R.toMs(r.trading_at) < z);
+    const inDay = (x) => R.toMs(x.trading_at) >= a && R.toMs(x.trading_at) < z;
+    if (!real.length && !pays.some(inDay) && !spays.some(inDay)) return;
+    const u = users.find((x) => String(x.id) === uid) || { id: uid };
+    const t = R.compute(recs, pays, a, z, [{ id: uid, full_name: u.full_name, role: u.role }], spays);
+    const n = (k) => real.filter((r) => r.kind === k).length;
+    items.push({ day, income: t.income, purchases: t.purchases, expenses: t.expenses, sales_made: t.sales_made, purchases_count: n('PURCHASE'), expenses_count: n('EXPENSE'),
+      by_payment_method: t.by_payment_method.map((m) => ({ method: m.method, count: m.count, amount: m.amount })), cost_breakdown: t.cost_breakdown.map((c) => ({ label: c.label, amount: c.amount })),
+      by_person: [{ user_id: uid, full_name: u.full_name ?? null, role: u.role ?? null, income: t.income, sales_count: t.sales_made, purchases: t.purchases, expenses: t.expenses, purchases_count: n('PURCHASE'), expenses_count: n('EXPENSE') }] });
+  });
+  return items;
+}
+
+/** A Sales/Service Person's own figures of a business-day row (the server sends these already; the Owner's phone uses it for "my own" totals). */
+export function ownView(row, userId) {
+  const p = (row.by_person || []).find((x) => String(x.user_id) === String(userId));
+  if (!p) return null;
+  const inc = cents(p.income), pu = cents(p.purchases), ex = cents(p.expenses);
+  return { day: row.day, own: true, income: money(inc), purchases: money(pu), expenses: money(ex), net_profit: money(inc - pu - ex), sales_made: Number(p.sales_count) || 0,
+    purchases_count: Number(p.purchases_count) || 0, expenses_count: Number(p.expenses_count) || 0, by_payment_method: [], cost_breakdown: [], by_person: [p] };
 }
 
 /**
@@ -42,12 +62,14 @@ export function summarizeDay(day, { records = [], payments = [], supplierPayment
  */
 export function mergeSummaries(list = [], users = []) {
   const by = {}; R.METHODS.forEach((m) => { by[m] = { count: 0, cents: 0 }; });
-  let purchases = 0; let expenses = 0; let salesMade = 0; let purchasesCount = 0; let expensesCount = 0;
+  let income = 0; let purchases = 0; let expenses = 0; let salesMade = 0; let purchasesCount = 0; let expensesCount = 0; const saleDays = new Set();
   const groups = new Map();                                                       // cost_breakdown lines other than Purchases, grouped like compute (collapsed, lower-case)
   const person = {};
-  users.forEach((u) => { person[String(u.id)] = { user_id: String(u.id), full_name: u.full_name ?? null, role: u.role ?? null, income: 0, sales_count: 0, costs: 0 }; });
+  const newPerson = (p) => ({ user_id: String(p.user_id ?? p.id), full_name: p.full_name ?? null, role: p.role ?? null, income: 0, sales_count: 0, purchases: 0, expenses: 0, purchases_count: 0, expenses_count: 0 });
+  users.forEach((u) => { person[String(u.id)] = newPerson(u); });
   list.forEach((s) => {
-    purchases += cents(s.purchases); expenses += cents(s.expenses); salesMade += Number(s.sales_made) || 0;
+    income += cents(s.income); purchases += cents(s.purchases); expenses += cents(s.expenses); salesMade += Number(s.sales_made) || 0;
+    if ((Number(s.sales_made) || 0) > 0 && s.day) saleDays.add(String(s.day));
     purchasesCount += Number(s.purchases_count) || 0; expensesCount += Number(s.expenses_count) || 0;
     (s.by_payment_method || []).forEach((m) => { if (by[m.method]) { by[m.method].count += Number(m.count) || 0; by[m.method].cents += cents(m.amount); } });
     (s.cost_breakdown || []).forEach((c) => {
@@ -58,23 +80,24 @@ export function mergeSummaries(list = [], users = []) {
     });
     (s.by_person || []).forEach((p) => {
       const k = String(p.user_id);
-      const row = person[k] || (person[k] = { user_id: k, full_name: p.full_name ?? null, role: p.role ?? null, income: 0, sales_count: 0, costs: 0 });
+      const row = person[k] || (person[k] = newPerson(p));
       if (!row.full_name && p.full_name) { row.full_name = p.full_name; row.role = p.role; }
-      row.income += cents(p.income); row.sales_count += Number(p.sales_count) || 0; row.costs += cents(p.costs);
+      row.income += cents(p.income); row.sales_count += Number(p.sales_count) || 0; row.purchases += cents(p.purchases); row.expenses += cents(p.expenses);
+      row.purchases_count += Number(p.purchases_count) || 0; row.expenses_count += Number(p.expenses_count) || 0;
     });
   });
-  const income = R.METHODS.reduce((s, m) => s + by[m].cents, 0);
+  const methodsTotal = R.METHODS.reduce((s, m) => s + by[m].cents, 0);
   const net = income - (purchases + expenses);
-  const pcts = R.largestRemainder(R.METHODS.map((m) => by[m].cents), income);
+  const pcts = R.largestRemainder(R.METHODS.map((m) => by[m].cents), methodsTotal);
   const lines = (purchases ? [{ label: 'Purchases', cents: purchases }] : [])
     .concat([...groups.values()].sort((x, y) => (y.cents - x.cents) || (x.label < y.label ? -1 : x.label > y.label ? 1 : 0)));
   const cp = R.largestRemainder(lines.map((l) => l.cents), purchases + expenses);
   return {
-    income: money(income), purchases: money(purchases), expenses: money(expenses), net_profit: money(net), sales_made: salesMade, purchases_count: purchasesCount, expenses_count: expensesCount,
+    income: money(income), purchases: money(purchases), expenses: money(expenses), net_profit: money(net), sales_made: salesMade, purchases_count: purchasesCount, expenses_count: expensesCount, days_with_sales: saleDays.size,
     by_payment_method: R.METHODS.map((m, i) => ({ method: m, label: R.METHOD_LABEL[m], count: by[m].count, amount: money(by[m].cents), percent: pcts[i] })),
     total_received: money(income),
     cost_breakdown: lines.map((l, i) => ({ label: l.label, amount: money(l.cents), percent: cp[i] })),
-    by_person: Object.values(person).map((v) => ({ ...v, income: money(v.income), costs: money(v.costs) })),
+    by_person: Object.values(person).map((v) => ({ ...v, income: money(v.income), purchases: money(v.purchases), expenses: money(v.expenses), costs: money(v.purchases + v.expenses) })),
   };
 }
 
@@ -126,7 +149,7 @@ export function tablesMatchTotals(tables, totals) {
 
 // ---------------------------------------------------------------------------------------------- statements older than the 3 months on the phone
 /** Default fees (KSh), CONFIGURABLE on the server (admin console) and fetched by the phone; these are only the fallback. Months are counted back from the current month. */
-export const DEFAULT_STATEMENT_FEES = [{ from: 4, to: 6, fee: 250 }, { from: 7, to: 9, fee: 500 }, { from: 10, to: 12, fee: 1000 }];
+export const DEFAULT_STATEMENT_FEES = [{ from: 4, to: 6, fee: 500 }, { from: 7, to: 9, fee: 800 }, { from: 10, to: 12, fee: 1000 }];
 export const ARCHIVE_MONTHS = 12;
 
 /** Whole calendar months between the month of `day` and the current month (EAT). 0 = this month. */
@@ -148,4 +171,19 @@ export function statementFee(fromDay, nowMs = Date.now(), tiers = DEFAULT_STATEM
   if (mb > ARCHIVE_MONTHS) return { onPhone: false, available: false, fee: null, monthsBack: mb };
   const t = (tiers || []).find((x) => mb >= x.from && mb <= x.to);
   return { onPhone: false, available: !!t, fee: t ? Number(t.fee) : null, monthsBack: mb };
+}
+
+
+// ---------------------------------------------------------------------------------------------- the dates of an OLDER statement request
+/** The dates the calendar offers for an older statement: From and To are both on or after one year ago and on or before the day BEFORE the 3 months kept on the phone
+ *  (on 22 Nov 2026: from 22 Nov 2025 to 31 Jul 2026). */
+export function olderDateBounds(nowMs = Date.now()) {
+  const n = new Date(nowMs + R.EAT_MS);
+  const y = n.getUTCFullYear() - 1, m = n.getUTCMonth(), d = n.getUTCDate();
+  const lastOfThatMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const pad2 = (v) => String(v).padStart(2, '0');
+  const min = `${y}-${pad2(m + 1)}-${pad2(Math.min(d, lastOfThatMonth))}`;
+  const windowStart = R.eatDateString(R.retentionCutoffMs(nowMs));
+  const max = R.eatDateString(R.toMs(`${windowStart}T00:00:00+03:00`) - 86400000);
+  return { min, max, windowStart };
 }
